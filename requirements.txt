@@ -1,0 +1,12 @@
+pyahocorasick
+rank_bm25
+FlagEmbedding
+faiss-cpu
+torch
+transformers
+llmlingua
+openai
+pyyaml
+pytest
+tqdm
+requests

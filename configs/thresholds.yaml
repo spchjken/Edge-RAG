@@ -1,0 +1,7 @@
+routing:
+  tau_bypass: 0.85
+  top_k: 5
+extraction:
+  window_L: 50
+vram:
+  N_max: 10

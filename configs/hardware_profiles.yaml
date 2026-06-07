@@ -1,0 +1,15 @@
+# Simulated hardware configurations for VRAM constraints
+# Memory fraction is calculated against a standard 24GB or 16GB dev GPU 
+# to mimic target edge devices.
+
+profiles:
+  "edge-8gb":
+    # If running on a 16GB 5060Ti, 8/16 = 0.50
+    vram_fraction: 0.50
+    description: "Simulates an 8GB VRAM edge device (e.g. Jetson Orin Nano, M1 Mac)"
+    
+
+    
+  "unconstrained":
+    vram_fraction: 1.0
+    description: "Uses full available VRAM on the host machine"
