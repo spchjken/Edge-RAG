@@ -55,10 +55,10 @@ results/**
 
 # Ignore custom-built vendor tools as mandated by architecture rules
 vendor/
-models/
 
-# Ignore local datasets
+# Ignore local datasets and model binaries
 data/
+models/
 
 # Ignore Agentic log cache/skills library
 .gemini/
