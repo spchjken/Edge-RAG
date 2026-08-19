@@ -1,0 +1,142 @@
+import time
+import yaml
+from typing import List, Dict, Any, Optional
+
+from .indexer.corpus_idf_registry import CorpusIDFRegistry
+from .indexer.bm25_lucene_indexer import BM25LuceneIndexer
+from .indexer.corpus_vocab_builder import CorpusVocabBuilder
+from .indexer.dense_vocab_matrix import DenseVocabMatrix
+from .expansion.bm25_dense_aspect_extractor import BM25DenseAspectExtractor
+from .routing.bm25_cascade_router import BM25CascadeRouter
+from .reranker.listwise_reranker import ListwiseLLMRerankerV2
+from .expansion_late.late_expansion import LateExpansionV2
+from src.utils.llm_client import LLMClient
+
+
+class PipelineV2Orchestrator:
+    """
+    End-to-End Execution Orchestrator for Pipeline V2.
+    Integrates Indexer -> Aspect Expansion -> Cascade Routing -> Listwise Reranker -> Late Expansion.
+    """
+
+    def __init__(
+        self,
+        corpus: List[str],
+        chunk_ids: Optional[List[str]] = None,
+        config_path: str = "configs/pipeline_v2.yaml",
+        llm_client: Optional[LLMClient] = None
+    ):
+        self.corpus = corpus
+        self.chunk_ids = chunk_ids if chunk_ids is not None else [f"c_{i}" for i in range(len(corpus))]
+        # Load configuration
+        try:
+            with open(config_path, 'r') as f:
+                cfg = yaml.safe_load(f).get("pipeline_v2", {})
+        except Exception:
+            cfg = {}
+
+        model_name = cfg.get("model_name", "qwen3.5-2b")
+        self.llm_client = llm_client if llm_client is not None else LLMClient(model_name=model_name)
+
+        schema = cfg.get("schema", "BM25Dense_AspectInject")
+        exp_cfg = cfg.get("expansion", {})
+        route_cfg = cfg.get("routing", {})
+        vram_cfg = cfg.get("vram", {})
+
+        # Phase 1: High-Speed Indexing & Shared IDF Matrix Build
+        t0 = time.time()
+        self.indexer = BM25LuceneIndexer(corpus, chunk_ids=self.chunk_ids)
+        self.idf_registry = self.indexer.idf_registry
+
+        vocab_builder = CorpusVocabBuilder(self.idf_registry, max_vocab_size=exp_cfg.get("max_vocab_pool_size", 1000))
+        clean_vocab = vocab_builder.build_clean_vocabulary(corpus)
+
+        self.vocab_matrix = DenseVocabMatrix(model_name=exp_cfg.get("bge_model_name", "BAAI/bge-small-en-v1.5"))
+        self.vocab_matrix.build_matrix(clean_vocab)
+        self.tti_seconds = time.time() - t0
+
+        # Phase 2: Query Expansion
+        self.extractor = BM25DenseAspectExtractor(
+            idf_registry=self.idf_registry,
+            vocab_matrix=self.vocab_matrix,
+            schema=schema,
+            p=exp_cfg.get("p", 0.50),
+            C_exp=exp_cfg.get("C_exp", 2),
+            tau_sim=exp_cfg.get("tau_sim", 0.55),
+            beta=exp_cfg.get("beta", 0.65)
+        )
+
+        # Phase 3: Cascade Router
+        self.router = BM25CascadeRouter(
+            tau_bypass=route_cfg.get("tau_bypass", 0.75),
+            tau_discard=route_cfg.get("tau_discard", 0.15)
+        )
+
+        # Phase 4: Listwise Reranker
+        self.reranker = ListwiseLLMRerankerV2(llm_client=self.llm_client)
+
+        # Phase 5: Late Expansion
+        self.late_expansion = LateExpansionV2(llm_client=self.llm_client, N_max=vram_cfg.get("N_max", 10))
+
+    def run(self, query: str, top_k_retrieval: int = 30) -> Dict[str, Any]:
+        """
+        Executes end-to-end RAG pipeline for a given user query.
+        Returns detailed timing & results payload.
+        """
+        metrics = {}
+        t_start = time.time()
+
+        # Step A: Aspect Expansion
+        t_exp_0 = time.time()
+        initial_top_chunks = None
+        if self.extractor.schema == "BM25Dense_LocalCascade":
+            raw_cands = self.indexer.retrieve(query.lower().split(), top_k=top_k_retrieval)
+            initial_top_chunks = [c["text"] for c in raw_cands]
+
+        aspect_payload = self.extractor.extract(query, top_candidate_chunks=initial_top_chunks)
+        metrics["expansion_latency_ms"] = (time.time() - t_exp_0) * 1000.0
+
+        # Step B: BM25 Retrieval w/ Token Repetition (Q_aug)
+        t_ret_0 = time.time()
+        augmented_tokens = aspect_payload.get("augmented_token_list", query.lower().split())
+        candidates = self.indexer.retrieve(augmented_tokens, top_k=top_k_retrieval)
+        metrics["retrieval_latency_ms"] = (time.time() - t_ret_0) * 1000.0
+
+        # Step C: Cascade Routing
+        t_route_0 = time.time()
+        triage = self.router.route(candidates, aspect_payload)
+        metrics["routing_latency_ms"] = (time.time() - t_route_0) * 1000.0
+
+        # Step D: Listwise LLM Reranking (if Rerank Queue has items)
+        t_rerank_0 = time.time()
+        rerank_queue = triage.get("rerank", [])
+        if rerank_queue:
+            reranked_chunks = self.reranker.rerank(query, rerank_queue)
+        else:
+            reranked_chunks = []
+        metrics["reranker_latency_ms"] = (time.time() - t_rerank_0) * 1000.0
+
+        # Merge Target Chunks (Bypass Queue + Reranked Chunks)
+        target_chunks = triage.get("bypass", []) + reranked_chunks
+        if not target_chunks: # Fallback to top retrieved candidate
+            target_chunks = candidates[:1]
+
+        # Step E: Late Expansion & Answer Generation
+        t_gen_0 = time.time()
+        gen_result = self.late_expansion.generate(query, target_chunks)
+        metrics["generation_latency_ms"] = (time.time() - t_gen_0) * 1000.0
+
+        metrics["total_latency_seconds"] = time.time() - t_start
+        metrics["tti_seconds"] = self.tti_seconds
+
+        return {
+            "query": query,
+            "answer": gen_result["answer"],
+            "aspect_payload": aspect_payload,
+            "triage": {
+                "num_bypass": len(triage.get("bypass", [])),
+                "num_rerank": len(rerank_queue),
+                "num_discarded": len(triage.get("discarded", []))
+            },
+            "metrics": metrics
+        }

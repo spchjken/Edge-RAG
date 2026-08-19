@@ -23,6 +23,12 @@ models:
     tag: "gemma4:e2b"
     context_window: 32768
 
+  granite4.1-3b:
+    backend: ollama
+    endpoint: http://localhost:11434/api/generate
+    tag: "granite4.1:3b"
+    context_window: 32768
+
   zaya1-8b:
     backend: llama-cpp
     endpoint: http://127.0.0.1:8080/completion

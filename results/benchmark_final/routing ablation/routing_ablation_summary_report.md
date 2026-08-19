@@ -1,0 +1,239 @@
+# Cascade Routing Threshold Sensitivity Study Report
+**Target Model:** `gemma4-e2b`  
+**Scope:** All 9 Fintech Benchmark Corpora (`corpus_single_1..5`, `corpus_multi_1..3`, `corpus_stress_1`)  
+**Tested Extractors (2):** `AspectOnly_Dense_Vocab_V5` vs. `SimilarKW_Statistical_IDF`  
+**Threshold Grid Matrix (9):** $\tau_{bypass} \in \{0.65, 0.75, 0.85\} \times \tau_{discard} \in \{0.05, 0.10, 0.15\}$  
+
+### Benchmark Corpus: `corpus_single_1`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_single_1_20260802_032334.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_single_1/final_benchmark_corpus_single_1.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 100.0% | 93.8% | 93.8% | 16.8% | 1 | 17 | 1.59s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 100.0% | 93.8% | 93.8% | 16.5% | 1 | 17 | 1.59s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 100.0% | 93.8% | 93.8% | 15.8% | 3 | 15 | 1.59s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 100.0% | 93.8% | 93.8% | 16.7% | 1 | 17 | 1.59s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 100.0% | 93.8% | 93.8% | 17.0% | 1 | 17 | 1.60s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 100.0% | 93.8% | 93.8% | 15.8% | 3 | 15 | 1.62s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 100.0% | 93.8% | 93.8% | 16.7% | 1 | 17 | 1.73s | 0.0016s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 100.0% | 93.8% | 93.8% | 16.4% | 1 | 17 | 1.81s | 0.0016s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 91.7% | 68.8% | 93.8% | 20.0% | 0 | 14 | 1.84s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 91.7% | 68.8% | 93.8% | 19.7% | 2 | 12 | 1.84s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 91.7% | 68.8% | 93.8% | 20.3% | 5 | 10 | 1.84s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 100.0% | 81.2% | 93.8% | 20.0% | 5 | 12 | 1.98s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 100.0% | 81.2% | 93.8% | 20.5% | 2 | 15 | 1.99s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 100.0% | 81.2% | 93.8% | 20.7% | 0 | 17 | 2.00s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 100.0% | 81.2% | 93.8% | 21.2% | 2 | 15 | 2.19s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 100.0% | 81.2% | 93.8% | 21.0% | 0 | 17 | 2.21s | 0.0504s | 2.79 GB | 1.84 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 100.0% | 81.2% | 93.8% | 20.5% | 5 | 12 | 2.48s | 0.0504s | 2.79 GB | 1.84 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 100.0% | 93.8% | 93.8% | 15.5% | 3 | 15 | 3.16s | 0.0016s | 2.79 GB | 1.84 GB |
+
+
+### Benchmark Corpus: `corpus_single_2`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_single_2_20260802_033644.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_single_2/final_benchmark_corpus_single_2.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 95.7% | 75.0% | 85.0% | 21.4% | 0 | 18 | 2.05s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 95.7% | 75.0% | 85.0% | 21.4% | 0 | 18 | 2.05s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 95.7% | 75.0% | 85.0% | 21.2% | 0 | 18 | 2.06s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 95.7% | 70.0% | 80.0% | 19.1% | 0 | 17 | 2.26s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 95.7% | 70.0% | 80.0% | 19.1% | 0 | 17 | 2.26s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 95.7% | 70.0% | 80.0% | 18.7% | 0 | 17 | 2.89s | 0.0531s | 2.79 GB | 1.85 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 78.3% | 65.0% | 75.0% | 21.4% | 0 | 15 | 1.85s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 78.3% | 65.0% | 75.0% | 21.4% | 0 | 15 | 1.86s | 0.0531s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 78.3% | 65.0% | 75.0% | 21.7% | 0 | 15 | 1.93s | 0.0531s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 87.0% | 65.0% | 70.0% | 11.7% | 10 | 7 | 1.57s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 87.0% | 65.0% | 70.0% | 11.7% | 10 | 7 | 1.58s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 87.0% | 60.0% | 70.0% | 10.8% | 8 | 7 | 1.58s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 87.0% | 60.0% | 70.0% | 10.8% | 8 | 7 | 1.58s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 87.0% | 60.0% | 70.0% | 10.8% | 8 | 7 | 1.77s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 87.0% | 65.0% | 70.0% | 11.7% | 10 | 7 | 2.19s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 87.0% | 60.0% | 65.0% | 10.2% | 8 | 8 | 1.56s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 87.0% | 60.0% | 65.0% | 10.2% | 8 | 8 | 1.57s | 0.0037s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 87.0% | 60.0% | 65.0% | 10.3% | 8 | 8 | 3.24s | 0.0037s | 2.79 GB | 1.86 GB |
+
+
+### Benchmark Corpus: `corpus_single_3`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_single_3_20260802_034735.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_single_3/final_benchmark_corpus_single_3.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 87.0% | 68.8% | 87.5% | 13.9% | 3 | 14 | 1.62s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 87.0% | 68.8% | 87.5% | 16.3% | 3 | 14 | 1.62s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 87.0% | 68.8% | 87.5% | 13.9% | 3 | 14 | 1.62s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 87.0% | 68.8% | 87.5% | 16.3% | 3 | 14 | 1.62s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 87.0% | 68.8% | 87.5% | 14.0% | 5 | 13 | 1.62s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 87.0% | 68.8% | 87.5% | 14.0% | 5 | 13 | 1.63s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 87.0% | 68.8% | 87.5% | 14.0% | 3 | 14 | 2.01s | 0.0031s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 87.0% | 68.8% | 87.5% | 16.2% | 3 | 14 | 2.23s | 0.0031s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 91.3% | 81.2% | 87.5% | 20.3% | 0 | 14 | 2.30s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 91.3% | 81.2% | 87.5% | 20.8% | 1 | 14 | 2.42s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 91.3% | 81.2% | 87.5% | 20.8% | 2 | 13 | 2.85s | 0.0495s | 2.79 GB | 1.85 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 87.0% | 68.8% | 87.5% | 14.3% | 5 | 13 | 3.49s | 0.0031s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 87.0% | 81.2% | 81.2% | 27.8% | 2 | 13 | 1.86s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 87.0% | 81.2% | 81.2% | 24.2% | 0 | 15 | 1.97s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 87.0% | 81.2% | 81.2% | 25.4% | 1 | 15 | 1.97s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 87.0% | 81.2% | 81.2% | 23.9% | 2 | 14 | 2.02s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 87.0% | 75.0% | 75.0% | 25.5% | 0 | 13 | 1.84s | 0.0495s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 87.0% | 75.0% | 75.0% | 25.9% | 1 | 13 | 1.84s | 0.0495s | 2.79 GB | 1.86 GB |
+
+
+### Benchmark Corpus: `corpus_single_4`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_single_4_20260802_040027.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_single_4/final_benchmark_corpus_single_4.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 88.0% | 85.0% | 95.0% | 13.7% | 4 | 17 | 1.54s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 88.0% | 85.0% | 95.0% | 13.7% | 4 | 17 | 1.54s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 88.0% | 85.0% | 95.0% | 12.8% | 4 | 17 | 1.54s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 88.0% | 80.0% | 95.0% | 13.4% | 2 | 18 | 1.54s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 88.0% | 85.0% | 95.0% | 12.8% | 4 | 17 | 1.55s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 88.0% | 80.0% | 95.0% | 13.4% | 2 | 18 | 1.55s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 88.0% | 85.0% | 95.0% | 14.0% | 2 | 19 | 1.88s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 88.0% | 85.0% | 95.0% | 13.7% | 4 | 17 | 1.89s | 0.0021s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 88.0% | 85.0% | 95.0% | 12.9% | 4 | 17 | 3.06s | 0.0021s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 84.0% | 80.0% | 90.0% | 28.3% | 0 | 17 | 1.75s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 84.0% | 80.0% | 90.0% | 27.9% | 1 | 16 | 1.75s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 84.0% | 80.0% | 90.0% | 25.8% | 1 | 16 | 1.79s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 84.0% | 80.0% | 90.0% | 19.8% | 0 | 17 | 1.96s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 84.0% | 80.0% | 90.0% | 19.3% | 1 | 16 | 1.99s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 84.0% | 80.0% | 90.0% | 19.1% | 1 | 16 | 1.99s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 88.0% | 85.0% | 90.0% | 18.0% | 0 | 18 | 2.32s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 88.0% | 85.0% | 90.0% | 17.8% | 1 | 17 | 2.37s | 0.0479s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 88.0% | 85.0% | 90.0% | 17.8% | 1 | 17 | 2.73s | 0.0479s | 2.79 GB | 1.85 GB |
+
+
+### Benchmark Corpus: `corpus_single_5`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_single_5_20260802_041109.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_single_5/final_benchmark_corpus_single_5.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 95.2% | 87.5% | 93.8% | 15.2% | 7 | 12 | 1.60s | 0.0034s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 95.2% | 87.5% | 93.8% | 15.2% | 7 | 12 | 1.60s | 0.0034s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 95.2% | 87.5% | 93.8% | 14.5% | 8 | 11 | 1.60s | 0.0034s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 95.2% | 87.5% | 93.8% | 14.5% | 8 | 11 | 1.61s | 0.0034s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 95.2% | 75.0% | 93.8% | 14.7% | 1 | 16 | 1.63s | 0.0034s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 95.2% | 75.0% | 93.8% | 14.7% | 1 | 16 | 1.64s | 0.0034s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 95.2% | 87.5% | 93.8% | 15.2% | 7 | 12 | 1.84s | 0.0034s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 100.0% | 87.5% | 93.8% | 20.8% | 0 | 15 | 2.00s | 0.0517s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 100.0% | 87.5% | 93.8% | 20.3% | 0 | 15 | 2.00s | 0.0517s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 100.0% | 87.5% | 93.8% | 20.8% | 0 | 15 | 2.01s | 0.0517s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 100.0% | 87.5% | 93.8% | 20.5% | 0 | 15 | 2.20s | 0.0517s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 100.0% | 87.5% | 93.8% | 20.3% | 0 | 15 | 2.21s | 0.0517s | 2.79 GB | 1.86 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 95.2% | 75.0% | 93.8% | 14.7% | 1 | 16 | 2.48s | 0.0034s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 100.0% | 87.5% | 93.8% | 20.8% | 0 | 15 | 2.51s | 0.0517s | 2.79 GB | 1.85 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 95.2% | 87.5% | 93.8% | 14.7% | 8 | 11 | 3.45s | 0.0034s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 90.5% | 81.2% | 87.5% | 31.2% | 0 | 15 | 1.84s | 0.0517s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 90.5% | 81.2% | 87.5% | 31.2% | 0 | 15 | 1.84s | 0.0517s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 90.5% | 81.2% | 87.5% | 31.2% | 0 | 15 | 1.89s | 0.0517s | 2.79 GB | 1.86 GB |
+
+
+### Benchmark Corpus: `corpus_multi_1`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_multi_1_20260802_001205.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_multi_1/final_benchmark_corpus_multi_1.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 81.9% | 69.0% | 87.4% | 17.5% | 0 | 75 | 2.97s | 0.0791s | 2.79 GB | 1.58 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 81.9% | 70.1% | 87.4% | 17.5% | 3 | 73 | 2.97s | 0.0791s | 2.79 GB | 1.61 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 80.2% | 67.8% | 87.4% | 16.4% | 7 | 67 | 3.04s | 0.0791s | 2.79 GB | 1.86 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 79.3% | 69.0% | 86.2% | 17.8% | 7 | 69 | 2.84s | 0.0791s | 2.79 GB | 1.62 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 81.0% | 70.1% | 86.2% | 18.6% | 3 | 73 | 2.84s | 0.0791s | 2.79 GB | 1.60 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 81.0% | 69.0% | 86.2% | 18.5% | 0 | 75 | 2.84s | 0.0791s | 2.79 GB | 1.58 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 73.3% | 69.0% | 85.1% | 21.3% | 7 | 67 | 2.52s | 0.0791s | 2.79 GB | 1.61 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 75.9% | 69.0% | 85.1% | 21.8% | 3 | 71 | 2.54s | 0.0791s | 2.79 GB | 1.58 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 75.9% | 67.8% | 85.1% | 21.7% | 0 | 73 | 2.55s | 0.0791s | 2.79 GB | 1.58 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 67.2% | 58.6% | 79.3% | 9.8% | 20 | 45 | 3.54s | 0.0116s | 2.79 GB | 1.61 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 66.4% | 57.5% | 78.2% | 9.9% | 19 | 46 | 3.57s | 0.0116s | 2.79 GB | 1.58 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 67.2% | 57.5% | 78.2% | 9.7% | 20 | 44 | 3.57s | 0.0116s | 2.79 GB | 1.62 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 66.4% | 57.5% | 78.2% | 9.9% | 19 | 46 | 3.57s | 0.0116s | 2.79 GB | 1.60 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 66.4% | 57.5% | 78.2% | 9.9% | 19 | 46 | 3.57s | 0.0116s | 2.79 GB | 1.60 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 67.2% | 57.5% | 78.2% | 9.7% | 20 | 44 | 3.61s | 0.0116s | 2.79 GB | 1.65 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 65.5% | 56.3% | 74.7% | 11.4% | 17 | 48 | 3.59s | 0.0116s | 2.79 GB | 1.58 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 65.5% | 56.3% | 74.7% | 11.4% | 17 | 48 | 3.59s | 0.0116s | 2.79 GB | 1.58 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 65.5% | 56.3% | 74.7% | 11.4% | 17 | 48 | 3.60s | 0.0116s | 2.79 GB | 1.58 GB |
+
+
+### Benchmark Corpus: `corpus_multi_2`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_multi_2_20260802_013958.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_multi_2/final_benchmark_corpus_multi_2.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 81.6% | 77.2% | 90.2% | 18.7% | 0 | 82 | 2.67s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 83.2% | 76.1% | 90.2% | 17.7% | 0 | 82 | 2.82s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 81.6% | 77.2% | 90.2% | 18.7% | 0 | 82 | 2.82s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 81.6% | 76.1% | 90.2% | 18.4% | 5 | 78 | 2.87s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 83.2% | 76.1% | 90.2% | 17.7% | 0 | 82 | 2.93s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 83.2% | 75.0% | 90.2% | 17.4% | 5 | 78 | 3.04s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 74.4% | 76.1% | 88.0% | 19.8% | 0 | 76 | 2.46s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 74.4% | 76.1% | 88.0% | 19.8% | 0 | 76 | 2.54s | 0.0834s | 2.79 GB | 1.89 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 74.4% | 75.0% | 88.0% | 19.4% | 5 | 71 | 2.63s | 0.0834s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 68.0% | 60.9% | 77.2% | 9.8% | 21 | 46 | 3.47s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 68.0% | 60.9% | 77.2% | 9.8% | 21 | 46 | 3.65s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 68.0% | 60.9% | 77.2% | 9.8% | 21 | 46 | 3.68s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 68.0% | 62.0% | 77.2% | 9.8% | 22 | 47 | 3.73s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 68.0% | 62.0% | 77.2% | 9.8% | 22 | 47 | 3.73s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 68.0% | 62.0% | 77.2% | 9.8% | 22 | 47 | 3.74s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 68.0% | 59.8% | 76.1% | 10.4% | 14 | 51 | 3.49s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 68.0% | 59.8% | 76.1% | 10.4% | 14 | 51 | 3.50s | 0.0132s | 2.79 GB | 1.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 68.0% | 59.8% | 76.1% | 10.4% | 14 | 51 | 3.50s | 0.0132s | 2.79 GB | 1.89 GB |
+
+
+### Benchmark Corpus: `corpus_multi_3`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_multi_3_20260802_031312.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_multi_3/final_benchmark_corpus_multi_3.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 82.6% | 72.9% | 87.5% | 16.0% | 1 | 78 | 2.93s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 82.6% | 74.0% | 87.5% | 16.3% | 0 | 80 | 2.93s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 82.6% | 72.9% | 87.5% | 15.9% | 3 | 76 | 2.94s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 82.6% | 72.9% | 86.5% | 16.7% | 3 | 75 | 2.79s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 82.6% | 72.9% | 86.5% | 16.8% | 1 | 77 | 2.79s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 82.6% | 74.0% | 86.5% | 17.1% | 0 | 79 | 2.79s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 74.4% | 66.7% | 79.2% | 17.8% | 3 | 68 | 2.64s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 74.4% | 67.7% | 79.2% | 18.2% | 0 | 72 | 2.64s | 0.0783s | 2.79 GB | 1.90 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 74.4% | 66.7% | 79.2% | 17.9% | 1 | 70 | 2.64s | 0.0783s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 65.3% | 58.3% | 76.0% | 9.0% | 20 | 44 | 3.42s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 65.3% | 58.3% | 76.0% | 9.0% | 20 | 44 | 3.42s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 65.3% | 58.3% | 76.0% | 9.0% | 20 | 44 | 3.43s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 64.5% | 57.3% | 76.0% | 9.2% | 19 | 45 | 3.44s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 64.5% | 57.3% | 76.0% | 9.2% | 19 | 45 | 3.44s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 64.5% | 57.3% | 76.0% | 9.2% | 19 | 45 | 3.44s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 63.6% | 54.2% | 75.0% | 9.5% | 12 | 50 | 3.46s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 63.6% | 54.2% | 75.0% | 9.5% | 12 | 50 | 3.46s | 0.0137s | 2.79 GB | 1.90 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 63.6% | 54.2% | 75.0% | 9.5% | 12 | 50 | 3.47s | 0.0137s | 2.79 GB | 1.90 GB |
+
+
+### Benchmark Corpus: `corpus_stress_1`
+- **Result File:** `pipeline_run_gemma4-e2b_routing_corpus_stress_1_20260802_084439.json`
+- **Ground Truth:** `data/benchmarks/fintech/corpus_stress_1/final_benchmark_corpus_stress_1.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard005 | 79.2% | 72.2% | 83.1% | 16.7% | 11 | 225 | 2.92s | 0.1342s | 2.79 GB | 1.97 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard005 | 79.2% | 71.8% | 82.7% | 16.8% | 2 | 233 | 2.92s | 0.1342s | 2.79 GB | 1.69 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard005 | 79.2% | 71.5% | 82.7% | 16.9% | 0 | 234 | 2.96s | 0.1342s | 2.79 GB | 1.61 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard010 | 79.0% | 71.8% | 82.0% | 17.3% | 11 | 225 | 2.83s | 0.1342s | 2.79 GB | 1.77 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard010 | 79.0% | 71.5% | 81.7% | 17.5% | 2 | 233 | 2.87s | 0.1342s | 2.79 GB | 1.64 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard010 | 79.0% | 71.1% | 81.7% | 17.5% | 0 | 234 | 2.89s | 0.1342s | 2.79 GB | 1.61 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass065_Discard015 | 71.9% | 68.0% | 77.8% | 18.1% | 11 | 209 | 2.66s | 0.1342s | 2.79 GB | 1.69 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass075_Discard015 | 71.9% | 67.6% | 77.5% | 18.5% | 2 | 217 | 2.71s | 0.1342s | 2.79 GB | 1.62 GB |
+| AspectOnly_Dense_Vocab_V5_Cascade_Listwise_Bypass085_Discard015 | 71.9% | 67.3% | 77.5% | 18.5% | 0 | 218 | 2.74s | 0.1342s | 2.79 GB | 1.60 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard015 | 53.8% | 50.7% | 63.7% | 8.3% | 51 | 126 | 3.44s | 0.0366s | 2.79 GB | 1.69 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard010 | 53.8% | 50.7% | 63.7% | 8.3% | 51 | 126 | 3.44s | 0.0366s | 2.79 GB | 1.71 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass065_Discard005 | 53.8% | 50.7% | 63.7% | 8.3% | 51 | 126 | 3.45s | 0.0366s | 2.79 GB | 1.81 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard005 | 53.8% | 51.8% | 63.7% | 8.9% | 42 | 130 | 3.54s | 0.0366s | 2.79 GB | 1.61 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard010 | 53.8% | 51.8% | 63.7% | 8.9% | 42 | 130 | 3.57s | 0.0366s | 2.79 GB | 1.60 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass085_Discard015 | 53.8% | 51.8% | 63.7% | 8.9% | 42 | 130 | 3.61s | 0.0366s | 2.79 GB | 1.60 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard005 | 53.8% | 51.1% | 63.4% | 8.4% | 49 | 125 | 3.50s | 0.0366s | 2.79 GB | 1.67 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard010 | 53.8% | 51.1% | 63.4% | 8.4% | 49 | 125 | 3.50s | 0.0366s | 2.79 GB | 1.63 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise_Bypass075_Discard015 | 53.8% | 51.1% | 63.4% | 8.4% | 49 | 125 | 3.52s | 0.0366s | 2.79 GB | 1.62 GB |
+

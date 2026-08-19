@@ -1,0 +1,134 @@
+# Fintech Benchmark Evaluation: Fintech Corpus Single 1
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_1/final_benchmark_corpus_single_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_1_20260726_063732.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 93.8% | 93.8% | 9.1% | 24 | 0 | 0.31s | 3.65 GB | 1.69 GB | 11.79 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 93.8% | 93.8% | 9.0% | 24 | 0 | 0.45s | 3.65 GB | 1.69 GB | 11.93 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 93.8% | 93.8% | 9.2% | 24 | 0 | 0.64s | 3.65 GB | 1.69 GB | 11.88 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 100.0% | 81.2% | 93.8% | 12.6% | 15 | 2 | 1.67s | 3.65 GB | 1.74 GB | 11.61 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 100.0% | 93.8% | 93.8% | 12.5% | 15 | 5 | 4.27s | 3.65 GB | 1.74 GB | 11.51 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 100.0% | 93.8% | 93.8% | 14.8% | 15 | 9 | 5.37s | 3.65 GB | 1.74 GB | 11.64 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 100.0% | 75.0% | 93.8% | 10.0% | 2 | 11 | 6.78s | 3.65 GB | 1.69 GB | 11.87 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 100.0% | 93.8% | 93.8% | 13.0% | 2 | 22 | 9.05s | 3.65 GB | 1.69 GB | 11.65 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 87.5% | 93.8% | 17.2% | 2 | 21 | 9.09s | 3.65 GB | 1.74 GB | 11.58 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 100.0% | 43.8% | 81.2% | 13.2% | 0 | 7 | 1.38s | 3.65 GB | 1.74 GB | 11.64 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 37.5% | 81.2% | 10.6% | 2 | 5 | 2.30s | 3.65 GB | 1.74 GB | 11.77 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 87.5% | 62.5% | 81.2% | 13.9% | 9 | 5 | 3.22s | 3.65 GB | 1.74 GB | 8.71 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 87.5% | 75.0% | 81.2% | 18.5% | 9 | 11 | 4.59s | 3.65 GB | 1.74 GB | 5.43 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 100.0% | 68.8% | 81.2% | 13.2% | 0 | 14 | 5.60s | 3.65 GB | 1.74 GB | 11.37 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 100.0% | 81.2% | 81.2% | 18.2% | 0 | 20 | 7.47s | 3.65 GB | 1.74 GB | 11.19 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 87.5% | 62.5% | 75.0% | 16.5% | 9 | 4 | 0.91s | 3.65 GB | 1.74 GB | 10.35 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 100.0% | 37.5% | 68.8% | 8.6% | 2 | 5 | 2.40s | 3.65 GB | 1.65 GB | 12.23 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 100.0% | 62.5% | 68.8% | 12.0% | 2 | 12 | 7.08s | 3.65 GB | 1.74 GB | 11.68 GB |
+
+====================================================================================================
+
+# Fintech Benchmark Evaluation: Fintech Corpus Single 2
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_2/final_benchmark_corpus_single_2.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_2_20260726_071132.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 85.0% | 85.0% | 3.2% | 23 | 0 | 1.31s | 3.65 GB | 1.75 GB | 11.93 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 85.0% | 85.0% | 3.1% | 23 | 0 | 5.44s | 3.65 GB | 1.75 GB | 11.71 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 85.0% | 85.0% | 3.4% | 23 | 0 | 7.42s | 3.65 GB | 1.75 GB | 11.82 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 87.0% | 75.0% | 80.0% | 10.0% | 9 | 10 | 11.37s | 3.65 GB | 1.75 GB | 11.71 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 91.3% | 75.0% | 75.0% | 10.2% | 7 | 13 | 7.68s | 3.65 GB | 1.75 GB | 11.81 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 95.7% | 75.0% | 75.0% | 12.8% | 1 | 19 | 10.72s | 3.65 GB | 1.75 GB | 11.79 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 69.6% | 45.0% | 70.0% | 13.3% | 0 | 10 | 1.79s | 3.65 GB | 1.75 GB | 12.36 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 87.0% | 50.0% | 70.0% | 6.3% | 9 | 5 | 8.42s | 3.65 GB | 1.75 GB | 12.22 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 69.6% | 55.0% | 70.0% | 8.8% | 0 | 13 | 9.43s | 3.65 GB | 1.76 GB | 11.75 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 91.3% | 60.0% | 65.0% | 10.8% | 7 | 8 | 2.06s | 3.65 GB | 1.75 GB | 12.13 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 95.7% | 60.0% | 65.0% | 17.6% | 1 | 14 | 2.42s | 3.65 GB | 1.75 GB | 12.40 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 65.2% | 60.0% | 65.0% | 7.6% | 4 | 10 | 6.98s | 3.65 GB | 1.76 GB | 11.88 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 95.7% | 60.0% | 65.0% | 8.1% | 1 | 13 | 8.01s | 3.65 GB | 1.75 GB | 11.94 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 87.0% | 45.0% | 60.0% | 8.8% | 9 | 3 | 2.52s | 3.65 GB | 1.70 GB | 12.87 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 91.3% | 55.0% | 60.0% | 6.8% | 7 | 7 | 6.01s | 3.65 GB | 1.75 GB | 11.72 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 65.2% | 50.0% | 55.0% | 6.7% | 4 | 8 | 5.21s | 3.65 GB | 1.76 GB | 11.86 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 69.6% | 40.0% | 55.0% | 5.9% | 0 | 9 | 6.95s | 3.65 GB | 1.76 GB | 12.03 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 65.2% | 40.0% | 50.0% | 7.7% | 4 | 5 | 1.41s | 3.65 GB | 1.76 GB | 12.05 GB |
+
+====================================================================================================
+
+# Fintech Benchmark Evaluation: Fintech Corpus Single 3
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_3/final_benchmark_corpus_single_3.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_3_20260726_073148.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 81.2% | 87.5% | 5.0% | 23 | 0 | 0.55s | 3.65 GB | 1.76 GB | 11.72 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 81.2% | 87.5% | 5.0% | 23 | 0 | 1.37s | 3.65 GB | 1.76 GB | 11.86 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 81.2% | 87.5% | 5.1% | 23 | 0 | 1.64s | 3.65 GB | 1.76 GB | 11.87 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 100.0% | 75.0% | 87.5% | 16.3% | 17 | 3 | 1.94s | 3.65 GB | 1.76 GB | 11.74 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 100.0% | 81.2% | 87.5% | 13.5% | 17 | 4 | 5.53s | 3.65 GB | 1.76 GB | 11.51 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 100.0% | 81.2% | 87.5% | 17.4% | 17 | 4 | 7.18s | 3.65 GB | 1.76 GB | 11.55 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 75.0% | 81.2% | 22.6% | 0 | 14 | 2.37s | 3.65 GB | 1.76 GB | 11.93 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 75.0% | 81.2% | 19.4% | 0 | 20 | 10.73s | 3.65 GB | 1.76 GB | 11.58 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 87.0% | 62.5% | 81.2% | 13.1% | 4 | 12 | 11.71s | 3.65 GB | 1.76 GB | 11.49 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 87.0% | 75.0% | 75.0% | 30.4% | 1 | 16 | 4.81s | 3.65 GB | 1.76 GB | 11.47 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 87.0% | 62.5% | 75.0% | 9.8% | 4 | 12 | 8.51s | 3.65 GB | 1.76 GB | 12.11 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 87.0% | 68.8% | 68.8% | 35.9% | 1 | 13 | 0.91s | 3.65 GB | 1.76 GB | 11.48 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 87.0% | 62.5% | 68.8% | 11.7% | 4 | 7 | 2.74s | 3.65 GB | 1.74 GB | 12.79 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 100.0% | 62.5% | 68.8% | 10.2% | 0 | 13 | 8.08s | 3.65 GB | 1.76 GB | 11.60 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 87.0% | 56.2% | 62.5% | 15.2% | 1 | 9 | 3.71s | 3.65 GB | 1.76 GB | 11.47 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 43.5% | 37.5% | 56.2% | 15.9% | 4 | 3 | 1.78s | 3.65 GB | 1.76 GB | 12.42 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 43.5% | 50.0% | 50.0% | 23.7% | 4 | 5 | 0.61s | 3.65 GB | 1.76 GB | 11.79 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 43.5% | 50.0% | 50.0% | 26.3% | 4 | 6 | 2.32s | 3.65 GB | 1.75 GB | 12.75 GB |
+
+====================================================================================================
+
+# Fintech Benchmark Evaluation: Fintech Corpus Single 4
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_4/final_benchmark_corpus_single_4.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_4_20260726_080150.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 95.0% | 95.0% | 5.0% | 24 | 1 | 1.18s | 3.65 GB | 1.75 GB | 11.95 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 95.0% | 95.0% | 4.7% | 24 | 1 | 4.62s | 3.65 GB | 1.75 GB | 11.67 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 95.0% | 95.0% | 4.9% | 24 | 1 | 6.11s | 3.65 GB | 1.75 GB | 11.63 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 95.0% | 95.0% | 12.3% | 0 | 25 | 9.89s | 3.65 GB | 1.75 GB | 11.69 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 88.0% | 90.0% | 95.0% | 9.4% | 4 | 18 | 11.42s | 3.65 GB | 1.75 GB | 11.63 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 88.0% | 65.0% | 90.0% | 12.2% | 4 | 11 | 2.38s | 3.65 GB | 1.75 GB | 12.64 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 96.0% | 90.0% | 90.0% | 13.1% | 0 | 23 | 8.18s | 3.65 GB | 1.75 GB | 11.50 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 50.0% | 85.0% | 13.5% | 0 | 10 | 2.25s | 3.65 GB | 1.75 GB | 12.00 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 88.0% | 80.0% | 85.0% | 12.4% | 5 | 17 | 6.76s | 3.65 GB | 1.75 GB | 11.56 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 96.0% | 55.0% | 80.0% | 16.4% | 0 | 12 | 1.40s | 3.65 GB | 1.75 GB | 11.68 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 88.0% | 50.0% | 80.0% | 12.1% | 5 | 7 | 1.96s | 3.65 GB | 1.75 GB | 11.94 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 88.0% | 55.0% | 80.0% | 10.1% | 5 | 10 | 5.29s | 3.65 GB | 1.75 GB | 11.56 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 96.0% | 60.0% | 80.0% | 9.8% | 0 | 14 | 5.99s | 3.65 GB | 1.75 GB | 11.54 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 100.0% | 55.0% | 80.0% | 7.7% | 0 | 12 | 7.48s | 3.65 GB | 1.75 GB | 11.70 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 88.0% | 60.0% | 75.0% | 6.5% | 4 | 10 | 8.25s | 3.65 GB | 1.75 GB | 12.12 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 60.0% | 60.0% | 70.0% | 12.5% | 2 | 13 | 4.61s | 3.65 GB | 1.75 GB | 12.17 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 60.0% | 45.0% | 65.0% | 16.7% | 2 | 8 | 1.04s | 3.65 GB | 1.75 GB | 11.57 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 60.0% | 20.0% | 50.0% | 6.7% | 2 | 4 | 3.59s | 3.65 GB | 1.75 GB | 11.50 GB |
+
+====================================================================================================
+
+# Fintech Benchmark Evaluation: Fintech Corpus Single 5
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_5/final_benchmark_corpus_single_5.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_5_20260726_082502.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 93.8% | 93.8% | 4.5% | 20 | 1 | 0.69s | 3.65 GB | 1.76 GB | 11.73 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 93.8% | 93.8% | 4.4% | 20 | 1 | 1.92s | 3.65 GB | 1.76 GB | 11.75 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 93.8% | 93.8% | 4.6% | 20 | 1 | 2.33s | 3.65 GB | 1.76 GB | 11.89 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 95.2% | 87.5% | 93.8% | 11.3% | 7 | 11 | 11.52s | 3.65 GB | 1.76 GB | 11.58 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 95.2% | 87.5% | 87.5% | 16.1% | 14 | 4 | 1.98s | 3.65 GB | 1.76 GB | 11.79 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 95.2% | 68.8% | 87.5% | 19.0% | 1 | 11 | 2.32s | 3.65 GB | 1.76 GB | 11.88 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 95.2% | 68.8% | 87.5% | 14.1% | 7 | 7 | 2.70s | 3.65 GB | 1.76 GB | 12.70 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 95.2% | 75.0% | 87.5% | 10.5% | 14 | 2 | 6.09s | 3.65 GB | 1.76 GB | 11.61 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 95.2% | 87.5% | 87.5% | 13.9% | 14 | 5 | 7.88s | 3.65 GB | 1.76 GB | 11.67 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 95.2% | 75.0% | 87.5% | 8.7% | 7 | 8 | 8.58s | 3.65 GB | 1.76 GB | 12.11 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 95.2% | 87.5% | 87.5% | 13.1% | 1 | 16 | 10.67s | 3.65 GB | 1.76 GB | 11.73 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 85.7% | 43.8% | 81.2% | 14.3% | 0 | 8 | 1.36s | 3.65 GB | 1.76 GB | 11.70 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 66.7% | 62.5% | 81.2% | 17.9% | 6 | 6 | 3.01s | 3.65 GB | 1.76 GB | 11.61 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 66.7% | 68.8% | 81.2% | 17.9% | 6 | 8 | 3.87s | 3.65 GB | 1.75 GB | 12.12 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 95.2% | 37.5% | 81.2% | 4.6% | 1 | 5 | 7.95s | 3.65 GB | 1.76 GB | 11.71 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 85.7% | 75.0% | 81.2% | 14.5% | 0 | 16 | 8.49s | 3.65 GB | 1.76 GB | 11.57 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 66.7% | 50.0% | 75.0% | 23.4% | 6 | 5 | 0.88s | 3.65 GB | 1.76 GB | 11.57 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 85.7% | 62.5% | 75.0% | 8.9% | 0 | 10 | 6.20s | 3.65 GB | 1.76 GB | 11.57 GB |
+
+====================================================================================================

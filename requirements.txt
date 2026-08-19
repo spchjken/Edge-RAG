@@ -1,12 +1,31 @@
-pyahocorasick
-rank_bm25
-FlagEmbedding
-faiss-cpu
+# Core Pipeline V2 & Retrievers
 torch
-transformers
-llmlingua
-openai
+FlagEmbedding
+rank_bm25
+scikit-learn
+numpy
 pyyaml
-pytest
-tqdm
+
+# LLM Client & Inference
+openai
 requests
+
+# Baselines & Comparison Models
+transformers
+sentence-transformers
+faiss-cpu
+llmlingua
+pyahocorasick
+yake
+fasttext-wheel
+
+# Data Processing & Benchmarks
+pandas
+datasets
+pyarrow
+tqdm
+
+# Testing & Hardware Monitoring
+pytest
+psutil
+pynvml

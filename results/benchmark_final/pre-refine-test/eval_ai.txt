@@ -1,0 +1,134 @@
+# Benchmark Evaluation: Corpus Single 1
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_1/final_benchmark_corpus_single_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_1_20260724_165255.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 90.0% | 95.0% | 5.3% | 26 | 0 | 0.86s | 3.65 GB | 1.70 GB | 11.68 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 90.0% | 95.0% | 5.1% | 26 | 0 | 2.82s | 3.65 GB | 1.70 GB | 11.64 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 90.0% | 95.0% | 5.4% | 26 | 0 | 3.88s | 3.65 GB | 1.70 GB | 11.74 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 96.2% | 85.0% | 95.0% | 10.0% | 6 | 16 | 10.55s | 3.65 GB | 1.70 GB | 11.57 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 96.2% | 70.0% | 90.0% | 7.0% | 6 | 8 | 7.42s | 3.65 GB | 1.70 GB | 12.00 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 92.3% | 85.0% | 90.0% | 13.0% | 1 | 23 | 9.24s | 3.65 GB | 1.70 GB | 11.54 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 88.5% | 70.0% | 85.0% | 9.5% | 11 | 7 | 4.80s | 3.65 GB | 1.70 GB | 11.44 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 88.5% | 80.0% | 85.0% | 11.4% | 11 | 12 | 6.20s | 3.65 GB | 1.70 GB | 11.42 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 92.3% | 60.0% | 85.0% | 7.5% | 1 | 11 | 6.81s | 3.65 GB | 1.70 GB | 11.59 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 88.5% | 75.0% | 80.0% | 13.8% | 11 | 8 | 1.62s | 3.65 GB | 1.70 GB | 11.67 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 96.2% | 55.0% | 80.0% | 11.1% | 6 | 7 | 2.41s | 3.65 GB | 1.64 GB | 12.46 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 92.3% | 50.0% | 75.0% | 14.1% | 1 | 10 | 2.06s | 3.65 GB | 1.70 GB | 11.91 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 57.7% | 50.0% | 65.0% | 10.6% | 0 | 14 | 5.98s | 3.65 GB | 1.73 GB | 11.09 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 42.3% | 30.0% | 60.0% | 13.7% | 3 | 4 | 0.71s | 3.65 GB | 1.73 GB | 11.09 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 42.3% | 40.0% | 60.0% | 10.5% | 3 | 7 | 3.80s | 3.65 GB | 1.75 GB | 5.89 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 57.7% | 25.0% | 60.0% | 5.6% | 0 | 6 | 4.33s | 3.65 GB | 1.71 GB | 11.28 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 57.7% | 30.0% | 55.0% | 10.5% | 0 | 6 | 1.02s | 3.65 GB | 1.70 GB | 11.51 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 42.3% | 40.0% | 55.0% | 12.7% | 3 | 6 | 2.51s | 3.65 GB | 1.74 GB | 10.54 GB |
+
+====================================================================================================
+
+# Benchmark Evaluation: Corpus Single 2
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_2/final_benchmark_corpus_single_2.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_2_20260724_171817.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 100.0% | 100.0% | 7.9% | 28 | 0 | 0.61s | 3.65 GB | 1.75 GB | 11.70 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 100.0% | 100.0% | 8.0% | 28 | 0 | 1.43s | 3.65 GB | 1.75 GB | 11.72 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 100.0% | 100.0% | 8.4% | 28 | 0 | 1.54s | 3.65 GB | 1.75 GB | 11.80 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 100.0% | 70.0% | 90.0% | 10.3% | 10 | 9 | 6.95s | 3.65 GB | 1.75 GB | 11.92 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 100.0% | 85.0% | 90.0% | 15.3% | 10 | 11 | 9.21s | 3.65 GB | 1.75 GB | 11.41 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 78.6% | 85.0% | 85.0% | 17.6% | 8 | 13 | 4.54s | 3.65 GB | 1.75 GB | 11.55 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 82.1% | 85.0% | 85.0% | 21.7% | 2 | 18 | 8.25s | 3.65 GB | 1.75 GB | 11.37 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 82.1% | 75.0% | 80.0% | 20.5% | 2 | 14 | 2.03s | 3.65 GB | 1.75 GB | 11.82 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 100.0% | 65.0% | 80.0% | 13.4% | 10 | 6 | 2.17s | 3.65 GB | 1.75 GB | 12.16 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 75.0% | 70.0% | 80.0% | 13.6% | 3 | 12 | 3.80s | 3.65 GB | 1.75 GB | 11.28 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 75.0% | 75.0% | 80.0% | 20.0% | 3 | 13 | 4.88s | 3.65 GB | 1.74 GB | 11.76 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 89.3% | 80.0% | 80.0% | 22.5% | 0 | 16 | 6.74s | 3.65 GB | 1.75 GB | 11.43 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 78.6% | 70.0% | 70.0% | 15.8% | 8 | 11 | 1.52s | 3.65 GB | 1.75 GB | 11.41 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 78.6% | 65.0% | 70.0% | 10.5% | 8 | 7 | 3.64s | 3.65 GB | 1.75 GB | 11.28 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 82.1% | 40.0% | 70.0% | 7.5% | 2 | 8 | 6.36s | 3.65 GB | 1.75 GB | 11.44 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 75.0% | 60.0% | 65.0% | 16.9% | 3 | 11 | 1.18s | 3.65 GB | 1.75 GB | 11.50 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 89.3% | 45.0% | 65.0% | 17.7% | 0 | 11 | 1.33s | 3.65 GB | 1.75 GB | 11.71 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 89.3% | 50.0% | 65.0% | 10.0% | 0 | 11 | 5.00s | 3.65 GB | 1.75 GB | 11.41 GB |
+
+====================================================================================================
+
+# Benchmark Evaluation: Corpus Single 3
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_3/final_benchmark_corpus_single_3.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_3_20260724_173743.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 100.0% | 100.0% | 8.4% | 22 | 0 | 0.29s | 3.65 GB | 1.74 GB | 11.69 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 100.0% | 100.0% | 8.5% | 22 | 0 | 0.59s | 3.65 GB | 1.74 GB | 11.74 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 100.0% | 100.0% | 8.7% | 22 | 0 | 0.61s | 3.65 GB | 1.74 GB | 11.74 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 100.0% | 81.2% | 100.0% | 15.0% | 11 | 6 | 4.07s | 3.65 GB | 1.74 GB | 11.49 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 100.0% | 100.0% | 100.0% | 24.2% | 5 | 17 | 7.71s | 3.65 GB | 1.74 GB | 11.45 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 100.0% | 68.8% | 93.8% | 23.2% | 0 | 13 | 1.32s | 3.65 GB | 1.74 GB | 11.67 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 100.0% | 87.5% | 93.8% | 20.0% | 11 | 7 | 1.63s | 3.65 GB | 1.74 GB | 11.78 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 100.0% | 87.5% | 93.8% | 23.8% | 11 | 9 | 5.26s | 3.65 GB | 1.74 GB | 11.58 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 100.0% | 87.5% | 93.8% | 30.6% | 0 | 19 | 6.64s | 3.65 GB | 1.74 GB | 11.45 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 87.5% | 93.8% | 28.2% | 1 | 19 | 7.85s | 3.65 GB | 1.74 GB | 11.55 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 62.5% | 87.5% | 20.4% | 1 | 10 | 1.99s | 3.65 GB | 1.74 GB | 11.73 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 100.0% | 56.2% | 87.5% | 11.8% | 0 | 10 | 5.12s | 3.65 GB | 1.74 GB | 11.44 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 77.3% | 50.0% | 81.2% | 13.2% | 2 | 8 | 4.02s | 3.65 GB | 1.74 GB | 11.42 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 77.3% | 62.5% | 81.2% | 27.3% | 2 | 13 | 5.40s | 3.65 GB | 1.74 GB | 12.03 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 100.0% | 68.8% | 81.2% | 10.4% | 5 | 9 | 5.83s | 3.65 GB | 1.74 GB | 11.77 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 100.0% | 62.5% | 75.0% | 12.4% | 5 | 6 | 1.95s | 3.65 GB | 1.75 GB | 12.27 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 100.0% | 43.8% | 75.0% | 7.3% | 1 | 6 | 6.05s | 3.65 GB | 1.74 GB | 11.56 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 77.3% | 43.8% | 56.2% | 18.2% | 2 | 8 | 1.26s | 3.65 GB | 1.74 GB | 11.57 GB |
+
+====================================================================================================
+
+# Benchmark Evaluation: Corpus Single 4
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_4/final_benchmark_corpus_single_4.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_4_20260724_180259.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 90.0% | 95.0% | 5.5% | 25 | 0 | 0.62s | 3.65 GB | 1.75 GB | 11.46 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 90.0% | 95.0% | 5.4% | 25 | 0 | 1.78s | 3.65 GB | 1.75 GB | 11.46 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 90.0% | 95.0% | 5.8% | 25 | 0 | 2.09s | 3.65 GB | 1.75 GB | 11.75 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 92.0% | 75.0% | 95.0% | 15.5% | 4 | 16 | 7.03s | 3.65 GB | 1.75 GB | 11.46 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 75.0% | 90.0% | 17.1% | 1 | 18 | 9.59s | 3.65 GB | 1.75 GB | 11.52 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 96.0% | 75.0% | 90.0% | 12.6% | 4 | 15 | 10.38s | 3.65 GB | 1.75 GB | 11.47 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 92.0% | 55.0% | 85.0% | 22.0% | 0 | 11 | 0.88s | 3.65 GB | 1.75 GB | 11.45 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 92.0% | 80.0% | 85.0% | 21.7% | 0 | 18 | 4.64s | 3.65 GB | 1.75 GB | 11.43 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 96.0% | 60.0% | 85.0% | 6.7% | 4 | 10 | 7.63s | 3.65 GB | 1.75 GB | 12.10 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 92.0% | 55.0% | 75.0% | 11.9% | 4 | 10 | 1.99s | 3.65 GB | 1.75 GB | 11.90 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 50.0% | 75.0% | 13.2% | 1 | 9 | 2.14s | 3.65 GB | 1.75 GB | 12.16 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 96.0% | 45.0% | 75.0% | 9.4% | 4 | 7 | 2.31s | 3.65 GB | 1.76 GB | 12.63 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 92.0% | 60.0% | 75.0% | 15.9% | 0 | 14 | 3.52s | 3.65 GB | 1.75 GB | 11.42 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 100.0% | 55.0% | 75.0% | 8.3% | 1 | 12 | 7.09s | 3.65 GB | 1.75 GB | 11.70 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 44.0% | 50.0% | 70.0% | 20.8% | 0 | 10 | 1.80s | 3.65 GB | 1.75 GB | 11.87 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 92.0% | 50.0% | 70.0% | 7.9% | 4 | 9 | 5.46s | 3.65 GB | 1.75 GB | 11.62 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 44.0% | 35.0% | 65.0% | 25.8% | 0 | 8 | 0.55s | 3.65 GB | 1.75 GB | 11.42 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 44.0% | 25.0% | 50.0% | 14.7% | 0 | 5 | 1.51s | 3.65 GB | 1.75 GB | 11.41 GB |
+
+====================================================================================================
+
+# Benchmark Evaluation: Corpus Single 5
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_5/final_benchmark_corpus_single_5.json`
+**Results Log:** `results/benchmark_final/pipeline_run_corpus_single_5_20260724_182925.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 90.0% | 95.0% | 4.2% | 23 | 0 | 1.26s | 3.65 GB | 1.76 GB | 11.88 GB |
+| SimilarKW_Statistical_IDF_Adaptive_BatchPointwise | 100.0% | 90.0% | 95.0% | 3.8% | 23 | 0 | 4.78s | 3.65 GB | 1.76 GB | 11.76 GB |
+| SimilarKW_Statistical_IDF_Adaptive_Pointwise | 100.0% | 90.0% | 95.0% | 4.4% | 23 | 1 | 6.41s | 3.65 GB | 1.76 GB | 11.65 GB |
+| SimilarKW_Statistical_IDF_Cascade_Pointwise | 87.5% | 80.0% | 95.0% | 10.3% | 6 | 15 | 10.80s | 3.65 GB | 1.76 GB | 11.50 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 85.0% | 90.0% | 14.7% | 1 | 20 | 9.00s | 3.65 GB | 1.76 GB | 11.56 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_BatchPointwise | 83.3% | 75.0% | 85.0% | 13.3% | 6 | 12 | 4.22s | 3.65 GB | 1.76 GB | 11.56 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Pointwise | 83.3% | 80.0% | 85.0% | 14.2% | 6 | 14 | 5.45s | 3.65 GB | 1.76 GB | 11.66 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 65.0% | 80.0% | 20.8% | 1 | 14 | 1.98s | 3.65 GB | 1.76 GB | 11.91 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_BatchPointwise | 100.0% | 55.0% | 80.0% | 8.7% | 1 | 12 | 6.61s | 3.65 GB | 1.76 GB | 11.65 GB |
+| SimilarKW_Statistical_IDF_Cascade_BatchPointwise | 87.5% | 50.0% | 80.0% | 4.6% | 6 | 4 | 7.73s | 3.65 GB | 1.76 GB | 12.07 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 83.3% | 60.0% | 75.0% | 16.3% | 6 | 9 | 1.59s | 3.65 GB | 1.76 GB | 11.69 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 87.5% | 50.0% | 75.0% | 7.9% | 6 | 4 | 2.34s | 3.65 GB | 1.76 GB | 12.56 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Pointwise | 75.0% | 65.0% | 70.0% | 20.0% | 0 | 16 | 4.41s | 3.65 GB | 1.76 GB | 11.47 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_Listwise | 75.0% | 55.0% | 65.0% | 22.9% | 0 | 11 | 0.90s | 3.65 GB | 1.76 GB | 11.73 GB |
+| AspectOnly_Dense_Vocab_V1_Cascade_BatchPointwise | 75.0% | 45.0% | 55.0% | 12.9% | 0 | 11 | 3.34s | 3.65 GB | 1.76 GB | 11.52 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Pointwise | 37.5% | 40.0% | 50.0% | 20.9% | 0 | 9 | 1.82s | 3.65 GB | 1.75 GB | 12.37 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_BatchPointwise | 37.5% | 30.0% | 40.0% | 20.0% | 0 | 7 | 1.48s | 3.65 GB | 1.76 GB | 12.08 GB |
+| AspectOnly_Dense_Vocab_V1_Adaptive_Listwise | 37.5% | 25.0% | 35.0% | 22.7% | 0 | 5 | 0.46s | 3.65 GB | 1.76 GB | 11.71 GB |
+
+====================================================================================================

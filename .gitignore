@@ -47,19 +47,36 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Edge-RAG Specific
-# Ignore results directory to prevent committing benchmark CSVs
-results/
+# Ignore results directory except for summary reports and notes (.md, .txt)
+results/**
+!results/**/
+!results/**/*.md
+!results/**/*.txt
 
 # Ignore custom-built vendor tools as mandated by architecture rules
 vendor/
+models/
 
 # Ignore local datasets
 data/
 
-# Ignore Agentic cache
+# Ignore Agentic log cache/skills library
 .gemini/
+.claude/
 
-# Ignore Some Other directories
+# Ignore temp
+tmp_test_ai/
+scratch/
+temp*
+
+# Ignore Some Others
 tests/
-scripts/
+scripts/*
+!scripts/benchmark_creation/
+.ddraft/
+draft*.md
+*.log
+*.tex
+*.bib
+*.pdf
+report/

@@ -1,6 +1,9 @@
 routing:
-  tau_bypass: 0.85
-  top_k: 5
+  tau_bypass: 0.75
+  tau_discard: 0.10
+  top_k: 20
+  tau_alpha_low: 0.1
+  tau_mu_low: 0.02
 extraction:
   window_L: 50
 vram:

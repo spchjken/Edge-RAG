@@ -1,0 +1,27 @@
+# Stress-Test Benchmark Evaluation: AI Corpus Stress 1
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_stress_1/final_benchmark_corpus_stress_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_ai_corpus_stress_1_20260727_161313.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 96.6% | 87.7% | 95.4% | 0.6% | 364 | 0 | 1.80s | 3.65 GB | 1.79 GB | 11.58 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 88.6% | 78.2% | 86.3% | 16.6% | 13 | 286 | 10.62s | 3.65 GB | 1.71 GB | 11.72 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 88.6% | 60.4% | 79.6% | 17.4% | 13 | 181 | 2.38s | 3.65 GB | 1.79 GB | 11.52 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 83.1% | 66.7% | 77.9% | 13.0% | 128 | 110 | 2.11s | 3.65 GB | 1.79 GB | 10.57 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 52.1% | 35.8% | 51.6% | 6.8% | 62 | 62 | 2.62s | 3.65 GB | 1.71 GB | 11.70 GB |
+
+====================================================================================================
+
+# Stress-Test Benchmark Evaluation: Fintech Corpus Stress 1
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_stress_1/final_benchmark_corpus_stress_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_fintech_corpus_stress_1_20260727_174354.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 97.8% | 89.4% | 94.4% | 0.6% | 356 | 1 | 1.78s | 3.65 GB | 1.78 GB | 12.03 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 89.1% | 81.0% | 88.0% | 12.9% | 31 | 263 | 10.73s | 3.65 GB | 1.76 GB | 11.70 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 82.2% | 63.7% | 74.6% | 6.6% | 135 | 89 | 2.04s | 3.65 GB | 1.78 GB | 12.16 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 89.1% | 60.2% | 73.9% | 17.7% | 31 | 171 | 2.29s | 3.65 GB | 1.78 GB | 12.04 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 54.1% | 34.5% | 51.4% | 6.0% | 52 | 61 | 2.56s | 3.65 GB | 1.76 GB | 12.38 GB |
+
+====================================================================================================

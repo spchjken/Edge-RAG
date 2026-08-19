@@ -63,6 +63,9 @@ Example JSON Output:
 
 User Query: {query}
 Output JSON:
+<think>
+</think>
+
 """
 
 class QueryExpander:

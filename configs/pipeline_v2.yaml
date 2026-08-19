@@ -1,0 +1,22 @@
+# Hyperparameters for Pipeline V2 (BM25 + Dense Vocabulary Query Expansion)
+
+pipeline_v2:
+  schema: "BM25Dense_AspectInject"  # Options: BM25Dense_AspectInject, BM25Dense_AspectWeighted, BM25Dense_AspectFusion, BM25Dense_DynamicAspectInject
+  
+  expansion:
+    p: 0.50                          # Keyword percentage ratio for aspect anchors (20% - 100%)
+    C_exp: 2                         # Maximum expansion terms allowed per aspect group
+    tau_sim: 0.55                    # Minimum Dual BGE Similarity score cutoff (calibrated for BGE cosine space)
+    beta: 0.65                       # Weight of Aspect Anchor vs Full Query similarity (0.65 = 65% Anchor, 35% Sentence)
+    c: -1                            # Anchor-coupled synonym capacity offset (C_exp = R + c)
+    r_min: 2                         # Minimum anchor repetition count
+    r_max: 5                         # Maximum anchor repetition count (Heuristic entities & high-IDF)
+    max_vocab_pool_size: 1000        # Candidate vocabulary pool size extracted from corpus
+    bge_model_name: "BAAI/bge-small-en-v1.5"
+
+  routing:
+    tau_bypass: 0.75                 # Normalized BM25 score cutoff for direct answer bypass
+    tau_discard: 0.15                # Normalized BM25 score cutoff for irrelevance discard
+
+  vram:
+    N_max: 10                        # Maximum target chunks passed to late expansion / LLM generation

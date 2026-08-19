@@ -1,115 +1,173 @@
-# Edge-RAG Architecture: Extractive-Compression Pipeline
+# Edge-RAG Architecture: High-Speed Anchored Lexical-Semantic Retriever
 
-This document serves as the engineering blueprint for the Edge-RAG pipeline (`src/pipeline/`). It outlines the system design required to fulfill the "ephemeral constraint"—processing novel, unindexed documents at runtime without dense vectorization, while strictly bounding the dynamic KV-cache ($V_{KV}$) of local LLMs to prevent Out-Of-Memory (OOM) failures on consumer hardware.
+This document specifies the system architecture for the **Edge-RAG Retriever** (`src/pipeline_v2/`). The system couples **Corpus-Grounded Dense Vocabulary Probing** with **Lucene BM25 Inverted Indexing** to achieve high-recall, high-precision retrieval on unindexed text without incurring the latency or memory overhead of heavy neural bi-encoders or LLM-based query expansion.
 
-## 1. System Overview
+---
 
-This architecture replaces standard dense embedding and listwise reranking with a deterministic, CPU-bound string matching and geometric interval merging system. 
+## 1. Retrieval Pipeline Architecture & Data Flow
 
-An **Adaptive Dual-Bypass Routing Engine** calculates text density to bypass the LLM evaluation phase for highly relevant chunks. This bounds the total sequence length passed to the LLM during generation, minimizing TTFT (Time to First Token).
+The Edge-RAG Retriever operates across two distinct execution phases:
 
-### 1.1 Hardware & Memory Model
-- **Single Model Instance:** To respect strict VRAM constraints, the system maintains a *single* LLM loaded persistently in memory. This identical model acts as the Query Expansion Agent, the Reranker, and the Final Generator via different prompt templates. We explicitly target 5 core models: Qwen3.5-2B/4B, Gemma-4-E2B/E4B, and ZAYA1-8B.
-- **Warm-Boot Assumption:** Model loading time from disk is excluded from TTFT. The pipeline operates under a "warm" state assumption, meaning the LLM process (e.g., via `llama-server`) is continuously active.
-
-## 2. Pipeline Data Flow
+1. **Index-Time Phase (<0.3s):** Constructs the inverted index, builds a shared non-negative Lucene IDF registry, extracts a high-salience candidate vocabulary pool (1,000 terms), and generates a pre-embedded vocabulary matrix on GPU using FP16.
+2. **Query-Time Retrieval Phase (<15ms on CPU):** Extracts heuristic entities and aspect anchors from the user query, performs single-pass Dual BGE semantic probing against the vocabulary matrix, generates an augmented token list ($Q_{\text{aug}}$) with token repetition weighting, and scores inverted posting lists via Lucene BM25.
 
 ```mermaid
 graph TD
-    classDef model fill:#fce4ec,stroke:#880e4f,stroke-width:2px,color:#000000;
     classDef compute fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#000000;
-    classDef default fill:#ffffff,stroke:#333,stroke-width:2px,color:#000000;
-  
-    Q[User Query]:::model --> QE[Aspect-Based Query Expansion]:::model
-    QE --> K[JSON: Aspects & Weighted Keywords]
-  
-    Doc[Unindexed Document] --> CHUNK[CPU Text Chunking]:::compute
-    CHUNK --> LEX[pyahocorasick Search]:::compute
-    K --> LEX
-  
-    LEX --> MERGE[1D Interval Merging]:::compute
-    MERGE --> EXTRACT[Extractive Compression]:::compute
-    EXTRACT --> ROUTER{Aspect-Weighted Routing}:::compute
-  
-    ROUTER -- High Density & Aspect Coverage --> BYPASS[Bypass List]
-    ROUTER -- Low Density --> SCORE[Top-K Filtering]
-    SCORE --> RERANK_Q[Rerank Queue]
-  
-    RERANK_Q --> JSON[JSON Structuring]:::compute
-    JSON --> LLM_RERANK[LLM Reranking]:::model
-    LLM_RERANK --> TOP_K[Top K Candidates]
-  
-    BYPASS --> CACHE_CTRL[VRAM Overflow Ctrl N_max]:::compute
-    CACHE_CTRL --> FINAL_IDX[Target Chunk Indices]
-    TOP_K --> FINAL_IDX
-  
-    FINAL_IDX --> EXPAND[Late-Expand Sequence]:::compute
-    EXPAND --> GEN[Final Generation]:::model
-    GEN --> Output[Final Answer]
+    classDef storage fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000;
+    classDef target fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000000;
+
+    subgraph Index_Time ["1. Index-Time Phase (<0.3s Setup)"]
+        Doc[Raw Corpus Chunks] --> IDX[BM25LuceneIndexer]:::compute
+        IDX --> POSTINGS[(Inverted Posting Lists)]:::storage
+        IDX --> IDF_REG[(CorpusIDFRegistry: Shared Lucene IDF)]:::storage
+        Doc --> VOCAB_BUILD[CorpusVocabBuilder: Sublinear Salience]:::compute
+        VOCAB_BUILD --> DENSE_MAT[DenseVocabMatrix: BGE-Small Batch Embed]:::compute
+    end
+
+    subgraph Query_Time ["2. Query-Time Retrieval Phase (<15ms on CPU)"]
+        Q[User Query] --> EXTRACTOR[BM25DenseAspectExtractor]:::compute
+        IDF_REG --> EXTRACTOR
+        DENSE_MAT --> EXTRACTOR
+        EXTRACTOR --> Q_AUG[Augmented Query Q_aug w/ Token Repetition]:::compute
+        Q_AUG --> RETRIEVER[BM25LuceneIndexer.retrieve]:::compute
+        POSTINGS --> RETRIEVER
+        RETRIEVER --> CANDIDATES[Top-K Retrieved Chunks]:::target
+    end
 ```
 
-## 3. Component Specifications
+---
 
-The pipeline is modularized within `src/pipeline/`. **No `torch` imports are permitted in this directory except within `late_expansion.py` (for VRAM monitoring).**
+## 2. Index-Time Phase (`src/pipeline_v2/indexer/`)
 
-### 3.1 `query_expansion.py` (Aspect-Based Extraction)
-*Objective:* Map natural language queries to a structured JSON of weighted lexical anchors without incurring severe latency.
+### 2.1 `CorpusIDFRegistry` (`src/pipeline_v2/indexer/corpus_idf_registry.py`)
+Provides a unified, zero-overhead Inverse Document Frequency (IDF) table shared across indexing, vocabulary selection, and query expansion.
 
-- **Mechanic:** Use **Few-Shot Prompting + Constrained JSON Decoding** via the backend server (e.g., `llama-server` grammar/schema enforcement). Chain-of-Thought (CoT) is prohibited to minimize latency.
-- **Aspect & Keyword Weights:** The model breaks the query into relational "aspects", assigning an overall aspect weight. It generates individual synonyms (keywords) inside each aspect, assigning a specific weight ($w_k$) to each keyword based on precision.
+- **Non-Negative Lucene Formula:**
+  $$\text{IDF}(t) = \ln\left(1.0 + \frac{N - n(t) + 0.5}{n(t) + 0.5}\right)$$
+  where $N$ is the total document count and $n(t)$ is the document frequency of term $t$.
+- **Zero-Latency Inverted Index Integration:** Reuses the pre-computed document frequency dictionary (`nd`) directly from `LuceneBM25Baseline` to achieve 0ms IDF setup time.
+- **Constituent Bigram Mean IDF:** For multi-word terms (bigrams), computes the mean IDF of the constituent tokens:
+  $$\text{IDF}(w_1 \ w_2) = \frac{\text{IDF}(w_1) + \text{IDF}(w_2)}{2}$$
 
-*Expected Output Schema:*
-```json
-{
-  "aspects": [
-    {
-      "name": "Drug X",
-      "aspect_weight": 1.0,
-      "keywords": [
-        {"term": "Drug X", "weight": 1.0},
-        {"term": "Chemical Inhibitor", "weight": 0.4}
-      ]
-    }
-  ]
-}
+---
+
+### 2.2 `CorpusVocabBuilder` (`src/pipeline_v2/indexer/corpus_vocab_builder.py`)
+Extracts a clean, domain-specific candidate vocabulary pool $\mathcal{V}_{\text{clean}}$ (1,000 terms) from raw document text in under $0.05\text{s}$.
+
+- **Frequency Ceilings & Floors:**
+  - *Upper Frequency Ceiling:* $\text{Doc\_Freq}(t) \le 0.15 \times N_{\text{docs}}$ (filters common corpus-level generic stopwords like `"data"`, `"model"`, `"system"`).
+  - *Lower Frequency Floor:* $\text{Doc\_Freq}(t) \ge 2$, $\text{IDF}(t) \ge 1.5$, $\text{Length}(t) \ge 3$.
+- **Fast Bigram Sampling:** Samples up to 1,000 document chunks for rapid bigram co-occurrence counting.
+- **Sublinear Salience Ranking:**
+  $$\text{Salience}(t) = \text{IDF}(t) \times \ln(1 + \text{Doc\_Freq}(t))$$
+  The top 1,000 terms sorted by salience form the candidate vocabulary pool.
+
+---
+
+### 2.3 `DenseVocabMatrix` (`src/pipeline_v2/indexer/dense_vocab_matrix.py`)
+Manages GPU embedding and semantic probing representations for the vocabulary pool.
+
+- **Single-Batch GPU Embedding:** Encodes the 1,000 clean vocabulary terms using `BAAI/bge-small-en-v1.5` in a single CUDA FP16 batch operation ($<0.3\text{s}$ TTI).
+- **Normalized Embedding Matrix:** Stores normalized tensor matrix $\mathbf{V} \in \mathbb{R}^{N_{\text{vocab}} \times 384}$.
+- **Query & Anchor Encoding:** Encodes queries and anchor lists into $L_2$-normalized vectors to enable fast cosine similarity computation via PyTorch matrix multiplication (`torch.mm`).
+
+---
+
+### 2.4 `BM25LuceneIndexer` (`src/pipeline_v2/indexer/bm25_lucene_indexer.py`)
+Inverted posting list retrieval engine wrapping `LuceneBM25Baseline`.
+
+- **Hyperparameters:** Calibrated with standard Lucene BM25 parameters ($k_1 = 1.2, b = 0.75$).
+- **Scoring Function:**
+  $$\text{Score}(D, Q) = \sum_{t \in Q_{\text{aug}}} \text{IDF}(t) \cdot \frac{\text{TF}(t, D) \cdot (k_1 + 1)}{\text{TF}(t, D) + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgDL}}\right)}$$
+- **Weighted Retrieval:** Evaluates augmented token strings ($Q_{\text{aug}}$) containing token repetitions directly over pre-computed inverted posting lists.
+
+---
+
+## 3. Query-Time Retrieval Phase (`src/pipeline_v2/expansion/`)
+
+### 3.1 `BM25DenseAspectExtractor` (`src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py`)
+Translates raw natural language queries into grounded aspect groups with weighted keywords and generates the flattened augmented token query $Q_{\text{aug}}$.
+
+#### A. Regex Heuristic Entity Extraction
+Extracts high-priority explicit technical entities via regex pattern matching before statistical filtering:
+- **Technical Acronyms:** `\b[A-Z]{2,}\b` (e.g., `"EHR"`, `"RAG"`, `"KV"`)
+- **Hyphenated / Versioned Identifiers:** `\b[A-Za-z0-9\.]+(?:-[A-Za-z0-9\.]+)+\b` (e.g., `"qwen2.5-3b"`, `"fp-16"`)
+- **Exact Quoted Phrases:** `"([^"]+)"`
+
+#### B. Aspect Anchor Selection & Centrality Scoring
+For remaining query words (excluding English stopwords):
+- **Standard Selection (Schemas 1–5):** Ranks candidate words by corpus IDF score and selects the top $N_{\text{aspects}} = \max(2, \lceil p \cdot |Q_{\text{clean}}| \rceil)$ terms.
+- **Centrality Scoring (Schema 6):** Ranks candidate words by their semantic cohesion with the full query embedding:
+  $$\text{Centrality\_Score}(w) = \text{IDF}(w) \times \text{CosSim}\left(\mathbf{e}_w, \mathbf{e}_{Q_{\text{full}}}\right)$$
+- **Deduplication:** Applies stem matching and high-similarity cosine deduplication ($\text{CosSim} \ge 0.90$) to eliminate morphological duplicates (e.g., `"upload"` vs `"uploads"`).
+
+#### C. Dual BGE Semantic Probing
+For each aspect anchor $A_k$, evaluates semantic similarity across the pre-embedded vocabulary matrix $\mathbf{V}$:
+$$\text{Dual\_Sim}(A_k, v) = \beta \cdot \text{CosSim}(A_k, v) + (1 - \beta) \cdot \text{CosSim}(Q_{\text{full}}, v)$$
+
+- **Parameters:** Default $\beta = 0.65$, threshold cutoff $\tau_{\text{sim}} = 0.55$.
+- **Candidate Filtering:** Vocabulary terms passing $\text{Dual\_Sim} \ge \tau_{\text{sim}}$ are ranked by composite weight $\text{Weight} = \text{Dual\_Sim} \times (0.5 + 0.5 \cdot \frac{\text{IDF}(v)}{\text{IDF}_{\text{max}}})$.
+
+#### D. Active Expansion Schemas
+1. **`BM25Dense_AspectInject` (Schema 1 — Primary Baseline):** Uniform anchor weight ($n_{\text{reps}} = 3\times$) + top $C_{\text{exp}} = 2$ synonyms per aspect anchor.
+2. **`BM25Dense_FixedRepDynamicCapacity` (Schema 5a):** Fixed anchor repetition ($n_{\text{reps}}$) + dynamic synonym capacity:
+   $$C_{\text{exp}}(A_k) = \text{clamp}\left(r_{\min} + (r_{\max} - r_{\min}) \cdot \frac{\text{IDF}(A_k)}{\text{Max\_Query\_IDF}} + c, \ 1, \ 5\right)$$
+3. **`BM25Dense_DynamicAspectInject` (Schema 5b):** Dynamic anchor repetition ($R_{\text{anchor}} \in [r_{\min}, r_{\max}]$) scaled by Max Query IDF + coupled synonym capacity ($C_{\text{exp}} = R_{\text{anchor}} + c$).
+4. **`BM25Dense_CentralityFixedRep` (Schema 6a):** Centrality-ranked anchors + fixed anchor repetition ($n_{\text{reps}}$) + zero-floor capacity ($C_{\text{exp}} = \max(0, R + c)$).
+5. **`BM25Dense_CentralityDynamicInject` (Schema 6b):** Centrality-ranked anchors + dynamic anchor repetition + zero-floor capacity.
+6. **`BM25Dense_AspectWeighted` (Ablation):** Continuous relative IDF anchor weights ($w \in [0.5, 1.0]$).
+7. **`BM25Dense_AspectFusion`:** Hierarchical Agglomerative Clustering (HAC) on anchor embeddings with joint score fusion.
+
+#### E. Token Repetition Query Augmentation ($Q_{\text{aug}}$)
+Quantizes aspect and synonym weights into integer token repetitions for posting list evaluation:
+$$\text{Repeat Count} = \begin{cases} R_{\text{anchor}}(A_k) & \text{for Aspect Anchors (e.g., } 3\times \text{ to } 5\times) \\ 1\times & \text{for Expanded Synonyms } (\text{Dual\_Sim} \ge \tau_{\text{sim}}) \end{cases}$$
+
+The flattened token list $Q_{\text{aug}}$ is passed directly to `BM25LuceneIndexer.retrieve(Q_aug, top_k)`.
+
+---
+
+## 4. Pipeline Configuration (`configs/pipeline_v2.yaml`)
+
+The pipeline loads all hyperparameters from `configs/pipeline_v2.yaml`:
+
+```yaml
+pipeline_v2:
+  schema: "BM25Dense_AspectInject"  # Options: BM25Dense_AspectInject, BM25Dense_FixedRepDynamicCapacity, etc.
+  
+  expansion:
+    p: 0.50                          # Aspect anchor selection ratio (50% of distinct query words)
+    C_exp: 2                         # Base maximum expansion terms per aspect
+    tau_sim: 0.55                    # Minimum Dual BGE Similarity cutoff
+    beta: 0.65                       # Weight of Anchor vs Full Query similarity (65% Anchor, 35% Full Query)
+    c: -1                            # Anchor-coupled synonym capacity offset (C_exp = R + c)
+    r_min: 2                         # Minimum anchor repetition count
+    r_max: 5                         # Maximum anchor repetition count (Heuristic entities & high-IDF)
+    max_vocab_pool_size: 1000        # Candidate vocabulary pool size extracted from corpus
+    bge_model_name: "BAAI/bge-small-en-v1.5"
+
+  routing:
+    tau_bypass: 0.75                 # Normalized BM25 score cutoff for direct answer bypass
+    tau_discard: 0.15                # Normalized BM25 score cutoff for irrelevance discard
+
+  vram:
+    N_max: 10                        # Maximum target chunks passed to late expansion
 ```
 
-### 3.2 `lexical_search.py` (Interval Extraction)
-*Objective:* Locate anchors and compress text chunks around hits.
+---
 
-- **Engine:** Must use the standard `pyahocorasick` library for exact $O(N)$ string matching.
-- **Extraction & Merging:** Upon a hit, extract a symmetric window ($L$ tokens) around the anchor. Apply the **1D Continuous Interval Merging Algorithm** to collapse overlapping windows into continuous text spans. 
-- **Tracking:** When an interval is extracted, log the specific keyword weight ($w_k$) that triggered it for downstream density scoring.
+## 5. Future Pipeline Extensions (Downstream Modules)
 
-### 3.3 `routing.py` (Aspect-Weighted Density Routing)
-*Objective:* Act as the Dual-Bypass engine to aggressively skip LLM evaluation for obvious true-positives.
+The downstream modules in `src/pipeline_v2/` provide post-retrieval processing and are maintained as secondary pipeline extensions:
 
-- **Mechanic:** The router calculates the text density of the compressed intervals within a chunk using both aspect-level and keyword-level weights:
-  1. **Weighted Density:** The contiguous ($\rho_{cont}$) and scattered ($\rho_{scat}$) densities are calculated by scaling the length of each matched interval by its originating keyword weight ($w_k$).
-  2. **Weighted Aspect Coverage ($\alpha$):** Calculated as the sum of the weights of the aspects found in the chunk divided by the total sum of all query aspect weights: $\alpha(c_i) = \frac{\sum_{j \in H_i} w_j}{\sum_{j \in A} w_j}$.
-  3. **Final Score:** $Score(c_i) = \alpha(c_i) \times (\rho_{cont}^{weighted}(c_i) + \rho_{scat}^{weighted}(c_i))$.
-- **Routing Decision:**
-  - If $Score(c_i)$ > Threshold ($\tau_{bypass}$), route directly to `Bypass_List`.
-  - Otherwise, sort remaining chunks by $Score(c_i)$ and route only the **Top-K** highest-scoring chunks to the `Rerank_Queue`.
+### 5.1 BM25 Cascade Router (`src/pipeline_v2/routing/bm25_cascade_router.py`)
+Performs 3-way triage on retrieved candidates based on normalized BM25 score and Aspect Coverage $\alpha$:
+- **Bypass ($\text{Score} \ge \tau_{\text{bypass}}$):** Confident matches skip LLM evaluation.
+- **Discard ($\text{Score} < \tau_{\text{discard}}$):** Irrelevant chunks are dropped.
+- **Rerank ($\tau_{\text{discard}} \le \text{Score} < \tau_{\text{bypass}}$):** Ambiguous chunks are routed to the reranker queue.
 
-### 3.4 `llm_reranker.py` (JSON-Structured Listwise)
-*Objective:* Rerank ambiguous chunks utilizing the LLM while avoiding sequence-break hallucinations.
+### 5.2 Listwise LLM Reranker (`src/pipeline_v2/reranker/listwise_reranker.py`)
+Performs single-pass listwise LLM evaluation using ~250-token sentence snippets extracted around anchor hits to reduce prompt token load by ~75%.
 
-- **JSON Evidence Wrapping:** The discontinuous intervals $M_i$ from the `Rerank_Queue` are mapped directly into a programmatic JSON schema before LLM ingestion:
-  ```json
-  {
-    "chunk_id": "c_42",
-    "evidence_samples": [
-      "[String of interval m_1]",
-      "[String of interval m_2]"
-    ]
-  }
-  ```
-- **Logit Relevance Scoring:** The instruction-tuned LLM processes the JSON payload as independent "evidence variables." The system prompts the LLM for a binary relevance classification and extracts the positive probability logit score for $c_i$. This reranks the Top-K queue while minimizing token evaluation costs compared to processing uncompressed chunks.
-
-### 3.5 `late_expansion.py` (VRAM Control & Final Generation)
-*Objective:* Restore context for generation and enforce absolute hardware limits.
-
-- **Late-Expand:** Discard the lossy compressed intervals. Using the indices of the winning chunks (from both the `Bypass_List` and `Rerank_Queue`), fetch the *original, uncompressed* text chunks $c_i$.
-- **VRAM Overflow Protection ($N_{max}$):** The system defines $N_{max}$ as the absolute maximum number of full-length chunks the KV cache can accommodate safely before OOM failure. If the total selected chunks exceed $N_{max}$, the list must be forcefully truncated based on the initial density scores.
-- **Generation:** Pass the uncompressed sequence to the LLM to generate the final end-to-end answer.
+### 5.3 Late Expansion & Generation (`src/pipeline_v2/expansion_late/late_expansion.py`)
+Restores full uncompressed chunk text from winner indices, enforces hardware VRAM safety budget ($N_{max} \le 10$), and prompts the local LLM to generate the final fact-grounded answer.

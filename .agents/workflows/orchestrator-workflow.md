@@ -1,28 +1,23 @@
 ---
-description: Edge-RAG orchestrator for planning, delegation, and verification.
+description: Edge-RAG orchestrator for planning and verification.
 trigger: always_on
 ---
 
 # Edge-RAG Orchestrator Workflow
-**Role prefix:** `[Orchestrator]`
 
 ## Pre-Planning
-1. Read all rules in `Edge-RAG/.agents/rules/`.
-2. Read `docs/ARCHITECTURE.md`.
-3. Read `draft.md` §IV–V for methodology & evaluation.
+1. Read all rules in `.agents/rules/`.
+2. Read `docs/ARCHITECTURE.md` (canonical Edge-RAG V2 architecture).
+3. Read `configs/pipeline_v2.yaml` for authoritative active parameters.
 
 ## Planning
 1. Understand requirements.
-2. Generate plan in `task.md` and `implementation_plan.md`.
-3. Delegate with atomic, verifiable checklist items.
-4. First item for every role: read rules + workflow.
-
-## Implementation → QA Handoff
-Before [QA]:
-1. Verify all [Pipeline]/[Evaluator] items marked [x].
-2. Write `### QA Brief` with: files changed, what to break (≥2), blast radius.
+2. Generate plan in `implementation_plan.md`.
+3. Break into atomic, verifiable checklist items.
 
 ## Validation Gate
-- docs/ARCHITECTURE.md matches implemented pipeline.
-- configs/ YAML matches actual code defaults.
-- results/ outputs complete before reporting.
+- `docs/ARCHITECTURE.md` matches implemented pipeline.
+- `src/pipeline_v2/**/pathway_*.md` docs match their corresponding module implementations.
+- `configs/pipeline_v2.yaml` matches actual code defaults.
+- `docs/manuscript_evidence_map.md` artifact paths are valid.
+- `results/` outputs complete before reporting.

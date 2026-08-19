@@ -1,0 +1,251 @@
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Single 1
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_1/final_benchmark_corpus_single_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_single_1_20260728_023058.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 90.0% | 95.0% | 5.1% | 26 | 0 | 14.56s | 13.27s | 2.79 GB | 1.74 GB | 9.13 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 96.2% | 65.0% | 95.0% | 10.6% | 6 | 9 | 16.94s | 13.27s | 2.79 GB | 1.72 GB | 10.75 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 84.6% | 75.0% | 85.0% | 18.6% | 6 | 10 | 15.28s | 13.27s | 2.79 GB | 1.74 GB | 7.53 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 96.2% | 70.0% | 85.0% | 17.3% | 1 | 16 | 15.68s | 13.27s | 2.79 GB | 1.74 GB | 8.35 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 96.2% | 75.0% | 85.0% | 20.2% | 1 | 18 | 23.59s | 13.27s | 2.79 GB | 1.60 GB | 13.06 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Single 2
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_2/final_benchmark_corpus_single_2.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_single_2_20260728_023748.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 100.0% | 100.0% | 7.7% | 28 | 0 | 12.79s | 11.96s | 2.79 GB | 1.75 GB | 12.61 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 100.0% | 95.0% | 95.0% | 12.2% | 10 | 14 | 15.26s | 11.96s | 2.79 GB | 1.75 GB | 12.63 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 92.9% | 80.0% | 85.0% | 23.8% | 0 | 20 | 22.77s | 11.96s | 2.79 GB | 1.75 GB | 12.63 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 85.7% | 80.0% | 80.0% | 15.0% | 8 | 10 | 14.10s | 11.96s | 2.79 GB | 1.75 GB | 12.73 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 92.9% | 70.0% | 80.0% | 12.8% | 0 | 15 | 14.74s | 11.96s | 2.79 GB | 1.75 GB | 12.68 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Single 3
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_3/final_benchmark_corpus_single_3.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_single_3_20260728_024256.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 100.0% | 100.0% | 8.3% | 22 | 0 | 11.46s | 11.05s | 2.79 GB | 1.74 GB | 12.52 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 100.0% | 87.5% | 93.8% | 15.1% | 5 | 13 | 14.04s | 11.05s | 2.79 GB | 1.74 GB | 12.56 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 95.5% | 81.2% | 93.8% | 29.1% | 0 | 16 | 21.15s | 11.05s | 2.79 GB | 1.74 GB | 12.49 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 90.9% | 68.8% | 75.0% | 23.3% | 7 | 7 | 13.43s | 11.05s | 2.79 GB | 1.74 GB | 12.58 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 95.5% | 62.5% | 68.8% | 21.2% | 0 | 11 | 13.70s | 11.05s | 2.79 GB | 1.74 GB | 12.57 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Single 4
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_4/final_benchmark_corpus_single_4.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_single_4_20260728_025014.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 90.0% | 95.0% | 5.3% | 25 | 0 | 12.16s | 11.28s | 2.79 GB | 1.75 GB | 12.51 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 96.0% | 65.0% | 95.0% | 9.3% | 4 | 11 | 14.73s | 11.28s | 2.79 GB | 1.75 GB | 12.62 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 80.0% | 95.0% | 17.5% | 1 | 20 | 23.30s | 11.28s | 2.79 GB | 1.75 GB | 12.41 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 60.0% | 85.0% | 12.7% | 1 | 12 | 14.09s | 11.28s | 2.79 GB | 1.75 GB | 12.59 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 76.0% | 60.0% | 80.0% | 13.3% | 7 | 8 | 13.82s | 11.28s | 2.79 GB | 1.75 GB | 12.58 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Single 5
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_single_5/final_benchmark_corpus_single_5.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_single_5_20260728_025710.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 90.0% | 95.0% | 3.9% | 23 | 1 | 12.91s | 10.92s | 2.79 GB | 1.75 GB | 12.47 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 87.5% | 75.0% | 95.0% | 7.7% | 6 | 10 | 14.49s | 10.92s | 2.79 GB | 1.75 GB | 12.52 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 87.5% | 70.0% | 90.0% | 13.0% | 0 | 14 | 13.56s | 10.92s | 2.79 GB | 1.75 GB | 12.47 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 87.5% | 75.0% | 85.0% | 16.8% | 0 | 16 | 21.31s | 10.92s | 2.79 GB | 1.75 GB | 12.61 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 70.8% | 55.0% | 65.0% | 9.4% | 2 | 11 | 12.70s | 10.92s | 2.79 GB | 1.75 GB | 12.36 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Multi 1
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_multi_1/final_benchmark_corpus_multi_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_multi_1_20260728_033214.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 99.2% | 90.4% | 93.6% | 1.6% | 121 | 0 | 14.21s | 11.97s | 2.79 GB | 1.77 GB | 12.51 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 93.4% | 76.6% | 83.0% | 22.0% | 1 | 94 | 24.35s | 11.97s | 2.79 GB | 1.63 GB | 11.56 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 93.4% | 67.0% | 80.9% | 13.6% | 0 | 80 | 14.70s | 11.97s | 2.79 GB | 1.77 GB | 12.49 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 81.2% | 64.9% | 77.7% | 15.4% | 30 | 47 | 14.11s | 11.97s | 2.79 GB | 1.76 GB | 12.40 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 65.6% | 56.4% | 74.5% | 7.4% | 19 | 43 | 15.78s | 11.97s | 2.79 GB | 1.71 GB | 13.11 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Multi 2
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_multi_2/final_benchmark_corpus_multi_2.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_multi_2_20260728_040844.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 96.2% | 89.6% | 96.9% | 1.7% | 125 | 1 | 15.04s | 12.63s | 2.79 GB | 1.77 GB | 12.22 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 85.5% | 74.0% | 84.4% | 21.7% | 2 | 91 | 25.17s | 12.63s | 2.79 GB | 1.63 GB | 11.64 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 85.5% | 60.4% | 78.1% | 13.5% | 2 | 73 | 15.52s | 12.63s | 2.79 GB | 1.77 GB | 12.14 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 67.9% | 58.3% | 72.9% | 8.4% | 29 | 42 | 16.27s | 12.63s | 2.79 GB | 1.66 GB | 13.17 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 67.2% | 60.4% | 71.9% | 8.8% | 24 | 47 | 14.97s | 12.63s | 2.79 GB | 1.76 GB | 11.80 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Multi 3
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_multi_3/final_benchmark_corpus_multi_3.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_multi_3_20260728_044758.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 95.9% | 87.9% | 91.9% | 1.9% | 110 | 6 | 14.73s | 12.41s | 2.79 GB | 1.77 GB | 12.23 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 89.3% | 69.7% | 78.8% | 15.4% | 6 | 82 | 25.94s | 12.41s | 2.79 GB | 1.50 GB | 11.59 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 74.6% | 65.7% | 77.8% | 13.4% | 37 | 42 | 14.70s | 12.41s | 2.79 GB | 1.77 GB | 11.67 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 89.3% | 58.6% | 75.8% | 11.2% | 6 | 62 | 15.43s | 12.41s | 2.79 GB | 1.77 GB | 12.31 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 69.7% | 54.5% | 70.7% | 8.3% | 26 | 41 | 16.20s | 12.41s | 2.79 GB | 1.62 GB | 13.21 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Single 1
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_1/final_benchmark_corpus_single_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_single_1_20260728_045254.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 93.8% | 93.8% | 9.0% | 24 | 0 | 12.05s | 11.70s | 2.79 GB | 1.74 GB | 11.63 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 95.8% | 75.0% | 93.8% | 15.6% | 0 | 12 | 14.19s | 11.70s | 2.79 GB | 1.74 GB | 11.63 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 95.8% | 81.2% | 93.8% | 17.7% | 0 | 20 | 20.97s | 11.70s | 2.79 GB | 1.74 GB | 12.00 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 79.2% | 62.5% | 87.5% | 19.2% | 8 | 7 | 13.49s | 11.70s | 2.79 GB | 1.74 GB | 11.62 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 100.0% | 81.2% | 87.5% | 15.3% | 2 | 13 | 15.24s | 11.70s | 2.79 GB | 1.74 GB | 11.81 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Single 2
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_2/final_benchmark_corpus_single_2.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_single_2_20260728_050018.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 85.0% | 85.0% | 3.0% | 23 | 0 | 12.88s | 11.00s | 2.79 GB | 1.75 GB | 12.09 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 87.0% | 70.0% | 80.0% | 8.8% | 9 | 9 | 14.29s | 11.00s | 2.79 GB | 1.75 GB | 12.20 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 95.7% | 75.0% | 80.0% | 17.9% | 0 | 20 | 22.52s | 11.00s | 2.79 GB | 1.75 GB | 12.08 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 95.7% | 70.0% | 75.0% | 14.2% | 0 | 17 | 13.71s | 11.00s | 2.79 GB | 1.75 GB | 12.08 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 78.3% | 60.0% | 65.0% | 17.2% | 5 | 11 | 13.09s | 11.00s | 2.79 GB | 1.75 GB | 12.06 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Single 3
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_3/final_benchmark_corpus_single_3.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_single_3_20260728_050542.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 81.2% | 87.5% | 4.9% | 23 | 0 | 12.27s | 11.53s | 2.79 GB | 1.75 GB | 12.15 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 87.0% | 68.8% | 87.5% | 10.9% | 4 | 12 | 15.28s | 11.53s | 2.79 GB | 1.75 GB | 12.14 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 91.3% | 75.0% | 75.0% | 29.8% | 1 | 16 | 21.69s | 11.53s | 2.79 GB | 1.75 GB | 12.06 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 91.3% | 56.2% | 68.8% | 14.5% | 1 | 11 | 14.04s | 11.53s | 2.79 GB | 1.75 GB | 12.15 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 78.3% | 50.0% | 56.2% | 12.0% | 8 | 3 | 13.46s | 11.53s | 2.79 GB | 1.75 GB | 12.10 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Single 4
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_4/final_benchmark_corpus_single_4.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_single_4_20260728_051224.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 95.0% | 95.0% | 4.5% | 24 | 1 | 12.96s | 11.26s | 2.79 GB | 1.75 GB | 12.18 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 88.0% | 80.0% | 90.0% | 14.4% | 0 | 17 | 13.84s | 11.26s | 2.79 GB | 1.75 GB | 12.06 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 88.0% | 75.0% | 90.0% | 7.4% | 4 | 11 | 14.45s | 11.26s | 2.79 GB | 1.75 GB | 12.31 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 76.0% | 60.0% | 85.0% | 15.4% | 5 | 9 | 13.26s | 11.26s | 2.79 GB | 1.75 GB | 12.03 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 88.0% | 75.0% | 80.0% | 18.9% | 0 | 18 | 21.31s | 11.26s | 2.79 GB | 1.75 GB | 12.22 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Single 5
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_single_5/final_benchmark_corpus_single_5.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_single_5_20260728_051751.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 93.8% | 93.8% | 4.3% | 20 | 1 | 11.96s | 11.08s | 2.79 GB | 1.75 GB | 12.23 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 100.0% | 75.0% | 93.8% | 13.9% | 0 | 14 | 13.42s | 11.08s | 2.79 GB | 1.75 GB | 12.26 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 95.2% | 68.8% | 93.8% | 8.9% | 7 | 9 | 14.73s | 11.08s | 2.79 GB | 1.75 GB | 12.25 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 100.0% | 75.0% | 81.2% | 14.7% | 0 | 14 | 21.73s | 11.08s | 2.79 GB | 1.75 GB | 12.43 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 71.4% | 62.5% | 75.0% | 19.4% | 0 | 12 | 12.99s | 11.08s | 2.79 GB | 1.75 GB | 12.24 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Multi 1
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_multi_1/final_benchmark_corpus_multi_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_multi_1_20260728_054942.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 95.7% | 89.7% | 97.7% | 1.8% | 111 | 0 | 14.93s | 12.62s | 2.79 GB | 1.76 GB | 12.49 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 78.5% | 69.0% | 83.9% | 19.5% | 6 | 68 | 24.79s | 12.62s | 2.79 GB | 1.51 GB | 11.81 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 78.5% | 59.8% | 82.8% | 10.7% | 6 | 51 | 15.26s | 12.62s | 2.79 GB | 1.76 GB | 12.25 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 74.1% | 64.4% | 79.3% | 15.3% | 28 | 42 | 14.61s | 12.62s | 2.79 GB | 1.76 GB | 12.54 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 67.2% | 56.3% | 79.3% | 7.4% | 20 | 43 | 16.09s | 12.62s | 2.79 GB | 1.62 GB | 13.38 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Multi 2
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_multi_2/final_benchmark_corpus_multi_2.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_multi_2_20260728_062345.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 100.0% | 92.4% | 96.7% | 1.6% | 123 | 2 | 14.62s | 12.25s | 2.79 GB | 1.77 GB | 12.42 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 84.8% | 77.2% | 88.0% | 20.8% | 2 | 87 | 24.35s | 12.25s | 2.79 GB | 1.39 GB | 11.52 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 84.8% | 63.0% | 82.6% | 12.4% | 2 | 70 | 14.90s | 12.25s | 2.79 GB | 1.77 GB | 12.20 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 71.2% | 65.2% | 77.2% | 15.9% | 15 | 58 | 14.39s | 12.25s | 2.79 GB | 1.77 GB | 12.01 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 68.0% | 60.9% | 75.0% | 8.3% | 22 | 48 | 15.86s | 12.25s | 2.79 GB | 1.58 GB | 13.18 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Multi 3
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_multi_3/final_benchmark_corpus_multi_3.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_multi_3_20260728_070002.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 97.5% | 89.6% | 95.8% | 1.3% | 118 | 0 | 14.88s | 12.42s | 2.79 GB | 1.77 GB | 12.39 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 84.3% | 76.0% | 86.5% | 17.3% | 2 | 83 | 24.78s | 12.42s | 2.79 GB | 1.33 GB | 11.67 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 84.3% | 68.8% | 84.4% | 13.0% | 2 | 73 | 15.17s | 12.42s | 2.79 GB | 1.77 GB | 12.15 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 65.3% | 53.1% | 71.9% | 6.9% | 20 | 37 | 15.96s | 12.42s | 2.79 GB | 1.56 GB | 13.41 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 63.6% | 57.3% | 69.8% | 10.3% | 13 | 52 | 14.64s | 12.42s | 2.79 GB | 1.77 GB | 11.83 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b AI Corpus Stress 1
+**Benchmark Dataset:** `data/benchmarks/ai/corpus_stress_1/final_benchmark_corpus_stress_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_ai_corpus_stress_1_20260728_085022.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 96.6% | 87.7% | 95.4% | 0.6% | 364 | 1 | 16.76s | 14.37s | 2.79 GB | 1.72 GB | 12.60 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 84.4% | 73.3% | 81.8% | 18.0% | 8 | 265 | 27.29s | 14.37s | 2.79 GB | 0.87 GB | 11.40 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 84.4% | 65.6% | 81.1% | 13.4% | 8 | 219 | 17.29s | 14.37s | 2.79 GB | 1.77 GB | 12.40 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 70.6% | 61.8% | 72.3% | 11.9% | 83 | 137 | 16.74s | 14.37s | 2.79 GB | 1.78 GB | 12.36 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 52.1% | 46.7% | 62.1% | 8.0% | 62 | 105 | 17.97s | 14.37s | 2.79 GB | 0.99 GB | 12.81 GB |
+
+====================================================================================================
+
+# Gemma4:e2b Benchmark Evaluation: Gemma4:e2b Fintech Corpus Stress 1
+**Benchmark Dataset:** `data/benchmarks/fintech/corpus_stress_1/final_benchmark_corpus_stress_1.json`
+**Results Log:** `results/benchmark_final/pipeline_run_gemma4_fintech_corpus_stress_1_20260728_103511.json`
+
+| Combination | Pre-Rerank Recall | Strict Recall | Ext Recall | Precision | Bypass Hits | Rerank Rescues | Avg Latency | Index Overhead | Model VRAM | Pipeline RAM | System RAM |
+|-------------|-------------------|---------------|------------|-----------|-------------|----------------|-------------|----------------|------------|--------------|------------|
+| SimilarKW_Statistical_IDF_Adaptive_Listwise | 97.8% | 89.8% | 95.1% | 0.6% | 356 | 2 | 17.67s | 15.25s | 2.79 GB | 1.55 GB | 12.66 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Listwise | 79.2% | 63.4% | 79.9% | 12.9% | 4 | 207 | 17.91s | 15.25s | 2.79 GB | 1.69 GB | 12.55 GB |
+| AspectOnly_Dense_Vocab_V3_Cascade_Pointwise | 79.2% | 67.6% | 75.0% | 19.1% | 4 | 222 | 26.66s | 15.25s | 2.79 GB | 0.87 GB | 11.60 GB |
+| AspectOnly_Dense_Vocab_V3_Adaptive_Listwise | 60.4% | 57.0% | 66.2% | 6.2% | 39 | 143 | 17.33s | 15.25s | 2.79 GB | 1.74 GB | 12.58 GB |
+| SimilarKW_Statistical_IDF_Cascade_Listwise | 54.1% | 48.9% | 63.0% | 6.7% | 52 | 113 | 18.75s | 15.25s | 2.79 GB | 0.99 GB | 13.00 GB |
+
+====================================================================================================

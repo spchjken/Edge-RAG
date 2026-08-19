@@ -12,7 +12,8 @@ class AdaptiveRouter:
             
         routing_cfg = config.get("routing", {})
         self.tau_bypass = routing_cfg.get("tau_bypass", 0.85)
-        self.top_k = routing_cfg.get("top_k", 5)
+        self.tau_discard = routing_cfg.get("tau_discard", 0.15)
+        self.top_k = routing_cfg.get("top_k", 20)
 
     def route_chunks(self, chunks_data: List[Dict[str, Any]], query_aspects: List[Dict[str, Any]]) -> Tuple[List[Dict], List[Dict]]:
         """
@@ -82,8 +83,9 @@ class AdaptiveRouter:
             # 4. Routing Decision
             if score > self.tau_bypass:
                 bypass_list.append(chunk)
-            else:
+            elif score >= self.tau_discard:
                 candidate_pool.append(chunk)
+            # else: discarded
                 
         # Sort candidates descending and take top-K for the Rerank Queue
         candidate_pool.sort(key=lambda x: x["score"], reverse=True)

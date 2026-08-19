@@ -19,6 +19,7 @@ class LLMClient:
         self.backend = self.model_config["backend"]
         self.endpoint = self.model_config["endpoint"]
         self.tag = self.model_config.get("tag", "")
+        self.context_window = self.model_config.get("context_window", 2048)
 
     def generate(self, prompt: str, json_schema: Optional[Dict[str, Any]] = None, temperature: float = 0.0) -> str:
         """
@@ -30,19 +31,33 @@ class LLMClient:
                 "model": self.tag,
                 "prompt": prompt,
                 "stream": False,
+                "think": False,
                 "options": {
-                    "temperature": temperature
+                    "temperature": temperature,
+                    "num_ctx": self.context_window,
+                    "num_predict": 4096
                 }
             }
             if json_schema:
-                # Ollama supports constrained decoding via the format parameter
+                # Ollama structured outputs: pass schema directly to `format`
+                # for constrained decoding via GBNF grammar (v0.5.0+).
+                # This guarantees valid JSON matching the schema shape,
+                # unlike `format: "json"` which is only a prompt-level hint.
                 payload["format"] = json_schema
                 
             response = requests.post(self.endpoint, json=payload)
             response.raise_for_status()
-            return response.json().get("response", "")
+            res_json = response.json()
+            out_text = res_json.get("response", "")
+            if not out_text and "thinking" in res_json:
+                out_text = res_json.get("thinking", "")
+            return out_text
             
         elif self.backend == "llama-cpp":
+            # Format ChatML natively and use prompt injection to shutdown thinking mode
+            if "<|im_start|>" not in prompt:
+                prompt = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n</think>\n\n"
+
             payload = {
                 "prompt": prompt,
                 "temperature": temperature,

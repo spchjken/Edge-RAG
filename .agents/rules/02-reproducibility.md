@@ -24,5 +24,16 @@ trigger: always_on
 - Report median over 3+ runs with std deviation.
 
 ## 5. Results Integrity
-- Raw results → results/ as timestamped CSVs.
+- Raw results → results/ as timestamped CSVs / JSONs.
 - Never overwrite previous results.
+- Results directory structure:
+  - `results/v2_ablation/` — Multi-corpus evaluation sweeps & schema ablations for Pipeline V2
+  - `results/pipeline_combinations/` — Full combination matrix runs
+  - `results/pipeline_test/` — Per-module test outputs (query_expansion/, etc.)
+  - `results/routing_test/` — Cascade Router threshold sensitivity
+  - `results/baseline_test/` — Baseline model evaluations
+  - `results/benchmarks/` — Final benchmark results
+
+## 6. Reporting
+- `report.md` in project root serves as the weekly progress artifact.
+- `docs/manuscript_evidence_map.md` links paper claims to empirical data files.

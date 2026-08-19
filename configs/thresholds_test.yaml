@@ -1,0 +1,8 @@
+routing:
+  tau_alpha: 0.4
+  tau_mu: 0.1
+  tau_phi: 0.5
+  tau_alpha_low: 0.05
+  tau_mu_low: 0.01
+  N_max: 5
+  top_k: 10
