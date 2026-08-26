@@ -27,14 +27,15 @@ The score is `Score(D) = Σ_t w_Q(t)·IDF(t)·ψ(t)`. Multiplying **all** POS we
 
 Fix **noun = 1.0** as the reference and grid the two ratios.
 
-### Grid (20 cells)
+### Grid (56 cells — Option B Uniform High-Density)
 
-| Axis | Values |
-| :--- | :--- |
-| `verb/noun` | `{0.5, 0.7, 0.85, 1.0}` (4) |
-| `modifier/noun` | `{0.3, 0.5, 0.7, 0.85, 1.0}` (5) |
+| Axis | Values | Count |
+| :--- | :--- | :---: |
+| `verb/noun` | `{0.2, 0.4, 0.6, 0.75, 0.9, 1.0, 1.2}` | 7 |
+| `modifier/noun` | `{0.0, 0.2, 0.4, 0.6, 0.75, 0.9, 1.0, 1.2}` | 8 |
 
-Current default `1.25 / 0.85 / 0.70` = ratios `0.68 / 0.56` — inside the grid, so the neighborhood is covered.
+- **Total grid points:** $7 \times 8 = \mathbf{56\text{ cells}}$.
+- **Coverage:** Includes complete modifier suppression (`modifier = 0.0`), intermediate fine-grained ratios around the historical default (`1.25/0.85/0.70` $\implies$ ratios `0.68/0.56`), uniform anchor control (`1.0/1.0`), and inverted boost (`1.2`).
 
 ---
 

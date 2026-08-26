@@ -12,7 +12,7 @@ Implements the 5-stage pipeline:
 """
 
 import re
-from typing import List, Set, Optional, Callable
+from typing import List, Set, Optional, Callable, Tuple
 from .tokenizer import EdgeRAGTokenizer
 
 # Standard Lucene English stopword set (~33 words)
@@ -26,50 +26,39 @@ LUCENE_STOPWORDS: Set[str] = {
 TECHNICAL_PATTERN = re.compile(r'^[a-z0-9]+(?:[-._][a-z0-9]+)+$|^[a-z0-9]*\d+[a-z0-9]*$', re.IGNORECASE)
 
 
-def _init_stemmer(stemmer_name: str = "kstem") -> Callable[[str], str]:
-    """Initializes the requested stemmer with graceful pure-Python fallbacks."""
+def _init_stemmer(stemmer_name: str = "kstem") -> Tuple[Callable[[str], str], str]:
+    """
+    Initializes the requested stemmer and returns (stem_fn, resolved_name).
+    Strictly forbids silent fallback to Porter.
+    """
     if stemmer_name == "kstem":
         try:
             import krovetzstemmer
             k_stem = krovetzstemmer.Stemmer()
-            return lambda w: k_stem.stem(w)
-        except ImportError:
-            pass
-        try:
-            from nltk.stem import PorterStemmer
-            porter = PorterStemmer()
-            return lambda w: porter.stem(w)
-        except ImportError:
-            pass
-    elif stemmer_name in ("snowball", "porter"):
+            return (lambda w: k_stem.stem(w)), "krovetzstemmer (KStem 0.8)"
+        except ImportError as e:
+            raise RuntimeError(
+                "CRITICAL: stemmer='kstem' requested but 'krovetzstemmer' is not installed! "
+                "Silent fallback to Porter is strictly forbidden. Run: pip install KrovetzStemmer"
+            ) from e
+    elif stemmer_name == "snowball":
         try:
             from nltk.stem import SnowballStemmer
             snowball = SnowballStemmer("english")
-            return lambda w: snowball.stem(w)
-        except ImportError:
-            try:
-                from nltk.stem import PorterStemmer
-                porter = PorterStemmer()
-                return lambda w: porter.stem(w)
-            except ImportError:
-                pass
-
-    # Built-in lightweight fallback if no third-party package is installed:
-    # Handles basic English inflections (-s, -es, -ed, -ing) conservatively
-    def _light_stem(word: str) -> str:
-        if len(word) <= 3:
-            return word
-        if word.endswith("ing") and len(word) > 5:
-            return word[:-3]
-        if word.endswith("ed") and len(word) > 4:
-            return word[:-2]
-        if word.endswith("es") and len(word) > 4:
-            return word[:-2]
-        if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
-            return word[:-1]
-        return word
-
-    return _light_stem
+            return (lambda w: snowball.stem(w)), "nltk.SnowballStemmer"
+        except ImportError as e:
+            raise RuntimeError("stemmer='snowball' requested but nltk is not available") from e
+    elif stemmer_name == "porter":
+        try:
+            from nltk.stem import PorterStemmer
+            porter = PorterStemmer()
+            return (lambda w: porter.stem(w)), "nltk.PorterStemmer"
+        except ImportError as e:
+            raise RuntimeError("stemmer='porter' requested but nltk is not available") from e
+    elif not stemmer_name or stemmer_name == "none":
+        return (lambda w: w), "none"
+    else:
+        raise ValueError(f"Unknown stemmer: {stemmer_name}")
 
 
 class EdgeRAGAnalyzer:
@@ -89,7 +78,7 @@ class EdgeRAGAnalyzer:
         self.exempt_technical = exempt_technical
         self.stopwords = custom_stopwords if custom_stopwords is not None else LUCENE_STOPWORDS
         self.stemmer_name = stemmer
-        self.stem_fn = _init_stemmer(stemmer) if stemmer and stemmer != "none" else (lambda w: w)
+        self.stem_fn, self.resolved_stemmer = _init_stemmer(stemmer)
 
     def is_stem_exempt(self, token: str) -> bool:
         """Determines if a token is protected from stemming."""
