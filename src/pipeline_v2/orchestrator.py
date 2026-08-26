@@ -96,10 +96,11 @@ class PipelineV2Orchestrator:
         aspect_payload = self.extractor.extract(query, top_candidate_chunks=initial_top_chunks)
         metrics["expansion_latency_ms"] = (time.time() - t_exp_0) * 1000.0
 
-        # Step B: BM25 Retrieval w/ Token Repetition (Q_aug)
+        # Step B: BM25 Retrieval w/ Weighted Term Scoring
         t_ret_0 = time.time()
-        augmented_tokens = aspect_payload.get("augmented_token_list", query.lower().split())
-        candidates = self.indexer.retrieve(augmented_tokens, top_k=top_k_retrieval)
+        term_weights = aspect_payload.get("term_weights")
+        query_input = term_weights if term_weights is not None else aspect_payload.get("augmented_token_list", query.lower().split())
+        candidates = self.indexer.retrieve(query_input, top_k=top_k_retrieval)
         metrics["retrieval_latency_ms"] = (time.time() - t_ret_0) * 1000.0
 
         # Step C: Cascade Routing

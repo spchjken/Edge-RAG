@@ -21,10 +21,10 @@ trigger: always_on
 - `bm25_lucene_indexer.py` — `BM25LuceneIndexer`: Inverted posting list retrieval engine wrapping `LuceneBM25Baseline` ($k_1=1.2, b=0.75$).
 
 ### 2.2 Query Expansion (`src/pipeline_v2/expansion/`)
-- `bm25_dense_aspect_extractor.py` — `BM25DenseAspectExtractor`: Maps natural language queries to grounded aspect groups with weighted keywords and generates the augmented token query $Q_{\text{aug}}$ via token repetition.
-  - **Regex Heuristic Extraction:** Acronyms (`\b[A-Z]{2,}\b`), hyphenated terms, and exact quotes.
+- `bm25_dense_aspect_extractor.py` — `BM25DenseAspectExtractor`: Maps natural language queries to grounded aspect groups with weighted keywords and compiles the sparse term weight dictionary $\vec{w}_Q$ for direct vectorized BM25 retrieval.
+  - **Regex Heuristic Extraction:** Acronyms (`\b[A-Z]{2,}\b`), hyphenated terms, and exact quotes with entity validation gate ($\text{IDF} \ge 1.0$).
   - **Anchor Selection & Centrality:** Non-entity words ranked by IDF or Query Centrality with stem/semantic deduplication.
-  - **Dual BGE Probing:** $\text{Dual\_Sim}(A_k, v) = \beta \cdot \text{CosSim}(A_k, v) + (1 - \beta) \cdot \text{CosSim}(Q_{\text{full}}, v)$ (threshold $\tau_{\text{sim}} = 0.55, \beta = 0.65$).
+  - **Dual BGE Probing:** $\text{Dual\_Sim}(A_k, v) = \beta \cdot \text{CosSim}(A_k, v) + (1 - \beta) \cdot \text{CosSim}(Q_{\text{full}}, v)$ (threshold $\tau_{\text{sim}} = 0.55, \beta = 0.65$) with synonym weight capped at $1.0$.
   - **Active Schemas:** `BM25Dense_AspectInject` (Schema 1), `BM25Dense_FixedRepDynamicCapacity` (Schema 5a), `BM25Dense_DynamicAspectInject` (Schema 5b), `BM25Dense_CentralityFixedRep` (Schema 6a), `BM25Dense_CentralityDynamicInject` (Schema 6b), `BM25Dense_AspectWeighted`, `BM25Dense_AspectFusion`.
 
 ### 2.3 Downstream Extensions (Future Work)

@@ -1,3 +1,9 @@
+> ⚠️ **LEGACY DOCUMENT** — archived for historical reference. Superseded by [`theoretical_foundations_anchored_expansion.md`](theoretical_foundations_anchored_expansion.md).
+>
+> **Survival map:** the IT-MPE Theorem survives there as **Theorem 1**, generalized — it now holds for any allocation distribution $p$ (Softmax is one instance), any positive IDF function, and any $K \ge 1$ (§5). Corollary 1 (high-IDF noise immunity) survives (§6.1); the RM3 derivation survives as Axiom 1 (§4.1). The adaptive similarity gate $\tau_{sim}$ and the query-dependent ceiling $\mu(Q)$ are operational policies and moved to the V7 architectural plan.
+
+---
+
 # 🏛️ Theoretical Foundations of Query Expansion Weighting: The Information-Theoretic Mass-Preserving Expansion (IT-MPE) Theorem
 
 ---

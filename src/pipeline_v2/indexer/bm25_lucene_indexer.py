@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
+from collections import Counter
 from src.baselines.bm25 import LuceneBM25Baseline
 from .corpus_idf_registry import CorpusIDFRegistry
 
@@ -30,10 +31,26 @@ class BM25LuceneIndexer:
                 num_docs=len(corpus)
             )
 
-    def retrieve(self, tokenized_query: List[str], top_k: int = 50) -> List[Dict[str, Any]]:
+    def retrieve(
+        self, query_input: Union[List[str], str, Dict[str, float]], top_k: int = 50
+    ) -> List[Dict[str, Any]]:
         """
-        Retrieves top_k candidates given tokenized query terms.
-        Supports token repetition weighting.
+        Retrieves top_k candidates given tokenized query terms, raw query string, or term weights dict.
+        Supports weighted scoring and token repetition weighting.
         """
-        query_str = " ".join(tokenized_query)
-        return self.baseline.retrieve(query=query_str, top_k=top_k)
+        if isinstance(query_input, dict):
+            return self.baseline.retrieve_weighted(term_weights=query_input, top_k=top_k)
+        if isinstance(query_input, str):
+            tokenized_query = query_input.lower().split()
+        else:
+            tokenized_query = query_input
+        term_weights = {term: float(count) for term, count in Counter(tokenized_query).items()}
+        return self.baseline.retrieve_weighted(term_weights=term_weights, top_k=top_k)
+
+    def retrieve_weighted(self, term_weights: Dict[str, float], top_k: int = 50) -> List[Dict[str, Any]]:
+        """
+        Retrieves top_k candidates using weighted term scoring.
+        Args:
+            term_weights: Dict mapping each unique query term to its weight multiplier.
+        """
+        return self.baseline.retrieve_weighted(term_weights=term_weights, top_k=top_k)

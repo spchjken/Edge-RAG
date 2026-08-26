@@ -156,21 +156,55 @@ class BM25DenseAspectExtractor:
 
     def _build_augmented_tokens(self, aspects: List[Dict[str, Any]]) -> List[str]:
         """
-        Builds flattened token list w/ Token Repetition Weighting for BM25:
-        - Respects explicit kw["repeat_count"] if present
-        - Otherwise fallback: w = 1.0 -> Repeat 3 times, w >= 0.70 -> 2, w < 0.70 -> 1
+        Builds ordered list of unique lowercase tokens present across all aspect terms.
+        Deduplicates repeated tokens while preserving first-appearance order.
         """
-        token_list = []
+        tokens = []
         for asp in aspects:
             for kw in asp.get("keywords", []):
                 term = kw["term"]
-                weight = kw["weight"]
-                if "repeat_count" in kw:
-                    repeat_count = int(kw["repeat_count"])
-                else:
-                    repeat_count = 3 if weight >= 0.99 else (2 if weight >= 0.70 else 1)
-                token_list.extend(term.split() * repeat_count)
-        return token_list
+                for token in term.lower().split():
+                    if token not in tokens:
+                        tokens.append(token)
+        return tokens
+
+    def _build_term_weights(self, aspects: List[Dict[str, Any]]) -> Dict[str, float]:
+        """
+        Builds a weighted term dict for vectorized BM25 retrieval.
+        - Core anchors: receive their full assigned anchor_weight (e.g. 3.0, 4.0, etc.).
+        - Expansion terms / synonyms: capped at max 1.0 total weight across all aspects.
+        - For multi-word terms (bigrams), weight is distributed to constituent tokens.
+        """
+        anchor_weights: Dict[str, float] = {}
+        expansion_weights: Dict[str, float] = {}
+
+        for asp in aspects:
+            for idx, kw in enumerate(asp.get("keywords", [])):
+                term = kw["term"]
+                is_anchor = kw.get("is_anchor", (idx == 0 and kw.get("anchor_weight", 1.0) > 1.0))
+                weight = float(kw.get("weight", 1.0))
+                anchor_w = kw.get("anchor_weight", kw.get("repeat_count", None))
+
+                for token in term.lower().split():
+                    if is_anchor:
+                        multiplier = float(anchor_w) if anchor_w is not None else (3.0 if weight >= 0.99 else 2.0)
+                        anchor_weights[token] = anchor_weights.get(token, 0.0) + multiplier
+                    else:
+                        multiplier = min(1.0, float(weight))
+                        expansion_weights[token] = expansion_weights.get(token, 0.0) + multiplier
+
+        final_term_weights: Dict[str, float] = {}
+        # 1. Anchors get full weight
+        for token, w in anchor_weights.items():
+            final_term_weights[token] = round(w, 4)
+
+        # 2. Expansion terms are capped at 1.0 total
+        for token, w in expansion_weights.items():
+            if token not in final_term_weights:
+                final_term_weights[token] = round(min(1.0, w), 4)
+
+        return final_term_weights
+
 
     def _extract_aspect_inject(self, query: str, anchors: List[str]) -> Dict[str, Any]:
         """Schema 1: Force-injected anchors (w=1.0) + Top C_exp per-aspect expansion."""
@@ -186,7 +220,7 @@ class BM25DenseAspectExtractor:
         starved_aspects = 0
 
         for i, anchor in enumerate(anchors):
-            aspect_kw = [{"term": anchor, "weight": 1.0, "repeat_count": self.n_reps}]
+            aspect_kw = [{"term": anchor, "weight": 1.0, "anchor_weight": float(self.n_reps), "is_anchor": True}]
             anchor_idf = self.idf_registry.get_idf(anchor)
             cands_above_tau = []
             selected_synonyms = []
@@ -221,7 +255,7 @@ class BM25DenseAspectExtractor:
                     })
 
                 for term, weight, _, _ in candidates[:self.C_exp]:
-                    aspect_kw.append({"term": term, "weight": float(weight), "repeat_count": 1})
+                    aspect_kw.append({"term": term, "weight": float(weight), "anchor_weight": 1.0, "is_anchor": False})
                     selected_synonyms.append(term)
                     total_synonyms_injected += 1
             else:
@@ -236,7 +270,7 @@ class BM25DenseAspectExtractor:
                 "anchor_term": anchor,
                 "is_heuristic_entity": False,
                 "anchor_idf": float(anchor_idf),
-                "repetition": self.n_reps,
+                "anchor_weight": float(self.n_reps),
                 "capacity_cap": self.C_exp,
                 "total_candidates_above_tau": len(cands_above_tau),
                 "candidates_above_tau": cands_above_tau,
@@ -247,6 +281,7 @@ class BM25DenseAspectExtractor:
         return {
             "aspects": aspects,
             "augmented_token_list": aug_tokens,
+            "term_weights": self._build_term_weights(aspects),
             "telemetry": {
                 "num_anchors": len(anchors),
                 "total_candidates_above_tau": total_cands_above_tau,
@@ -294,7 +329,8 @@ class BM25DenseAspectExtractor:
 
         return {
             "aspects": aspects,
-            "augmented_token_list": self._build_augmented_tokens(aspects)
+            "augmented_token_list": self._build_augmented_tokens(aspects),
+            "term_weights": self._build_term_weights(aspects)
         }
 
     def _extract_local_cascade(self, query: str, anchors: List[str], top_chunks: List[str]) -> Dict[str, Any]:
@@ -313,7 +349,7 @@ class BM25DenseAspectExtractor:
     def _extract_aspect_fusion(self, query: str, anchors: List[str]) -> Dict[str, Any]:
         """Schema 4: HAC Aspect Clustering + Joint BM25/BGE Score Fusion."""
         if not anchors:
-            return {"aspects": [], "augmented_token_list": []}
+            return {"aspects": [], "augmented_token_list": [], "term_weights": {}}
 
         # Step A: HAC Clustering on Anchors
         anchor_vecs = self.vocab_matrix.encode_terms(anchors).numpy()
@@ -368,7 +404,8 @@ class BM25DenseAspectExtractor:
 
         return {
             "aspects": aspects,
-            "augmented_token_list": self._build_augmented_tokens(aspects)
+            "augmented_token_list": self._build_augmented_tokens(aspects),
+            "term_weights": self._build_term_weights(aspects)
         }
 
     def _extract_fixed_rep_dynamic_capacity(
@@ -410,7 +447,7 @@ class BM25DenseAspectExtractor:
                 scaled = self.r_min + (self.r_max - self.r_min) * (anchor_idf / max_query_idf)
                 r_dynamic_idf = int(np.clip(np.round(scaled), self.r_min, self.r_max))
 
-            aspect_kw = [{"term": anchor, "weight": 1.0, "repeat_count": r_anchor}]
+            aspect_kw = [{"term": anchor, "weight": 1.0, "anchor_weight": float(r_anchor), "is_anchor": True}]
             c_exp_aspect = int(np.clip(r_dynamic_idf + self.c, 1, 5))
             cands_above_tau = []
             selected_synonyms = []
@@ -444,7 +481,7 @@ class BM25DenseAspectExtractor:
                     })
 
                 for term, weight, _, _ in candidates[:c_exp_aspect]:
-                    aspect_kw.append({"term": term, "weight": float(weight), "repeat_count": 1})
+                    aspect_kw.append({"term": term, "weight": float(weight), "anchor_weight": 1.0, "is_anchor": False})
                     selected_synonyms.append(term)
                     total_synonyms_injected += 1
             else:
@@ -459,7 +496,7 @@ class BM25DenseAspectExtractor:
                 "anchor_term": anchor,
                 "is_heuristic_entity": is_heur,
                 "anchor_idf": float(anchor_idf),
-                "repetition": r_anchor,
+                "anchor_weight": float(r_anchor),
                 "capacity_cap": c_exp_aspect,
                 "total_candidates_above_tau": len(cands_above_tau),
                 "candidates_above_tau": cands_above_tau,
@@ -470,6 +507,7 @@ class BM25DenseAspectExtractor:
         return {
             "aspects": aspects,
             "augmented_token_list": aug_tokens,
+            "term_weights": self._build_term_weights(aspects),
             "telemetry": {
                 "num_anchors": len(anchors),
                 "total_candidates_above_tau": total_cands_above_tau,
@@ -520,7 +558,7 @@ class BM25DenseAspectExtractor:
                 r_anchor = int(np.clip(np.round(scaled), self.r_min, self.r_max))
 
             r_anchors.append(r_anchor)
-            aspect_kw = [{"term": anchor, "weight": 1.0, "repeat_count": r_anchor}]
+            aspect_kw = [{"term": anchor, "weight": 1.0, "anchor_weight": float(r_anchor), "is_anchor": True}]
 
             # Dynamic capacity cap for this aspect (C_exp = R_anchor + c, clamped in [1, 5])
             c_exp_aspect = int(np.clip(r_anchor + self.c, 1, 5))
@@ -556,7 +594,7 @@ class BM25DenseAspectExtractor:
                     })
 
                 for term, weight, _, _ in candidates[:c_exp_aspect]:
-                    aspect_kw.append({"term": term, "weight": float(weight), "repeat_count": 1})
+                    aspect_kw.append({"term": term, "weight": float(weight), "anchor_weight": 1.0, "is_anchor": False})
                     selected_synonyms.append(term)
                     total_synonyms_injected += 1
             else:
@@ -571,7 +609,7 @@ class BM25DenseAspectExtractor:
                 "anchor_term": anchor,
                 "is_heuristic_entity": is_heur,
                 "anchor_idf": float(anchor_idf),
-                "repetition": r_anchor,
+                "anchor_weight": float(r_anchor),
                 "capacity_cap": c_exp_aspect,
                 "total_candidates_above_tau": len(cands_above_tau),
                 "candidates_above_tau": cands_above_tau,
@@ -583,6 +621,7 @@ class BM25DenseAspectExtractor:
         return {
             "aspects": aspects,
             "augmented_token_list": aug_tokens,
+            "term_weights": self._build_term_weights(aspects),
             "telemetry": {
                 "num_anchors": len(anchors),
                 "total_candidates_above_tau": total_cands_above_tau,
@@ -599,7 +638,7 @@ class BM25DenseAspectExtractor:
         query: str,
         heuristic_entities: List[str],
         candidate_words: List[str],
-        min_entity_idf: float = 2.0
+        min_entity_idf: float = 1.0
     ) -> Tuple[List[str], List[str]]:
         """
         Schema 6 Anchor Selection:
@@ -703,9 +742,9 @@ class BM25DenseAspectExtractor:
             is_heur = anchor.lower() in val_entity_set
             anchor_idf = self.idf_registry.get_idf(anchor)
 
-            # Fixed anchor repetition
+            # Fixed anchor weight
             r_anchor = self.n_reps
-            aspect_kw = [{"term": anchor, "weight": 1.0, "repeat_count": r_anchor}]
+            aspect_kw = [{"term": anchor, "weight": 1.0, "anchor_weight": float(r_anchor), "is_anchor": True}]
 
             # Dynamic capacity with Zero-Floor (Fix B)
             if is_heur:
@@ -747,7 +786,7 @@ class BM25DenseAspectExtractor:
                     })
 
                 for term, weight, _, _ in candidates[:c_exp_aspect]:
-                    aspect_kw.append({"term": term, "weight": float(weight), "repeat_count": 1})
+                    aspect_kw.append({"term": term, "weight": float(weight), "anchor_weight": 1.0, "is_anchor": False})
                     selected_synonyms.append(term)
                     total_synonyms_injected += 1
             else:
@@ -763,7 +802,7 @@ class BM25DenseAspectExtractor:
                 "anchor_term": anchor,
                 "is_heuristic_entity": is_heur,
                 "anchor_idf": float(anchor_idf),
-                "repetition": r_anchor,
+                "anchor_weight": float(r_anchor),
                 "capacity_cap": c_exp_aspect,
                 "total_candidates_above_tau": len(cands_above_tau),
                 "candidates_above_tau": cands_above_tau,
@@ -774,6 +813,7 @@ class BM25DenseAspectExtractor:
         return {
             "aspects": aspects,
             "augmented_token_list": aug_tokens,
+            "term_weights": self._build_term_weights(aspects),
             "telemetry": {
                 "num_anchors": len(anchors),
                 "total_candidates_above_tau": total_cands_above_tau,
@@ -822,7 +862,7 @@ class BM25DenseAspectExtractor:
                 r_anchor = int(np.clip(np.round(scaled), self.r_min, self.r_max))
 
             r_anchors.append(r_anchor)
-            aspect_kw = [{"term": anchor, "weight": 1.0, "repeat_count": r_anchor}]
+            aspect_kw = [{"term": anchor, "weight": 1.0, "anchor_weight": float(r_anchor), "is_anchor": True}]
 
             # Dynamic capacity with Zero-Floor (Fix B)
             c_exp_aspect = int(np.clip(r_anchor + self.c, 0, 5))
@@ -858,7 +898,7 @@ class BM25DenseAspectExtractor:
                     })
 
                 for term, weight, _, _ in candidates[:c_exp_aspect]:
-                    aspect_kw.append({"term": term, "weight": float(weight), "repeat_count": 1})
+                    aspect_kw.append({"term": term, "weight": float(weight), "anchor_weight": 1.0, "is_anchor": False})
                     selected_synonyms.append(term)
                     total_synonyms_injected += 1
             else:
@@ -874,7 +914,7 @@ class BM25DenseAspectExtractor:
                 "anchor_term": anchor,
                 "is_heuristic_entity": is_heur,
                 "anchor_idf": float(anchor_idf),
-                "repetition": r_anchor,
+                "anchor_weight": float(r_anchor),
                 "capacity_cap": c_exp_aspect,
                 "total_candidates_above_tau": len(cands_above_tau),
                 "candidates_above_tau": cands_above_tau,
@@ -886,6 +926,7 @@ class BM25DenseAspectExtractor:
         return {
             "aspects": aspects,
             "augmented_token_list": aug_tokens,
+            "term_weights": self._build_term_weights(aspects),
             "telemetry": {
                 "num_anchors": len(anchors),
                 "total_candidates_above_tau": total_cands_above_tau,

@@ -1,0 +1,111 @@
+[
+  {
+    "query_id": "q_scifact_1",
+    "raw_question": "0-dimensional biomaterials show inductive properties.",
+    "aspects": [],
+    "augmented_token_list": [
+      "0-dimensional",
+      "biomaterials",
+      "show",
+      "inductive",
+      "properties."
+    ],
+    "ground_truth_chunk_ids": [
+      "31715818"
+    ],
+    "retrieved_top10_chunk_ids": [
+      "38037690",
+      "2904102",
+      "121581019",
+      "4346436",
+      "13583615",
+      "37437064",
+      "25950264",
+      "13231899",
+      "10982689",
+      "16736872"
+    ],
+    "metrics": {
+      "strict_hit@10": false,
+      "chunk_recall@10": 0.0,
+      "precision@10": 0.0,
+      "first_gold_rank": null,
+      "latency_ms": 12.59
+    }
+  },
+  {
+    "query_id": "q_scifact_100",
+    "raw_question": "All hematopoietic stem cells segregate their chromosomes randomly.",
+    "aspects": [],
+    "augmented_token_list": [
+      "all",
+      "hematopoietic",
+      "stem",
+      "cells",
+      "segregate",
+      "their",
+      "chromosomes",
+      "randomly."
+    ],
+    "ground_truth_chunk_ids": [
+      "4381486"
+    ],
+    "retrieved_top10_chunk_ids": [
+      "4381486",
+      "54561384",
+      "2701077",
+      "7583161",
+      "92499",
+      "10015292",
+      "13116880",
+      "14550841",
+      "34982259",
+      "1944452"
+    ],
+    "metrics": {
+      "strict_hit@10": true,
+      "chunk_recall@10": 1.0,
+      "precision@10": 0.1,
+      "first_gold_rank": 1,
+      "latency_ms": 11.97
+    }
+  },
+  {
+    "query_id": "q_scifact_1012",
+    "raw_question": "Radioiodine treatment of non-toxic multinodular goitre reduces thyroid volume.",
+    "aspects": [],
+    "augmented_token_list": [
+      "radioiodine",
+      "treatment",
+      "of",
+      "non-toxic",
+      "multinodular",
+      "goitre",
+      "reduces",
+      "thyroid",
+      "volume."
+    ],
+    "ground_truth_chunk_ids": [
+      "9745001"
+    ],
+    "retrieved_top10_chunk_ids": [
+      "9745001",
+      "43122426",
+      "6751418",
+      "26026009",
+      "37912677",
+      "7986878",
+      "12409683",
+      "23599024",
+      "41340212",
+      "31616203"
+    ],
+    "metrics": {
+      "strict_hit@10": true,
+      "chunk_recall@10": 1.0,
+      "precision@10": 0.1,
+      "first_gold_rank": 1,
+      "latency_ms": 10.97
+    }
+  }
+]

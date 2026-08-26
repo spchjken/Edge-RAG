@@ -31,7 +31,7 @@ In Schema 6, candidate query words are scored by their **Semantic Centrality** t
 $$\text{Centrality\_Score}(w) = \text{IDF}(w) \times \text{CosSim}\left(\mathbf{e}_w, \mathbf{e}_{Q_{\text{full}}}\right)$$
 
 - **Stem & Semantic Deduplication:** Discards morphological duplicates (e.g. `upload` vs `uploads` with stem overlap or $\text{CosSim} \ge 0.90$) to rescue unrepresented intent keywords.
-- **Fix B (Validated Entity Check):** Acronyms receive entity boosts ($R = r_{\max}$) only if $\text{IDF}(w) \ge 2.0$.
+- **Fix B (Validated Entity Check):** Acronyms and heuristic expressions receive entity boosts ($W = r_{\max}$) when $\text{IDF}(w) \ge 1.0$ (allowing domain-essential acronyms such as `API`, `USD`, `SDK` up to 36.8% corpus prevalence while filtering universal conversational stopwords).
 
 ### 2.3 Dual BGE Semantic Similarity Probing
 For each Aspect Anchor $A_k$, cosine similarity is computed against candidate vocabulary terms $v \in \mathcal{V}_{\text{clean}}$ and the full query $Q_{\text{full}}$:
@@ -39,38 +39,42 @@ $$\text{Dual\_Sim}(A_k, v) = \beta \cdot \text{CosSim}(A_k, v) + (1 - \beta) \cd
 where default $\beta = 0.65$, with threshold $\tau_{\text{sim}} = 0.55$.
 
 ### 2.4 Schema 5a: Fixed Repetition & Dynamic Capacity Capping
-* **Anchor Repetition:** Fixed at $R_{\text{anchor}} = n_{\text{reps}}$ ($3\times$ or $4\times$) for all anchors.
+* **Anchor Weight:** Fixed at $W_{\text{anchor}} = n_{\text{reps}}$ ($3.0$ or $4.0$) for all anchors.
 * **Dynamic Aspect Capacity:**
   $$R_{\text{dynamic\_IDF}}(A_k) = \text{clamp}\left( \text{round}\left(r_{\min} + (r_{\max} - r_{\min}) \times \frac{\text{IDF}(A_k)}{\text{Max\_Query\_IDF}}\right), r_{\min}, r_{\max} \right)$$
   $$C_{\text{exp}}(A_k) = \text{clamp}\left(R_{\text{dynamic\_IDF}}(A_k) + c, 1, 5\right)$$
   where $\text{Max\_Query\_IDF} = \max_{a \in \text{anchors}} \text{IDF}(a)$.
 
 ### 2.5 Schema 5b: Dynamic Repetition & Coupled Capacity Capping
-* **Dynamic Anchor Repetition:**
-  $$R_{\text{anchor}}(A_k) = \begin{cases} r_{\max} & \text{if } A_k \text{ is a Heuristic Entity} \\ \text{clamp}\left( \text{round}\left(r_{\min} + (r_{\max} - r_{\min}) \times \frac{\text{IDF}(A_k)}{\text{Max\_Query\_IDF}}\right), r_{\min}, r_{\max} \right) & \text{otherwise} \end{cases}$$
+* **Dynamic Anchor Weight:**
+  $$W_{\text{anchor}}(A_k) = \begin{cases} r_{\max} & \text{if } A_k \text{ is a Heuristic Entity} \\ \text{clamp}\left( \text{round}\left(r_{\min} + (r_{\max} - r_{\min}) \times \frac{\text{IDF}(A_k)}{\text{Max\_Query\_IDF}}\right), r_{\min}, r_{\max} \right) & \text{otherwise} \end{cases}$$
 * **Coupled Synonym Capacity:**
-  $$C_{\text{exp}}(A_k) = \text{clamp}\left(R_{\text{anchor}}(A_k) + c, 1, 5\right)$$
+  $$C_{\text{exp}}(A_k) = \text{clamp}\left(W_{\text{anchor}}(A_k) + c, 1, 5\right)$$
 
 ### 2.6 Schema 6a & 6b: Centrality-Gated & Diversity-Pruned Expansion
-* **Schema 6a (`BM25Dense_CentralityFixedRep`):** Fixed $R_{\text{anchor}} = n_{\text{reps}}$ ($3\times$ or $4\times$) + Zero-Floor Capacity $C_{\text{exp}} = \max(0, R_{\text{dyn}} + c)$.
-* **Schema 6b (`BM25Dense_CentralityDynamicInject`):** Validated Entity Boost + Dynamic Anchor Repetition $R(A_k) \in [r_{\min}, r_{\max}]$ + Zero-Floor Capacity $C_{\text{exp}} = \max(0, R(A_k) + c)$.
+* **Schema 6a (`BM25Dense_CentralityFixedRep`):** Fixed $W_{\text{anchor}} = n_{\text{reps}}$ ($3.0$ or $4.0$) + Zero-Floor Capacity $C_{\text{exp}} = \max(0, R_{\text{dyn}} + c)$.
+* **Schema 6b (`BM25Dense_CentralityDynamicInject`):** Validated Entity Boost + Dynamic Anchor Weight $W(A_k) \in [r_{\min}, r_{\max}]$ + Zero-Floor Capacity $C_{\text{exp}} = \max(0, W(A_k) + c)$.
 
 ---
 
-## 3. Token Repetition Query Augmentation ($Q_{\text{aug}}$)
+## 3. Direct Weighted Term Vector Retrieval ($\vec{w}_Q$)
 
-Continuous aspect weights are quantized into discrete token repetitions for standard Lucene BM25:
+Rather than quantizing weights into repetitive string tokens ($Q_{\text{aug}}$), the extractor compiles a direct sparse weight vector $\vec{w}_Q = \{t: W_Q(t)\}$ evaluated in a single vectorized pass by `BM25LuceneIndexer.retrieve_weighted()`:
 
-$$\text{Repeat Count} = \begin{cases} R_{\text{anchor}}(A_k) & \text{for Aspect Anchors (per schema definition)} \\ 1\times & \text{for Expanded Synonyms } (v \text{ passing } \text{Dual\_Sim} \ge \tau_{\text{sim}}) \end{cases}$$
+$$\text{Score}(D, Q) = \sum_{t \in \text{keys}(\vec{w}_Q)} W_Q(t) \cdot \text{IDF}(t) \cdot \frac{\text{TF}(t, D) \cdot (k_1 + 1)}{\text{TF}(t, D) + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgDL}}\right)}$$
 
-The flattened token list $Q_{\text{aug}}$ is passed directly to `BM25LuceneIndexer.retrieve(Q_aug)`.
+### Term Weight Assignment & Synonym Capping Rules:
+1. **Core Anchors:** Retain full anchor weight multiplier $W_Q(A_k) = W_{\text{anchor}}(A_k) \in [2.0, 5.0]$.
+2. **Expansion Synonyms:** Assigned their continuous semantic final weight:
+   $$\text{final\_weight}(v) = \text{Dual\_Sim}(A_k, v) \times \left(0.5 + 0.5 \times \frac{\text{IDF}(v)}{\text{IDF}_{\max}}\right)$$
+   **Strict Capping Rule:** Across all aspect groups, the accumulated weight of any injected synonym is strictly capped at $W_Q(v) \le 1.0$, guaranteeing that synthetic expansions never outweigh core user query terms.
 
 ---
 
 ## 4. Single-Pass Indexing & TTI Performance Optimization
 
 During index creation (Time-To-Index, TTI):
-1. **Shared Lucene IDF Pass:** `BM25LuceneIndexer` builds the inverted index and extracts document frequencies (`nd`). `CorpusIDFRegistry` reuses `nd` directly (**0.001s** vs 5.0s).
+1. **Shared Lucene IDF Pass:** `BM25LuceneIndexer` builds the inverted posting lists and extracts document frequencies (`nd`). `CorpusIDFRegistry` reuses `nd` directly (**0.001s** vs 5.0s).
 2. **Sublinear Salience Vocab Extraction:** `CorpusVocabBuilder` samples corpus chunks and ranks unigrams/bigrams by $\text{IDF} \times \ln(1 + \text{DF})$ (**0.03s** vs 5.2s).
 3. **Warm Batch Embedding:** `DenseVocabMatrix` embeds the 1,000 clean vocabulary terms in 1 GPU batch call on CUDA FP16 (**0.45ms** execution time).
 
@@ -82,8 +86,8 @@ During index creation (Time-To-Index, TTI):
   - `query`: Raw user query string.
   - `idf_registry`: Precomputed `CorpusIDFRegistry`.
   - `vocab_matrix`: Embedded `DenseVocabMatrix`.
-  - `schema`: `"BM25Dense_AspectInject"` | `"BM25Dense_FixedRepDynamicCapacity"` | `"BM25Dense_DynamicAspectInject"`.
+  - `schema`: `"BM25Dense_AspectInject"` | `"BM25Dense_FixedRepDynamicCapacity"` | `"BM25Dense_DynamicAspectInject"` | `"BM25Dense_CentralityFixedRep"` | `"BM25Dense_CentralityDynamicInject"`.
 - **Output Dict:**
   - `"aspects"`: Array of structured aspect groups with weighted keywords.
-  - `"augmented_token_list"`: Flattened query token list $Q_{\text{aug}}$ for BM25.
+  - `"term_weights"`: Sparse mapping of unique query tokens & synonyms to weight multipliers $\{t: W_Q(t)\}$.
   - `"telemetry"`: Diagnostic metadata (`num_anchors`, `total_candidates_above_tau`, `total_synonyms_injected`, `starved_aspects_count`, `avg_r_anchor`, `aspect_traces`).

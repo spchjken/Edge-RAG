@@ -79,15 +79,15 @@ Inverted posting list retrieval engine wrapping `LuceneBM25Baseline`.
 
 - **Hyperparameters:** Calibrated with standard Lucene BM25 parameters ($k_1 = 1.2, b = 0.75$).
 - **Scoring Function:**
-  $$\text{Score}(D, Q) = \sum_{t \in Q_{\text{aug}}} \text{IDF}(t) \cdot \frac{\text{TF}(t, D) \cdot (k_1 + 1)}{\text{TF}(t, D) + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgDL}}\right)}$$
-- **Weighted Retrieval:** Evaluates augmented token strings ($Q_{\text{aug}}$) containing token repetitions directly over pre-computed inverted posting lists.
+  $$\text{Score}(D, Q) = \sum_{t \in Q} W_Q(t) \cdot \text{IDF}(t) \cdot \frac{\text{TF}(t, D) \cdot (k_1 + 1)}{\text{TF}(t, D) + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgDL}}\right)}$$
+- **Vectorized Weighted Retrieval:** Evaluates sparse weighted term dictionaries ($\{t: W_Q(t)\}$) directly over pre-computed NumPy inverted posting lists via `retrieve_weighted()`.
 
 ---
 
 ## 3. Query-Time Retrieval Phase (`src/pipeline_v2/expansion/`)
 
 ### 3.1 `BM25DenseAspectExtractor` (`src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py`)
-Translates raw natural language queries into grounded aspect groups with weighted keywords and generates the flattened augmented token query $Q_{\text{aug}}$.
+Translates raw natural language queries into grounded aspect groups with weighted keywords and compiles the sparse term weight dictionary $\vec{w}_Q$.
 
 #### A. Regex Heuristic Entity Extraction
 Extracts high-priority explicit technical entities via regex pattern matching before statistical filtering:
@@ -100,6 +100,7 @@ For remaining query words (excluding English stopwords):
 - **Standard Selection (Schemas 1–5):** Ranks candidate words by corpus IDF score and selects the top $N_{\text{aspects}} = \max(2, \lceil p \cdot |Q_{\text{clean}}| \rceil)$ terms.
 - **Centrality Scoring (Schema 6):** Ranks candidate words by their semantic cohesion with the full query embedding:
   $$\text{Centrality\_Score}(w) = \text{IDF}(w) \times \text{CosSim}\left(\mathbf{e}_w, \mathbf{e}_{Q_{\text{full}}}\right)$$
+- **Fix B Entity Validation:** Acronyms and heuristic expressions receive entity boosts ($W = r_{\max}$) when $\text{IDF}(w) \ge 1.0$ (allowing domain-essential acronyms such as `API`, `USD`, `SDK` up to 36.8% corpus prevalence while filtering universal conversational stopwords).
 - **Deduplication:** Applies stem matching and high-similarity cosine deduplication ($\text{CosSim} \ge 0.90$) to eliminate morphological duplicates (e.g., `"upload"` vs `"uploads"`).
 
 #### C. Dual BGE Semantic Probing
@@ -110,20 +111,19 @@ $$\text{Dual\_Sim}(A_k, v) = \beta \cdot \text{CosSim}(A_k, v) + (1 - \beta) \cd
 - **Candidate Filtering:** Vocabulary terms passing $\text{Dual\_Sim} \ge \tau_{\text{sim}}$ are ranked by composite weight $\text{Weight} = \text{Dual\_Sim} \times (0.5 + 0.5 \cdot \frac{\text{IDF}(v)}{\text{IDF}_{\text{max}}})$.
 
 #### D. Active Expansion Schemas
-1. **`BM25Dense_AspectInject` (Schema 1 — Primary Baseline):** Uniform anchor weight ($n_{\text{reps}} = 3\times$) + top $C_{\text{exp}} = 2$ synonyms per aspect anchor.
-2. **`BM25Dense_FixedRepDynamicCapacity` (Schema 5a):** Fixed anchor repetition ($n_{\text{reps}}$) + dynamic synonym capacity:
+1. **`BM25Dense_AspectInject` (Schema 1 — Primary Baseline):** Uniform anchor weight ($W = 3.0$) + top $C_{\text{exp}} = 2$ synonyms per aspect anchor.
+2. **`BM25Dense_FixedRepDynamicCapacity` (Schema 5a):** Fixed anchor weight ($W \in \{3.0, 4.0\}$) + dynamic synonym capacity:
    $$C_{\text{exp}}(A_k) = \text{clamp}\left(r_{\min} + (r_{\max} - r_{\min}) \cdot \frac{\text{IDF}(A_k)}{\text{Max\_Query\_IDF}} + c, \ 1, \ 5\right)$$
-3. **`BM25Dense_DynamicAspectInject` (Schema 5b):** Dynamic anchor repetition ($R_{\text{anchor}} \in [r_{\min}, r_{\max}]$) scaled by Max Query IDF + coupled synonym capacity ($C_{\text{exp}} = R_{\text{anchor}} + c$).
-4. **`BM25Dense_CentralityFixedRep` (Schema 6a):** Centrality-ranked anchors + fixed anchor repetition ($n_{\text{reps}}$) + zero-floor capacity ($C_{\text{exp}} = \max(0, R + c)$).
-5. **`BM25Dense_CentralityDynamicInject` (Schema 6b):** Centrality-ranked anchors + dynamic anchor repetition + zero-floor capacity.
+3. **`BM25Dense_DynamicAspectInject` (Schema 5b):** Dynamic anchor weight ($W_{\text{anchor}} \in [r_{\min}, r_{\max}]$) scaled by Max Query IDF + coupled synonym capacity ($C_{\text{exp}} = W_{\text{anchor}} + c$).
+4. **`BM25Dense_CentralityFixedRep` (Schema 6a):** Centrality-ranked anchors + fixed anchor weight + zero-floor capacity ($C_{\text{exp}} = \max(0, R + c)$).
+5. **`BM25Dense_CentralityDynamicInject` (Schema 6b):** Centrality-ranked anchors + dynamic anchor weight + zero-floor capacity.
 6. **`BM25Dense_AspectWeighted` (Ablation):** Continuous relative IDF anchor weights ($w \in [0.5, 1.0]$).
 7. **`BM25Dense_AspectFusion`:** Hierarchical Agglomerative Clustering (HAC) on anchor embeddings with joint score fusion.
 
-#### E. Token Repetition Query Augmentation ($Q_{\text{aug}}$)
-Quantizes aspect and synonym weights into integer token repetitions for posting list evaluation:
-$$\text{Repeat Count} = \begin{cases} R_{\text{anchor}}(A_k) & \text{for Aspect Anchors (e.g., } 3\times \text{ to } 5\times) \\ 1\times & \text{for Expanded Synonyms } (\text{Dual\_Sim} \ge \tau_{\text{sim}}) \end{cases}$$
-
-The flattened token list $Q_{\text{aug}}$ is passed directly to `BM25LuceneIndexer.retrieve(Q_aug, top_k)`.
+#### E. Direct Weighted Term Vector Retrieval ($\vec{w}_Q$)
+Compiles the extracted aspect keywords into a weighted sparse dictionary passed directly to `BM25LuceneIndexer.retrieve_weighted(term_weights, top_k)`:
+1. **Core Anchors:** Assigned full multiplier $W_Q(A_k) \in [2.0, 5.0]$.
+2. **Expansion Synonyms:** Assigned continuous $\text{final\_weight}(v) \in [0.45, 0.95]$, capped at $W_Q(v) \le 1.0$ across all aspects to prevent synonym inflation.
 
 ---
 

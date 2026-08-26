@@ -1,3 +1,9 @@
+> ⚠️ **LEGACY DOCUMENT** — archived for historical reference. Superseded by [`theoretical_foundations_anchored_expansion.md`](theoretical_foundations_anchored_expansion.md).
+>
+> **Survival map:** expansion capacity is treated there as an operational latency/coverage parameter — the IT-MPE bound holds for any support size $K \ge 1$ (§5.3, Remark 2), and the query-level bound (§6.2, Corollary 2) justifies global capacity budgets. The former *"Theorem 1 (Saliency-Proportional Capacity Optimality)"* is **retired**: it rested on unverified assumptions. Capacity policies and the saliency-proportional allocation hypothesis now live in the V7 architectural plan and experimental documents.
+
+---
+
 # 🏛️ Theoretical Foundations of Expansion Capacity: Saliency-Proportional Allocation & Information Flow Optimization
 
 ---

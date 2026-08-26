@@ -1,4 +1,5 @@
 import math
+import numpy as np
 from typing import List, Dict, Any, Optional
 from collections import Counter
 from rank_bm25 import BM25Okapi, BM25Plus, BM25L
@@ -182,30 +183,57 @@ class LuceneBM25Baseline:
                 1.0 + (self.num_docs - freq + 0.5) / (freq + 0.5)
             )
 
-    def retrieve(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
-        """
-        Retrieves top_k most relevant chunks using Lucene BM25 scoring.
-        """
-        tokenized_query = query.lower().split()
-        scores = [0.0] * self.num_docs
+        # --- Vectorized Inverted Posting Lists (NumPy) ---
+        # Precompute document length normalization vector:
+        #   doc_norm[i] = k1 * (1 - b + b * doc_len[i] / avgdl)
+        doc_len_arr = np.array(self.doc_len, dtype=np.float32)
+        if self.avgdl > 0:
+            self.doc_norm = (self.k1 * (1.0 - self.b + self.b * (doc_len_arr / self.avgdl))).astype(np.float32)
+        else:
+            self.doc_norm = np.full(self.num_docs, self.k1, dtype=np.float32)
 
-        for q in tokenized_query:
-            if q not in self.idf:
+        # Build inverted posting lists: term -> (doc_ids_array, tf_array)
+        postings_raw = {}  # type: Dict[str, List[tuple]]
+        for doc_idx, freq_counter in enumerate(self.doc_freqs):
+            for term, tf in freq_counter.items():
+                if term not in postings_raw:
+                    postings_raw[term] = []
+                postings_raw[term].append((doc_idx, tf))
+
+        self.postings = {}  # type: Dict[str, tuple]
+        for term, pairs in postings_raw.items():
+            dids = np.array([p[0] for p in pairs], dtype=np.int32)
+            tfs = np.array([p[1] for p in pairs], dtype=np.float32)
+            self.postings[term] = (dids, tfs)
+
+    def retrieve_weighted(
+        self, term_weights: Dict[str, float], top_k: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieves top_k most relevant chunks using vectorized Lucene BM25 scoring
+        with weighted term scoring.
+
+        Args:
+            term_weights: Dict mapping each unique query term to its weight multiplier.
+                          E.g. {"retrieval": 3.0, "rag": 2.0, "generation": 1.0}
+            top_k: Number of top results to return.
+        """
+        scores = np.zeros(self.num_docs, dtype=np.float32)
+
+        for term, weight in term_weights.items():
+            if term not in self.postings:
                 continue
-            idf_val = self.idf[q]
-            for i, doc_freq in enumerate(self.doc_freqs):
-                freq = doc_freq.get(q, 0)
-                if freq == 0:
-                    continue
-                denom = freq + self.k1 * (
-                    1.0 - self.b + self.b * (self.doc_len[i] / self.avgdl if self.avgdl > 0 else 1.0)
-                )
-                score = idf_val * (freq * (self.k1 + 1.0)) / denom
-                scores[i] += score
+            dids, tfs = self.postings[term]
+            idf_val = self.idf[term]
+            denom = tfs + self.doc_norm[dids]
+            scores[dids] += weight * idf_val * (tfs * (self.k1 + 1.0)) / denom
 
-        top_k_indices = sorted(
-            range(len(scores)), key=lambda i: scores[i], reverse=True
-        )[:top_k]
+        # O(N) top-k selection via argpartition
+        if top_k >= self.num_docs:
+            top_k_indices = np.argsort(-scores)[:top_k]
+        else:
+            partitioned = np.argpartition(scores, -top_k)[-top_k:]
+            top_k_indices = partitioned[np.argsort(-scores[partitioned])]
 
         results = []
         for idx in top_k_indices:
@@ -215,3 +243,92 @@ class LuceneBM25Baseline:
                 "score": float(scores[idx]),
             })
         return results
+
+    def retrieve(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Retrieves top_k most relevant chunks using Lucene BM25 scoring.
+        Handles repeated tokens via Counter-based weight conversion.
+        """
+        tokenized_query = query.lower().split()
+        term_weights = dict(Counter(tokenized_query))
+        return self.retrieve_weighted(term_weights, top_k=top_k)
+
+
+class AnalyzedLuceneBM25:
+    """
+    Analyzed Lucene BM25 Baseline (Pure-Python Lucene Parity).
+
+    Uses:
+    1. EdgeRAGAnalyzer (Canonical tokenization, possessive filter, technical keyword exemptions, Lucene stopwords, KStem).
+    2. InvertedPostingIndex (Memory-compact inverted posting list with vectorized weighted scoring).
+
+    Default parameters: k1 = 1.5, b = 0.75
+    """
+
+    def __init__(
+        self,
+        corpus: List[str],
+        chunk_ids: Optional[List[str]] = None,
+        k1: float = 1.5,
+        b: float = 0.75,
+        stemmer: str = "kstem",
+        use_stopwords: bool = True,
+        exempt_technical: bool = True,
+    ):
+        if chunk_ids is not None and len(chunk_ids) != len(corpus):
+            raise ValueError("chunk_ids must be the same length as corpus")
+        self.corpus = corpus
+        self.chunk_ids = chunk_ids if chunk_ids is not None else [
+            f"c_{i}" for i in range(len(corpus))
+        ]
+        self.k1 = k1
+        self.b = b
+        self._doc_id_to_idx = {did: idx for idx, did in enumerate(self.chunk_ids)}
+
+        from src.pipeline_v2.indexer.analyzer import EdgeRAGAnalyzer
+        from src.pipeline_v2.indexer.posting_index import InvertedPostingIndex
+
+        self.analyzer = EdgeRAGAnalyzer(
+            stemmer=stemmer,
+            use_stopwords=use_stopwords,
+            exempt_technical=exempt_technical,
+        )
+        self.index = InvertedPostingIndex(k1=k1, b=b)
+
+        # Analyze corpus and build posting index
+        analyzed_corpus = [self.analyzer.analyze(doc) for doc in self.corpus]
+        self.index.build_from_analyzed_corpus(analyzed_corpus, doc_ids=self.chunk_ids)
+
+    def retrieve(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Retrieves the top_k most relevant chunks using Analyzed Lucene BM25 scoring.
+        """
+        analyzed_tokens = self.analyzer.analyze(query)
+        scored_pairs = self.index.retrieve_analyzed(analyzed_tokens, top_k=top_k)
+
+        results = []
+        for chunk_id, score in scored_pairs:
+            idx = self._doc_id_to_idx[chunk_id]
+            results.append({
+                "chunk_id": chunk_id,
+                "text": self.corpus[idx],
+                "score": score,
+            })
+        return results
+
+    def retrieve_weighted(self, term_weights: Dict[str, float], top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Retrieves top_k most relevant chunks scoring directly on pre-analyzed term weights.
+        """
+        scored_pairs = self.index.retrieve_weighted(term_weights, top_k=top_k)
+
+        results = []
+        for chunk_id, score in scored_pairs:
+            idx = self._doc_id_to_idx[chunk_id]
+            results.append({
+                "chunk_id": chunk_id,
+                "text": self.corpus[idx],
+                "score": score,
+            })
+        return results
+
