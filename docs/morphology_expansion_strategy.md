@@ -2,261 +2,184 @@
 
 ## 1. Executive Summary
 
-In high-speed hybrid retrieval, combining **unstemmed exact lexical indexing (BM25)** with **dense vocabulary probing (BGE embeddings)** creates a subtle but severe structural dilemma: **The Morphological Slot Starvation & Lexical Blind Spot Problem**.
+In high-speed hybrid retrieval, the classic dilemma is that an **unstemmed exact-token index** cannot match morphological variants, while a **dense probing channel** wastes its small expansion budget on inflectional clones. This revision (**Rev 3**) retires that dilemma by changing the premise: **Edge-RAG now indexes with an index-time-stemmed (KStem) analyzer** instead of an unstemmed exact-token index.
 
-This revision (**Rev 2**) does three things:
+Rev 3 does three things:
 
-1. **Reconfirms the core architectural insight** of the original strategy — decouple morphological aliasing (Tier 1) from dense semantic expansion (Tier 2) — which mirrors how production analyzers (Elasticsearch/Solr) separate the *stemmer* stage from the *synonym* stage of an analysis chain.
-2. **Replaces the fragile Tier-1 machinery** of the original strategy (raw Porter, flat `w = 1.0` alias weights, no suppletion handling, no technical-token protection) with the **battle-tested machinery of the IR industry**: KStem-style light stemming + automatic stemmer exemptions (`keyword_marker` semantics) + WordNet exception lists for suppletion + mass-budgeted, IDF-damped alias weights inside the IT-MPE invariant.
-3. **Grounds the plan in a codebase audit**: the current pipeline has **zero morphology handling at retrieval time** and exactly one pseudo-stem heuristic at anchor-selection time — a destructive prefix/suffix dedup that actively hurts recall (see §2.3).
-
----
-
-## 2. Problem Formulation: The Morphology Dilemma
-
-```text
-                     ┌────────────────────────────────────────────────────────┐
-                     │                 User Query: "price policy"             │
-                     └───────────────────────────┬────────────────────────────┘
-                                                  │
-                     ┌───────────────────────────┴────────────────────────────┐
-                     ▼                                                        ▼
-          [Challenge 1: Lexical Blind Spot]                     [Challenge 2: Semantic Starvation]
-   Inverted index has separate posting lists:              Dense BGE vocabulary similarities:
-       "price" ≠ "prices" ≠ "pricing"                          1. "prices"  (sim = 0.97) ──┐
-    If doc has "pricing", BM25 gives 0 score.                   2. "pricing" (sim = 0.95) ──┼─ Chokes out Top-2 Slots!
-                                                                3. "cost"    (sim = 0.84) ──┘ (STARVED!)
-                                                                4. "tariff"  (sim = 0.81)    (STARVED!)
-```
-
-### 2.1 Challenge 1: The Lexical Blind Spot of Unstemmed Inverted Indices
-
-* **Status Quo:** The pipeline's `BM25LuceneIndexer` wraps `LuceneBM25Baseline` ([`src/baselines/bm25.py`](src/baselines/bm25.py)), a **pure-Python port** of Lucene's IDF formula over `rank_bm25`-style tokens: index and query are both tokenized with plain `lower().split()`. There is no analyzer chain, no stemmer, no lemmatizer — postings are keyed by exact surface token.
-* **Failure Mode:** If a gold document contains `"...effects of pricing on market equilibrium..."` and the user queries `"price policy"`, BM25 only traverses the posting list for `"price"`. The gold document receives **zero lexical score** from that word.
-* **Important Clarification:** This is a **self-imposed property, not a law of BM25**. Lucene's BM25 has handled inflections natively for two decades via analyzer-time stemming. The pipeline deliberately avoided analyzers to protect versioned technical strings (`qwen2.5`, `gpt-4`, `fp16`). The refined design restores morphological coverage **without abandoning that protection** — the technical-token protection is the real constraint, and it has a standard solution: stemmer exemptions (§4.1).
-* **Why Query-Side Stem Deduplication Fails:** If a query explicitly contains both `"upload"` and `"uploads"`, naive deduplication drops `"uploads"`, actively destroying posting hits for documents that only contain the plural form. **Rule: query-side morphology may only *add* surface tokens (aliases); it may never *remove* them.** Both `upload` and `uploads` must remain in the retrieval vector, each with its own weight.
+1. **Cancels the two-tier fold-in machinery.** Rev 2 introduced Tier-1 morphological fold-in plus a `MorphologicalStemRegistry` to patch the "lexical blind spot" of an *unstemmed* index. With index-time KStem — already implemented in `EdgeRAGAnalyzer` and proven in `AnalyzedLuceneBM25` — `price`/`prices`/`pricing` already share one posting list keyed by the stem, so there is nothing left to fold in. Tier-1 fold-in, the stem-diversity gate, and the stem-diversified vocabulary pool are all **cancelled**.
+2. **Reduces morphology to two residual concerns.** (a) **Suppletion** (`went → go`, `bought → buy`, `better → good`), which KStem does not handle — resolved by a small WordNet `stemmer_override` stage in the analyzer, applied identically at index and query time. (b) **Cross-root semantic synonyms** (`price`/`cost`/`valuation`), which no stemmer can bridge — resolved by the (now single-tier) dense probing channel.
+3. **Re-scopes the "exact-first" principle.** For ordinary words, inflectional surface form is *normalization noise*, not a relevance signal, so conflation is correct and desirable. Exactness matters only for **technical tokens** (`qwen2.5`, `gpt-4`, `fp16`), and that protection is already guaranteed by the analyzer's **exemption set** — not by a dual-field index.
 
 ---
 
-### 2.2 Challenge 2: Inflectional Slot Starvation in Dense Probing
+## 2. Problem Restatement
 
-* **The High Cosine Bias:** Bi-encoders (BGE, BERT) place inflectional variations of the same root morpheme in virtually identical vector coordinates ($\text{CosSim}(\mathbf{e}_{\text{price}}, \mathbf{e}_{\text{prices}}) \approx 0.97$).
-* **Capacity Bottleneck:** When the expansion budget is $C_{\text{exp}} = 2$ synonyms per anchor:
-  * Probing for `"price"` yields `["prices", "pricing"]`.
-  * True conceptual bridges (`"cost"`, `"valuation"`, `"tariff"`) have lower similarity ($\text{CosSim} \approx 0.81 - 0.84$) and are **completely starved and discarded**.
-* **Impact on Conceptual Benchmarks (`bright_economics`, `financebench`):**
-  In economic and financial queries, users express abstract intent (`"price level changes"`). Gold documents frequently use related domain vocabulary (`"inflationary cost shifts"`). When dense expansion is 100% consumed by trivial morphological clones, the retriever fails to cross the semantic vocabulary gap.
+The original strategy (Rev 2) was written against a codebase where `BM25LuceneIndexer` wrapped a naive `lower().split()` index — no analyzer, no stemmer, postings keyed by exact surface token. That status quo is now false: [`lucene_bm25_parity_plan.md`](lucene_bm25_parity_plan.md) Stages 1–2 are complete, and `AnalyzedLuceneBM25` stems at both index and query time.
 
----
+### 2.1 What index-time KStem already solves
 
-### 2.3 Codebase Status & Implementation State
+* **The lexical blind spot (Rev 2 "Challenge 1").** A gold document containing `"…pricing…"` used to score zero against the query `"price"`. Under index-time KStem, `pricing` is analyzed to the stem `price` at index time, so it lives in the same posting list as `price` and `prices`; the query `"price"` now matches it. **Resolved.**
+* **The inflectional slot-starvation (Rev 2 "Challenge 2").** Dense probing used to return `["prices", "pricing"]` and starve `["cost", "valuation"]` out of the $C_{\text{exp}} = 2$ slots. When the vocabulary pool is itself built from analyzed (stemmed) tokens, those inflectional clones never enter the pool — the top-$C_{\text{exp}}$ candidates are cross-root by construction. **Resolved** (conditional on analyzer-parity wiring, §4.5).
 
-Current component status in `src/pipeline_v2/`:
+### 2.2 Residual gap 1 — suppletion
 
-| Component | Status | Implementation State |
+KStem is a light inflectional stemmer (`-s/-es/-ed/-ing` plus a dictionary of regular irregulars). It does **not** handle suppletive forms: `went → go`, `bought → buy`, `better → good`. These are the only remaining *morphological* mismatches, and they are rare but real on technical corpora.
+
+### 2.3 Residual gap 2 — cross-root semantic bridging
+
+No stemmer can bridge distinct roots that share meaning (`price`/`cost`/`valuation`, `car`/`automobile`). This is the domain of the dense probing channel, and it is now the **primary value-add** of Edge-RAG over the analyzed baseline.
+
+### 2.4 Codebase status
+
+| Component | Status | State |
 | :--- | :---: | :--- |
-| `EdgeRAGTokenizer` ([`src/pipeline_v2/indexer/tokenizer.py`](../src/pipeline_v2/indexer/tokenizer.py)) | ✅ **DONE** | Canonical regex tokenizer `r'\b[a-z0-9]+(?:[-._][a-z0-9]+)+\b\|\b[a-z0-9]{2,}\b'`. Preserves technical alphanumeric compounds (`qwen2.5-7b`, `gpt-4`, `fp16`) and 2-letter acronyms (`ai`, `ml`, `db`, `kv`). Unit-tested. |
-| `EdgeRAGAnalyzer` ([`src/pipeline_v2/indexer/analyzer.py`](../src/pipeline_v2/indexer/analyzer.py)) | ✅ **DONE** | 5-stage analyzer: Tokenizer $\to$ PossessiveFilter $\to$ StopwordFilter (33 Lucene stopwords) $\to$ KeywordMarkerExemption $\to$ StemFilter (KStem). |
-| `InvertedPostingIndex` ([`src/pipeline_v2/indexer/posting_index.py`](../src/pipeline_v2/indexer/posting_index.py)) | ✅ **DONE** | Compact `PostingList` arrays (`array('I')`) and vectorized `retrieve_weighted(term_weights, top_k)` BM25 accumulator ($<1\text{ms}$ query latency). |
-| `AnalyzedLuceneBM25` ([`src/baselines/bm25.py`](../src/baselines/bm25.py)) | ✅ **DONE** | Modernized Lucene baseline evaluated across all 10 document-level benchmarks (Strict@10: 54.74% $\to$ **62.45%**, DocRec@10: 42.33% $\to$ **49.39%**). |
-| `MorphologicalStemRegistry` (`src/pipeline_v2/indexer/morphological_stem_registry.py`) | ⏳ **PENDING** | Stem $\to$ corpus variants map over full posting vocabulary ($K_{\text{morph}} \le 8$, KStem, technical exemptions, WordNet exceptions `went -> go`). |
-| `BM25DenseAspectExtractor` (Anchor Dedup) | ⏳ **PENDING** | Legacy `_score_and_deduplicate_anchors_v6` still has harmful prefix/suffix substring dedup. Must replace with additive registry-stem equality + cosine check. |
-| `BM25DenseAspectExtractor` (Stem-Diversity Gate) | ⏳ **PENDING** | Needs `stem(s) != stem(a)` filter before BGE similarity ranking to prevent morphological slot starvation in Phase 3. |
-| `BM25DenseAspectExtractor` (Tier-1 Fold-In) | ⏳ **PENDING** | Needs mass-budgeted ($\mu_{\text{morph}} = \eta_{\text{morph}} \cdot \mu(Q)$) alias injection and synonym closure into $\vec{w}_Q$. |
+| `EdgeRAGTokenizer` | ✅ DONE | Canonical tokenizer; technical compounds + 2-letter acronyms preserved. |
+| `EdgeRAGAnalyzer` | ✅ DONE (extend) | 5-stage chain: tokenizer → possessive → stopword → exemption → KStem. **Needs the `stemmer_override` suppletion stage added.** |
+| `InvertedPostingIndex` | ✅ DONE | Compact posting arrays + vectorized `retrieve_weighted`. |
+| `AnalyzedLuceneBM25` | ✅ DONE | Analyzed baseline; beats all v1/v5/v6 schemas on doc-level benchmarks. |
+| Suppletion override (WordNet `wn_s.pl` / `wn_v.pl`) | ⏳ PENDING | Map suppletive forms to lemma inside the analyzer. |
+| Analyzer-parity wiring (VocabBuilder / IDF registry / extractor) | ⏳ PENDING | Ensure every producer of $\vec{w}_Q$ keys emits analyzed stems (§4.5). |
+| `MorphologicalStemRegistry` | ❌ CANCELLED | Redundant under index-time stemming. |
+| Tier-1 fold-in + synonym closure | ❌ CANCELLED | Redundant under index-time stemming. |
+| Stem-diversity gate | ❌ CANCELLED | Pool is already stem-diverse. |
+| Anchor dedup (destructive prefix/suffix heuristic) | ⏳ PENDING (simplify) | Replace with stem-equality (§4.2). |
 
 ---
 
-## 3. Comparative Paradigm Analysis: How Production Systems Solve Morphology
+## 3. Comparative Paradigm Analysis
 
 | Retrieval Architecture | Morphology Mechanism | Semantic Expansion Mechanism | Trade-off / Limitation |
 | :--- | :--- | :--- | :--- |
-| **BM25 + Porter (Elasticsearch/Solr `english` analyzer default)** | Stemming at **both index and query time** via a standard analyzer chain; `keyword_marker` / `stemmer_override` filters exempt protected terms; raw + stemmed multi-fields for exact-first ranking | ❌ None (analyzer-level `synonym` filter optional, kept in a separate stage) | 20+ years in production; requires index rebuilds and exemption dictionaries; raw Porter over-stems (`organization → organ`) without `kstem` or exclusions. |
-| **Anserini / Pyserini BM25 (standard BEIR baselines)** | Lucene `EnglishAnalyzer` (Porter) by default, with an optional **Krovetz/KStem** mode ([Anserini BEIR regressions](https://raw.githubusercontent.com/castorini/anserini/211e74f1453b2b100c03ac78d2a130b07b19b780/docs/regressions/regressions-beir-v1.0.0-arguana-multifield.md#1)) | ❌ None | When research papers publish "BM25" on BEIR, that number *includes* stemming. KStem is the light-stemming alternative designed specifically for IR: conservative, avoids Porter's worst conflations. |
-| **KStem / Krovetz** | Dictionary-augmented light stemming (`-s/-es/-ed/-ing` only, with irregular lookup); shipped in Lucene as `kstem` ([Elasticsearch `kstem` filter](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-kstem-tokenfilter.html)) | ❌ None | Best precision/recall balance for weakly-inflected English; still misses suppletion (`went → go`). |
-| **Solr Hunspell dictionary stemming** | Morphology driven by dictionary flags rather than rules; covers irregulars and morphologically rich languages | ❌ None | High setup cost; overkill for English, but evidence that production systems reach for *dictionaries* when rules fail. |
-| **WordNet lemmatizer + exception lists** | POS-aware lemmatization; `wn_s.pl` / `wn_v.pl` exception lists (a few hundred entries) map suppletive forms exactly (`went → go`, `better → good`) ([NLTK WordNet](https://www.nltk.org/howto/wordnet.html)) | ❌ None | Needs POS tagging for full quality; ideal as a small *auxiliary* dictionary, not a replacement for a stemmer. |
-| **Algolia `ignorePlurals`** | Dictionary + algorithmic hybrid for ~50 languages, applied at index and query time, with **exact-match-first ranking** preserved ([Algolia language configuration](https://www.algolia.com/doc/guides/managing-results/optimize-search-results/handling-natural-languages-nlp/in-depth/language-specific-configurations)) | ❌ None | Directly analogous to this pipeline's anchor-vs-alias priority: morphology is a recall backstop, never a relevance hijacker. |
+| **BM25 + Porter (Elasticsearch/Solr `english` analyzer default)** | Stemming at **both index and query time** via a standard analyzer chain; `keyword_marker` / `stemmer_override` filters exempt protected terms | ❌ None (analyzer-level `synonym` filter optional) | 20+ years in production; raw Porter over-stems (`organization → organ`); use `kstem` or exclusions. |
+| **Anserini / Pyserini BM25 (standard BEIR baselines)** | Lucene `EnglishAnalyzer` (Porter) by default, with an optional **Krovetz/KStem** mode | ❌ None | Published "BM25" on BEIR *includes* stemming; KStem is the light-stemming IR alternative. |
+| **KStem / Krovetz** | Dictionary-augmented light stemming (`-s/-es/-ed/-ing` + irregular lookup) | ❌ None | Best precision/recall balance for weakly-inflected English; still misses suppletion (`went → go`). |
+| **WordNet lemmatizer + exception lists** | POS-aware lemmatization; `wn_s.pl` / `wn_v.pl` map suppletive forms exactly (`went → go`, `better → good`) | ❌ None | Ideal as a small *auxiliary* override dict, not a replacement for a stemmer. |
+| **Algolia `ignorePlurals`** | Dictionary + algorithmic hybrid, applied at index and query time | ❌ None | Confirms conflation is the norm for search; exactness reserved for protected tokens. |
 | **Dense Bi-Encoders (BGE / Contriever)** | Continuous vector space handles inflections implicitly | Embeds entire sentence into latent space | High latency, query drift, large index footprint (out of budget). |
-| **SPLADE-v3 (Sparse Neural MLM)** | **WordPiece Subwords:** `research` + `##ing` match on shared `research` subword | **30k MLM Logits:** activates 50–150 terms simultaneously (morphology & synonyms co-exist) | Correct by construction, but extreme compute ($4.1\text{ GB}$ VRAM, $280\text{s}$ TTI, 10x posting inflation) — out of budget. |
-| **Edge-RAG V7 Rev 2 (This Document)** | **Tier 1: Morphological Root Fold-In** — KStem-style registry + stemmer exemptions + WordNet exception lists, with mass-budgeted IDF-damped aliases | **Tier 2: Stem-Diversity Gated Probing** — BGE probing constrained to cross-root synonyms | Full coverage, zero slot starvation, $0.09\text{ GB}$ VRAM, $<0.3\text{s}$ TTI. |
+| **SPLADE-v3 (Sparse Neural MLM)** | WordPiece subwords (`research` + `##ing`) | 30k MLM logits activate 50–150 terms | Correct by construction, but extreme compute (out of budget). |
+| **Edge-RAG V7 Rev 3 (This Document)** | **Index-time KStem** (analyzer) + **WordNet suppletion override** + technical-token exemptions | **Single-tier cross-root dense probing** | Inflectional conflation at the analysis layer; only suppletion + cross-root synonyms remain. |
 
-### 3.1 Consensus Lessons from Production Systems
+### 3.1 Consensus lessons (re-scoped)
 
-1. **Morphology belongs to the token-analysis layer, decoupled from semantic/synonym expansion.** Every serious system separates the two stages; merging them is what causes slot starvation.
-2. **Stemming is safe only with a protection list.** `keyword_marker`/`stemmer_override` semantics — technical tokens are exempted, never conflated. This resolves the "stemming destroys `qwen2.5`" objection instead of abandoning stemming entirely.
-3. **Exact matches must outrank variant matches.** Algolia's exact-first principle, Elasticsearch's raw/stemmed multi-fields: morphology is a *recall backstop*, weighted strictly below the surface term.
-4. **Rules cannot cover suppletion; a small dictionary can.** `went → go` needs WordNet exception lists (or Hunspell), not a better stemmer.
+1. **Morphology belongs to the token-analysis layer, decoupled from semantic/synonym expansion.** Rev 2 reached this conclusion and kept re-implementing it at query time; Rev 3 simply *uses* the analyzer that now exists.
+2. **Stemming is safe only with a protection list.** `keyword_marker`/`stemmer_override` semantics — technical tokens are exempted, never conflated.
+3. **Inflectional conflation is normalization, not ranking.** For ordinary words, surface form (`price` vs `prices`) carries no relevance signal; conflating them is correct. Exactness matters only for technical tokens, and that is handled by the exemption set. (Rev 2's "exact matches must outrank variant matches" is **retired**.)
+4. **Rules cannot cover suppletion; a small dictionary can.** `went → go` needs WordNet exception lists, not a better stemmer.
 
 ---
 
-## 4. The Edge-RAG V7 Decoupled Two-Tier Solution (Rev 2)
+## 4. The Rev 3 Design: Single-Tier Morphology
 
 ```mermaid
 graph TD
     classDef input fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#000000;
-    classDef tier1 fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000;
-    classDef tier2 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000000;
+    classDef analyzer fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000;
+    classDef probing fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000000;
     classDef output fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000000;
 
-    Q[Query Anchor a e.g. 'price']:::input --> REG["MorphologicalStemRegistry (index-time)<br/>stem → corpus variants, DF-ranked<br/>+ Exemption set (technical tokens)<br/>+ WordNet exception lists (went → go)<br/>applies to anchors AND synonyms"]:::tier1
-    Q --> T2["Tier 2: Dense Semantic Probing<br/>gate: stem(s) ≠ stem(a)"]:::tier2
-
-    REG --> ALIAS["Budgeted lexical aliases w_morph(v|a)<br/>('prices', 'pricing' — recall backstop)"]:::tier1
-    T2 --> SYN["Top-2 cross-root synonyms w(s|a)<br/>('cost', 'valuation')"]:::tier2
-
-    ALIAS --> VEC["Continuous sparse vector w_Q<br/>(joint IT-MPE budget μ over both tiers)"]:::output
+    Q[Query 'price']:::input --> AN["EdgeRAGAnalyzer (index & query)<br/>Tokenizer → Possessive → Stopword →<br/>Exemption → StemmerOverride → KStem"]:::analyzer
+    AN --> A[Anchor 'price' (stemmed)]
+    A --> T2["Cross-root dense probing<br/>(no stem-diversity gate needed)"]:::probing
+    T2 --> SYN["Top-2 synonyms w(s|a)<br/>('cost', 'valuation')"]:::probing
+    A --> VEC["Continuous sparse vector w_Q<br/>(anchor + budgeted synonyms)"]:::output
     SYN --> VEC
 ```
 
-### 4.0 Design Principles
+### 4.0 Design principles
 
-1. **Additive, never destructive.** Tier 1 *adds* surface tokens as aliases; it never removes query terms. Both `upload` and `uploads` stay in the retrieval vector.
-2. **Morphology is a recall backstop, not a relevance signal.** Alias mass is budgeted inside IT-MPE so no alias can out-score the anchor.
-3. **Protection by construction.** Tokens matching the technical-token patterns of the V7 tokenizer are exempt from stemming — the `qwen2.5`/`gpt-4`/`fp16` regression set is provably untouched.
-4. **Zero dense-slot cost.** Tier 1 does not consume `C_exp`; Tier 2 is guaranteed to return cross-root synonyms.
-5. **Uniform application.** Fold-in applies to *every* term admitted to $\vec{w}_Q$ — query anchors **and** Tier-2 synonyms — so the synonym channel inherits the same blind-spot fix (an injected `"cost"` must still match a doc containing only `"costs"`). Aliases are leaves: no recursive fold-in of aliases.
+1. **Morphology is an analyzer concern**, applied identically at index and query time.
+2. **Protection by construction** — technical tokens are exempt from stemming and override.
+3. **Semantic expansion is budgeted** (IT-MPE) so no synonym can out-score its anchor.
 
-### 4.1 Tier 1: Morphological Root Fold-In (The Subword / Stem Channel)
+### 4.1 Morphology at index time (KStem + suppletion override)
 
-* **Objective:** Capture all inflectional forms present in the corpus posting lists without consuming the dense expansion budget.
-* **Mechanism (revised):**
-  1. **Index-time registry build (`MorphologicalStemRegistry`):** after `EdgeRAGTokenizer` canonicalization, build a stem → variant map over the **full posting-dictionary vocabulary** (not just the 2,500-term dense matrix): $\sigma \mapsto \{v \in \mathcal{V}_{\text{corpus}} : \text{stem}(v) = \sigma\}$, ranked by corpus DF descending, capped at $K_{\text{morph}} = 8$ variants per stem.
-  2. **Stemming engine:** **KStem** (Lucene `kstem`, designed for IR, conservative) as default; Snowball-English-with-exceptions as fallback. **Raw Porter is rejected** — its over-stemming (`university/universal → univers`, `generic/generate → gener`, `organization → organ`) would propagate directly into the query vector via fold-in.
-  3. **Stemmer exemption set (built automatically at index time):** any token matching the technical patterns `[a-z0-9]+(?:[-._][a-z0-9]+)+`, `[A-Z]{2,}`, or containing digits is **never stemmed and never aliased**. This is `keyword_marker` semantics and guarantees technical-token regression safety.
-  4. **Suppletion exception lists:** WordNet `wn_s.pl` / `wn_v.pl` (a few hundred entries, embeddable as a static dict) map `went → go`, `better → good`, `bought → buy`. If a query anchor is an exception form, the **mapped base's stem bucket** is folded in instead — but only for variants that exist in the corpus dictionary.
-  5. **Query-time lookup:** for anchor $a$ (non-exempt), fetch $M(a) = \{v \in \text{registry}[\sigma(a)] : v \ne a\}$ via $O(1)$ hash lookup.
-  6. **Scope — anchors *and* synonyms:** the fold-in is applied not only to query anchors but also to every Tier-2 synonym $s$ admitted to $\vec{w}_Q$, using that term's own final weight $w(s \mid a)$ in place of $w(a)$ in the weight formula below. Without this, the synonym channel inherits the same lexical blind spot (an injected `"cost"` cannot match a doc containing only `"costs"`).
-* **Weighting (revised — replaces the flat `w = 1.0` of Rev 1):** aliases share a **per-anchor morphological mass pool** $\mu_{\text{morph}}(Q) \cdot w(a)$, allocated proportionally to their IDF damping:
-  $$\text{damp}(v, a) = \min\left(1.0, \frac{\text{IDF}(a)}{\text{IDF}(v)}\right), \qquad p_{\text{morph}}(v \mid a) = \frac{\text{damp}(v, a)}{\sum_{u \in M(a)} \text{damp}(u, a)}$$
-  $$w_{\text{morph}}(v \mid a) = \mu_{\text{morph}}(Q) \cdot w(a) \cdot p_{\text{morph}}(v \mid a)$$
-  The IDF damping solves the flat-weight flaw: a rare form (`studied`, DF=3) receives a *smaller* share of the mass pool than a common form (`studies`, DF=500), instead of the flat Rev-1 behavior where the rare form's higher IDF gave it disproportionate score contribution.
-* **Capacity Rule:** Morphological fold-ins are **exempt** from the semantic slot cap $C_{\text{exp}}$ and cost **zero dense-probing slots**; their total mass is bounded by the joint IT-MPE budget (§4.3).
+* Index and query both run through `EdgeRAGAnalyzer`:
+  `Tokenizer → PossessiveFilter → StopwordFilter → KeywordMarkerExemption → StemmerOverride → KStem`.
+* **StemmerOverride** (new, small): a static dict from WordNet `wn_s.pl` / `wn_v.pl` mapping suppletive forms to lemma (`went → go`, `bought → buy`, `better → good`, `best → good`). Applied before KStem; exempt tokens are skipped.
+* **Exemption set** (unchanged): tokens matching the technical patterns `[a-z0-9]+(?:[-._][a-z0-9]+)+`, `[A-Z]{2,}`, or containing digits are never stemmed and never overridden.
+* **Result:** postings, IDF tables, the vocabulary pool, and query anchors all share one analyzed-token space — the "single source of truth" from V7 Upgrade 1.1, extended from *tokenizer* parity to *analyzer* parity.
 
-### 4.2 Tier 2: Stem-Diversity Gated Semantic Probing (The MLM Synonym Channel)
+### 4.2 Cross-root semantic probing (the surviving channel)
 
-* **Objective:** Force dense vocabulary probing to discover cross-root conceptual bridges and domain synonyms.
-* **Mechanism (unchanged in principle; gate now uses the same registry stems):**
-  1. During dense matrix cosine probing $\mathbf{S} = \mathbf{E}_A \cdot \mathbf{V}^\top$, filter candidate vocabulary terms $s \in \mathcal{V}_{\text{clean}}$ by enforcing the **Stem-Diversity Constraint**:
-     $$\text{stem}(s) \ne \text{stem}(a)$$
-  2. Any same-stem inflections (`"prices"`, `"pricing"`) are bypassed because they are already handled by Tier 1.
-  3. The top $C_{\text{exp}} = 2$ candidates passing $\text{Dual\_Sim}(a, s) \ge \tau_{\text{sim}}(a)$ are guaranteed to be **true semantic synonyms** with distinct roots (e.g. `"cost"`, `"valuation"`, `"tariff"`).
-  4. Synonyms receive mass from the semantic sub-budget $\mu_{\text{syn}}(Q)$:
-     $$w(s \mid a) = \mu_{\text{syn}}(Q) \cdot w(a) \cdot \min\left(1.0, \frac{\text{IDF}(a)}{\text{IDF}(s)}\right) \cdot p(s \mid a)$$
-     with the temperature-scaled softmax $p(s \mid a)$ from the V7 architectural plan (§4, $\tau = 0.10$).
+* Probing is unchanged in mechanism (batch $\mathbf{E}_A \cdot \mathbf{V}^\top$, Dual-Sim with $\beta = 0.65$, adaptive $\tau_{\text{sim}}$), but the **stem-diversity gate is removed** — the pool is already stem-diverse, so the top-$C_{\text{exp}}$ candidates are cross-root by construction.
+* **Anchor dedup:** replace the destructive prefix/suffix substring heuristic with **stem-equality** (trivial now that tokens are analyzed) plus the existing cosine check ($\ge 0.90$).
 
-### 4.3 Unified IT-MPE Budget Across Both Tiers (Fixes the Rev-1 Invariant Gap)
+### 4.3 IT-MPE budget (single-tier)
 
-Rev 1 set Tier-1 aliases to a flat weight *outside* the IT-MPE budget, so its "zero query drift" invariant did not actually cover Tier 1. Rev 2 splits the query-level expansion budget $\mu(Q) \in [0.18, 0.35]$ (V7 plan, Phase 4) between the two tiers:
+Only cross-root synonyms consume the expansion budget. The Rev 2 `η_morph` / `μ_morph` tier-split is removed:
 
-$$\mu_{\text{morph}}(Q) = \eta_{\text{morph}} \cdot \mu(Q), \qquad \mu_{\text{syn}}(Q) = (1 - \eta_{\text{morph}}) \cdot \mu(Q), \qquad \eta_{\text{morph}} = 0.4 \ \text{(default, tunable } [0.3, 0.5])$$
+$$w(s \mid a) = \mu(Q) \cdot w(a) \cdot \min\left(1.0, \frac{\text{IDF}(a)}{\text{IDF}(s)}\right) \cdot p(s \mid a)$$
 
-By construction, the per-anchor expansion mass is then exactly bounded:
+$$\sum_{s \in S(a)} w(s \mid a) \le \mu(Q) \cdot w(a), \qquad \mu(Q) \in [0.18, 0.35]$$
 
-$$\sum_{v \in M(a)} w_{\text{morph}}(v \mid a) + \sum_{s \in S(a)} \left[ w(s \mid a) + \sum_{v \in M(s)} w_{\text{morph}}(v \mid s) \right] \le \mu_{\text{eff}}(Q) \cdot w(a)$$
+This is the original Tier-2 formula with the fold-in and synonym-closure terms dropped; the second-order mass term is gone, so $\mu_{\text{eff}} = \mu(Q)$ exactly.
 
-$$\mu_{\text{eff}}(Q) = \mu_{\text{morph}} + \mu_{\text{syn}} + \mu_{\text{morph}} \cdot \mu_{\text{syn}} = \mu(Q) \cdot \left(1 + \eta_{\text{morph}} \cdot \mu(Q)\right) \approx 0.40 \text{ at defaults (worst case } 0.41)$$
+### 4.4 Decision record: no dual-field "exact-first" index
 
-The third term is the second-order mass of aliases folded in for synonyms ($\mu_{\text{morph}} \cdot \mu_{\text{syn}} \approx 3\%$ of $w(a)$ at defaults) — negligible in score space but necessary so the synonym channel is not lexically blind to inflections. **Design consequence:** morphological aliases are recall backstops — each alias carries roughly $\mu_{\text{morph}}/|M(\cdot)|$ of its parent term's mass, which is precisely the "exact first, variants as backstop" principle used by Algolia and Elasticsearch multi-fields.
+* Rev 2 catalogued a dual-field raw+stemmed index (exact-first ranking) as the "stronger V8 design." **Rev 3 rejects this.** For ordinary words, exact-first ranks on surface-form noise; the correct behavior is conflation. Exactness for technical tokens is already guaranteed by the exemption set.
+* The single-field stemmed index is therefore the **final** V7 design, not a compromise.
 
-### 4.4 Deliberate Trade-off: Query-Side Fold-In vs Index-Time Stemming
+### 4.5 Analyzer-parity wiring (the real integration work)
 
-| | Query-Side Fold-In (chosen for V7) | Index-Time Stemming / Dual-Field (deferred to V8) |
-| :--- | :--- | :--- |
-| Index rebuild | ❌ None — aliases added to $\vec{w}_Q$ only | ✅ Required (postings merged / second field) |
-| Exact-match priority | Native — anchor keeps full score, aliases budgeted below it | Needs multi-field boosts / exact-first tuning |
-| Query-time cost | $O(1)$ hash lookups, $<0.05\text{ms}$ | Zero (analysis at index time) |
-| Compatibility with custom Phase 5 accumulator | ✅ Works with today's repetition-based `retrieve()` immediately | Needs `retrieve_weighted` across two posting sets |
-| Compression / posting-list merging | Not exploited | Better |
-
-The dual-field exact + stemmed index is the classic Elasticsearch pattern and the stronger long-term design; it is cataloged for V8. Query-side fold-in is chosen for V7 because it requires no index changes and composes with the existing Phase 5 path.
+A stemmed index only works if every producer of $\vec{w}_Q$ keys emits the same analyzed stems the postings are keyed on. `CorpusVocabBuilder`, `CorpusIDFRegistry`, and `BM25DenseAspectExtractor` must all consume `EdgeRAGAnalyzer`, not raw tokens — otherwise injected synonyms and anchors will miss postings. This is the concrete carry-over of V7 Upgrade 1.1 from *tokenizer* parity to *analyzer* parity.
 
 ---
 
-## 5. End-to-End Concrete Retrieval Example
+## 5. Worked example
 
-### Query: `"fiscal policy impact on price levels"`
-* **Explicit Query Anchors ($p=1.0$):** `["fiscal", "policy", "impact", "price", "levels"]`
+### Query: `"fiscal policy impact on price levels"` — anchor `"price"`
 
-#### Execution Trace for Anchor $a = \text{"price"}$:
-1. **Anchor Primary Weight:** $w(\text{"price"}) = 4.2$ (high-IDF topic anchor).
-2. **Query-Level Budgets:** $\mu(Q) = 0.35$, $\eta_{\text{morph}} = 0.4$ → $\mu_{\text{morph}} = 0.14$, $\mu_{\text{syn}} = 0.21$.
-3. **Tier 1 (Morphological Fold-In):**
-   * Registry lookup: $\sigma(\text{"price"}) = \text{"price"} \mapsto \{\text{prices}, \text{pricing}\}$.
-   * Damping: $\text{IDF}(\text{price}) \approx \text{IDF}(\text{prices}) \approx \text{IDF}(\text{pricing}) \to \text{damp} \approx 1.0$, so $p_{\text{morph}} = 0.5 / 0.5$.
-   * Assigned weights: $w(\text{prices}) = 0.14 \cdot 4.2 \cdot 0.5 \approx 0.29$, $w(\text{pricing}) \approx 0.29$.
-   * *Dense slots consumed:* $0$ (exempt). *Budget consumed:* $\mu_{\text{morph}} \cdot w(a) = 0.588$.
-4. **Tier 2 (Dense Semantic Probing with Diversity Gating):**
-   * Raw BGE probing ranked list:
-     1. `"prices"` (sim = 0.97) → ❌ *Filtered (same stem `price`)*
-     2. `"pricing"` (sim = 0.95) → ❌ *Filtered (same stem `price`)*
-     3. `"cost"` (sim = 0.84) → ✅ **Accepted (Slot 1)**, $p \approx 0.57$ (softmax, $\tau = 0.10$)
-     4. `"valuation"` (sim = 0.81) → ✅ **Accepted (Slot 2)**, $p \approx 0.43$
-   * Synonyms weighted: $w(\text{cost}) = 0.21 \cdot 4.2 \cdot 1.0 \cdot 0.57 \approx 0.50$; $w(\text{valuation}) \approx 0.38$.
-   * Synonym fold-in (closure): $M(\text{cost}) = \{\text{costs}, \text{costing}\}$ share $\mu_{\text{morph}} \cdot w(\text{cost}) = 0.14 \cdot 0.50 = 0.07$ → $w \approx 0.035$ each.
-5. **Joint Invariant Check:** $0.29 + 0.29 + 0.50 + 0.38 + 0.035 + 0.035 = 1.53 \le \mu_{\text{eff}}(Q) \cdot w(a) = 0.399 \cdot 4.2 \approx 1.68$ ✅
-6. **Final Compiled Term Vector $\vec{w}_Q$ for Anchor `"price"`:**
-   * Core Anchor: `{"price": 4.2}`
-   * Lexical Aliases (Tier 1): `{"prices": 0.29, "pricing": 0.29}`
-   * Semantic Synonyms (Tier 2): `{"cost": 0.50, "valuation": 0.38}`
-   * Synonym Aliases (Tier 1 closure): `{"costs": 0.035, "costing": 0.035}`
+1. **Anchor primary weight:** $w(\text{"price"}) = 4.2$ (high-IDF topic anchor).
+2. **Query-level budget:** $\mu(Q) = 0.35$.
+3. **Dense probing** (pool is already stem-diverse, so inflections are absent): raw BGE list yields `cost` (sim 0.84) and `valuation` (sim 0.81).
+4. **Softmax** ($\tau = 0.10$): $p(\text{cost}) \approx 0.57$, $p(\text{valuation}) \approx 0.43$.
+5. **Weights:** $w(\text{cost}) = 0.35 \cdot 4.2 \cdot 1.0 \cdot 0.57 \approx 0.84$; $w(\text{valuation}) \approx 0.63$.
+6. **Invariant check:** $0.84 + 0.63 = 1.47 = \mu(Q) \cdot w(a) = 0.35 \cdot 4.2$ ✅
+7. **Final vector for `"price"`:** `{"price": 4.2, "cost": 0.84, "valuation": 0.63}`.
 
-### Suppletion Trace: anchor `"went"` (query `"prices went up"`)
-* Exception lookup: `went → go`; registry bucket $\sigma(\text{go}) = \{\text{go}, \text{goes}, \text{going}, \text{gone}\} \cap \mathcal{V}_{\text{corpus}}$.
-* All corpus-present variants are folded in under the same $\mu_{\text{morph}}$ budget; the original token `"went"` remains in $\vec{w}_Q$ untouched (additive rule).
+### Suppletion trace: `"prices went up"`
 
-### Exemption Trace: anchor `"qwen2.5"` (query `"qwen2.5 context length"`)
-* Exemption check: matches `[a-z0-9]+(?:[-._][a-z0-9]+)+` → **never stemmed, no aliases generated**; Tier 2 proceeds normally. Technical-token behavior is bit-identical to today's pipeline.
+* The analyzer overrides `went → go` at query time; at index time, documents containing `went`/`go`/`goes`/`going`/`gone` all land in the `go` posting list. No fold-in machinery is needed — the override is part of the shared analyzer chain.
+
+### Exemption trace: `"qwen2.5 context length"`
+
+* `qwen2.5` matches the technical pattern → never stemmed, never overridden. Behavior is bit-identical to today's pipeline.
 
 ---
 
-## 6. Mathematical Stability & Latency Guarantees
+## 6. Latency guarantees
 
-1. **Zero Query Drift (IT-MPE Invariant, covering both tiers and the synonym closure):**
-   Per anchor, the aggregate expansion mass — anchor aliases, synonyms, and the aliases folded in for synonyms — is bounded by the primary anchor mass:
-   $$\sum_{v \in M(a)} w_{\text{morph}}(v \mid a) + \sum_{s \in S(a)} \left[ w(s \mid a) + \sum_{v \in M(s)} w_{\text{morph}}(v \mid s) \right] \le \mu_{\text{eff}}(Q) \cdot w(a) \le 0.41 \cdot w(a)$$
-   In score space, each expansion term additionally inherits $\min(1, \text{IDF}_a/\text{IDF}_t)$ damping, so **no single alias/synonym hit can out-score a single anchor hit**: its per-hit contribution is $\le \mu \cdot w(a) \cdot \min(\text{IDF}(t), \text{IDF}(a)) < w(a) \cdot \text{IDF}(a)$.
-2. **Sub-Millisecond Runtime:**
-   * Registry lookup: $O(1)$ hash table check ($<0.02\text{ms}$).
-   * Exception-list check: $O(1)$ dict lookup ($<0.01\text{ms}$).
-   * 1-Pass batch matrix probing: $\mathbf{E}_A \cdot \mathbf{V}^\top$ ($1.2\text{ms}$), unchanged.
-   * Total Query-Time Overhead: **$<1.5\text{ms}$**.
-   * Registry construction: $O(|\mathcal{V}_{\text{corpus}}|)$ at index time only (amortized into the existing $<0.3\text{s}$ TTI budget).
+* The analyzer is a single pass over tokens; the suppletion override is an `O(1)` dict lookup per token.
+* Dense probing is unchanged (batch GEMM).
+* Rev 2's registry build, registry lookup, and fold-in are gone, so query-time work is strictly *less* than Rev 2.
 
 ---
 
 ## 7. Evaluation Protocol (Gate Before Adoption)
 
-1. **Diagnostic First — Inflectional-Miss Census:** on `fused_stress_500`, `enterpriserag`, and `liverag`, measure the % of gold-miss queries where the failing query term differs from the gold-doc term only by inflection (`-s/-es/-ed/-ing`) or suppletion. This quantifies the actual recall ceiling; if the share is negligible, morphology is not a V7 bottleneck and the effort should be re-scoped.
-2. **Technical-Token Regression Guard:** a fixed query set containing `qwen2.5`, `gpt-4`, `fp16`, `zero-shot`, `kv-cache`, etc. must produce **bit-identical** ranked results before/after Tier 1 (guaranteed by the exemption set — but verify, don't assume).
-3. **A/B Sweep:** stemmer {KStem, Snowball-with-exceptions, Porter (as a bound)} × $\eta_{\text{morph}} \in \{0.3, 0.4, 0.5\}$ × exception lists {on, off} × synonym closure {on, off}, evaluated on the **morphology-failing subset from step 1** *and* on aggregate metrics (aggregate-only evaluation dilutes the signal).
-4. **Metric Pairing:** report **ChunkRec@10 and Strict@10 together**. Fold-in buys recall and risks precision; Strict@10 is the guardrail against alias-induced precision leaks (e.g., Porter-style `universal`-for-`university` matches, which KStem + exemptions should prevent).
-5. **Starvation Telemetry:** reuse the existing aspect telemetry (`total_candidates_above_tau`, `starved_aspects_count`, `injected_synonyms`) to assert that post-gate synonyms are cross-root (stem differs from anchor).
+1. **Diagnostic first — suppletion census:** on `fused_stress_500`, `enterpriserag`, and `liverag`, measure the % of gold-miss queries failing *only* on suppletion. This sizes the remaining morphological ceiling; if negligible, the override is optional.
+2. **Technical-token regression guard:** the fixed set `qwen2.5`, `gpt-4`, `fp16`, `zero-shot`, `kv-cache` must stay bit-identical (guaranteed by the exemption set — verify anyway).
+3. **A/B sweep:** suppletion override {on, off} × cross-root probing {on, off}; the `η_morph` axis is removed.
+4. **Metric pairing:** report ChunkRec@10 **and** Strict@10 together; Strict@10 remains the precision guardrail.
+5. **Starvation telemetry:** assert post-probing synonyms are cross-root (trivially true once the pool is stemmed).
 
 ---
 
 ## 8. Implementation Roadmap & Progress Tracker
 
-* [x] **Step 1: Canonical Tokenizer (`EdgeRAGTokenizer`)** ([`src/pipeline_v2/indexer/tokenizer.py`](../src/pipeline_v2/indexer/tokenizer.py)) — **DONE**
-  - Compiled regex `r'\b[a-z0-9]+(?:[-._][a-z0-9]+)+\b|\b[a-z0-9]{2,}\b'`.
-  - Protects technical compounds (`qwen2.5-7b`, `gpt-4`, `fp16`) and 2-letter acronyms (`ai`, `ml`, `db`, `kv`).
-  - Passes 100% unit tests.
-* [x] **Foundation Infrastructure: Lucene Analyzer & Vectorized Posting Index** ([`analyzer.py`](../src/pipeline_v2/indexer/analyzer.py), [`posting_index.py`](../src/pipeline_v2/indexer/posting_index.py)) — **DONE**
-  - Implemented `EdgeRAGAnalyzer` (possessive stripping, 33 Lucene stopwords, keyword marker exemptions, KStem).
-  - Implemented `InvertedPostingIndex` with float-weighted scoring (`retrieve_weighted`).
-  - Evaluated on all 10 document-level benchmarks (Strict@10: 54.74% $\to$ **62.45%**, DocRec@10: 42.33% $\to$ **49.39%** at $<1\text{ms}$ latency).
-* [ ] **Step 2: `MorphologicalStemRegistry`** (`src/pipeline_v2/indexer/morphological_stem_registry.py`) — **PENDING**
-  - Build at index time from the posting-dictionary vocabulary: KStem map, exemption set, WordNet exception lists (`went -> go`), DF-ranked variant lists capped at $K_{\text{morph}} = 8$.
-* [ ] **Step 3: Replace Destructive Pseudo-Stem Dedup** (`src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py`) — **PENDING**
-  - Replace legacy prefix/suffix heuristic with registry-based stem equality + cosine check ($\ge 0.90$).
-  - Enforce the additive rule (never drop surface query terms from the retrieval vector).
-* [ ] **Step 4: Stem-Diversity Gate in Dense Probing** (Phase 3) — **PENDING**
-  - Filter `stem(s) == stem(a)` before BGE similarity ranking to prevent morphological slot starvation in $C_{\text{exp}} = 2$ slots.
-* [ ] **Step 5: Tier-1 Morphological Fold-In & Synonym Closure** (Phase 4) — **PENDING**
-  - Split expansion budget $\mu_{\text{morph}} = \eta_{\text{morph}} \cdot \mu(Q)$, $\mu_{\text{syn}} = (1 - \eta_{\text{morph}}) \cdot \mu(Q)$.
-  - Fold in IDF-damped aliases for anchors and accepted Tier-2 synonyms into sparse vector $\vec{w}_Q$.
-* [ ] **Step 6: Configuration YAML Updates** (`configs/pipeline_v2.yaml`) — **PENDING**
-  - Expose `stemmer: kstem`, `eta_morph: 0.4`, `k_morph: 8`, `use_wordnet_exceptions: true`, `morph_fold_synonyms: true`.
-* [ ] **Step 7: Evaluation Diagnostics & Sweeps** — **PENDING**
-  - Run inflection-miss census, technical-token regression checks, and slot-starvation recovery sweeps on `bright_economics` and `financebench`.
+* [x] **Step 1: Canonical Tokenizer (`EdgeRAGTokenizer`)** — **DONE**
+* [x] **Foundation: Analyzer, Posting Index, Baseline** (`analyzer.py`, `posting_index.py`, `AnalyzedLuceneBM25`) — **DONE**
+  - 5-stage analyzer (possessive → stopword → exemption → KStem), vectorized posting index, analyzed baseline beating all v1/v5/v6 schemas.
+* [ ] **Step 2 (REVISED): Suppletion override in `EdgeRAGAnalyzer`** — **PENDING**
+  - Add a `stemmer_override` stage from WordNet `wn_s.pl` / `wn_v.pl` before KStem; exempt technical tokens.
+* [ ] **Step 3 (REVISED): Analyzer-parity wiring** — **PENDING**
+  - Route `CorpusVocabBuilder`, `CorpusIDFRegistry`, and `BM25DenseAspectExtractor` through `EdgeRAGAnalyzer` so all $\vec{w}_Q$ keys are analyzed stems.
+* [ ] **Step 4 (REVISED): Replace destructive anchor dedup** — **PENDING**
+  - Replace the prefix/suffix substring heuristic with stem-equality + cosine check.
+* [ ] ~~**Step 5: Tier-1 fold-in / synonym closure**~~ — **CANCELLED** (redundant under index-time stemming)
+* [ ] **Step 6: Configuration YAML updates** — **PENDING**
+  - Expose `stemmer: kstem`, `use_wordnet_override: true`; **drop** `eta_morph`, `k_morph`, `morph_fold_synonyms`.
+* [ ] **Step 7: Evaluation diagnostics & sweeps** — **PENDING**
+  - Run suppletion census, technical-token regression checks, and cross-root synonym recovery sweeps on `bright_economics` and `financebench`.
 
-**Explicitly out of scope for V7:** index-time stemming / dual-field exact+stemmed index (V8 candidate, §4.4), SPLADE-style subword postings, sentence-contextualized embeddings (V7b/V8 per architectural plan Upgrade 1.4).
+**Explicitly out of scope for V7:** dual-field raw+stemmed "exact-first" index (rejected, §4.4), SPLADE-style subword postings, sentence-contextualized embeddings (V7b/V8).
