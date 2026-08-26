@@ -53,52 +53,76 @@ graph TD
 > **Lucene-Parity Note (cross-ref [`lucene_bm25_parity_plan.md`](lucene_bm25_parity_plan.md)):** the analyzer chain (canonical tokenization, possessive stripping, stopword removal, case folding, and **KStem**) is **already implemented** in `EdgeRAGAnalyzer` and proven in `AnalyzedLuceneBM25`. Phase 1 adopts this **index-time-stemmed** index wholesale — stemming is **no longer query-side**. Technical-token protection is preserved by the analyzer's exemption set, not by keeping stemming out of the index.
 
 #### 1. Finalized Upgrades for Phase 1
-* **Upgrade 1.1 — Unified Canonical Tokenizer & Cross-Module Synchronization (`EdgeRAGTokenizer` / Architecture Fix):**
-  - **Single Source of Truth (`src/pipeline_v2/indexer/tokenizer.py`):** A dedicated, canonical `EdgeRAGTokenizer.tokenize(text)` module used strictly across `BM25LuceneIndexer`, `CorpusVocabBuilder`, `CorpusIDFRegistry`, and `BM25DenseAspectExtractor`. *(Note: with index-time stemming, the source of truth is extended to the full `EdgeRAGAnalyzer`, not just the tokenizer — see Upgrade 1.7.)*
+* **Upgrade 1.1 — Canonical Tokenization (`EdgeRAGTokenizer`):**
+  - **Role:** the tokenization stage of `EdgeRAGAnalyzer` — not the sole source of truth (that is the analyzer, Upgrade 1.7).
   - **Tokenization Pattern (`r'\b[a-z0-9]+(?:[-._][a-z0-9]+)+\b|\b[a-z0-9]{2,}\b'`):**
     - Splits on whitespace and standard delimiter punctuation (commas, parentheses, brackets, slashes).
     - Preserves alphanumeric technical compounds and version identifiers intact (e.g., `"qwen2.5-7b"`, `"gpt-4"`, `"llama-3.1"`, `"fp16"`, `"zero-shot"`).
     - Retains vital 2-letter technical acronyms (`"ai"`, `"ml"`, `"db"`, `"kv"`, `"ip"`).
   - **Bug Fix:** Eliminates cross-module tokenization boundary mismatches (e.g. indexing `"qwen-2.5"` in BM25 but querying `"qwen"` + `"2.5"`), guaranteeing 1:1 key parity across inverted index postings, vocabulary matrix, and query parsing.
-* **Upgrade 1.2 — Scaled Vocabulary Pool & Query-Time Anchor Bailout (The Rescue Plan):**
-  - **Static Index-Time Pool:** Scale candidate vocabulary capacity from $1,000 \to N_{\text{vocab}} = 2,500$ terms in `CorpusVocabBuilder` using sublinear salience ranking ($\text{IDF} \times \ln(1 + \text{DF})$ for $\text{Doc\_Freq} \ge 2$), providing broad domain coverage at negligible VRAM ($<0.12\text{GB}$).
-  - **Query-Time Anchor Bailout:** When a discriminative query anchor $a$ meets the gate ($\text{IDF}(a) \ge 3.0$ and $\text{length}(a) \ge 3$, or $a \in \text{HeuristicEntities}$), perform an instant $O(1)$ token-boundary prefix/suffix lookup in the inverted index posting dictionary (`a-`, `a_`, `a.`, `a[0-9]`, `-a`) to bail out matching $DF=1$ compounds, versions, and typos (e.g., `gpt` $\to$ `gpt-4`, `gpt4`; `qwen` $\to$ `qwen2.5`, `qwen-vl`; `kv` $\to$ `kv-cache`). These bailed terms are dynamically injected into candidate evaluation under IT-MPE score-space damping.
-* **Upgrade 1.3 — 1-Pass Batch Tensor Probing Alignment (Matrix GEMM Acceleration):**
-  - Pre-allocate and $L_2$-normalize tensor $\mathbf{V} \in \mathbb{R}^{2500 \times 384}$ as a contiguous CUDA FP16 tensor in `DenseVocabMatrix`, enabling single GEMM matrix multiplication ($\mathbf{E}_A \cdot \mathbf{V}^\top \approx 1.2\text{ms}$) during query probing with 100% mathematical cosine equivalence and zero quality loss.
-* **Upgrade 1.4 — In-Context Sample Embedding (Deferred to V7b / V8):**
-  - Generating sentence-contextualized embeddings for candidate vocabulary terms is cataloged as a future research milestone.
-* **Upgrade 1.5 — Stem-Diversified Vocabulary Pool** *(obsolete — cancelled):* With index-time KStem, `price`/`prices`/`pricing` are conjoined at the analyzer *before* the pool is built, so the pool is naturally stem-diverse. No separate stem-merge step is needed.
-* **Upgrade 1.6 — `MorphologicalStemRegistry`** *(obsolete — cancelled):* Redundant once postings are keyed by stem. The only residual morphology machinery is a WordNet `stemmer_override` (suppletion) stage inside `EdgeRAGAnalyzer` (see [`morphology_expansion_strategy.md`](morphology_expansion_strategy.md) Rev 3 §4.1).
-* **Upgrade 1.7 — Analyzer-Parity Wiring (new):** Route `CorpusVocabBuilder`, `CorpusIDFRegistry`, and `BM25DenseAspectExtractor` through `EdgeRAGAnalyzer` (not raw tokens) so every producer of $\vec{w}_Q$ keys emits the same analyzed stems the postings are keyed on.
+* **Upgrade 1.2 — Scaled Vocabulary Pool (Static, Index-Time):**
+  - Scale candidate vocabulary capacity from $1,000 \to N_{\text{vocab}} = \min(2,500,\ \#\text{distinct stems passing } DF \ge 2)$ in `CorpusVocabBuilder` using sublinear salience ranking ($\text{IDF} \times \ln(1 + \text{DF})$ for $\text{Doc\_Freq} \ge 2$), providing broad domain coverage at negligible VRAM ($<0.12\text{GB}$).
+  - **Post-stemming recalibration:** $2,500$ was sized pre-stemming, when inflectional clones wasted slots. With a stem-diverse pool, re-validate $N_{\text{vocab}} \in \{1000, 1500, 2500\}$ empirically — $1,000$ stems may already cover what $2,500$ raw terms did.
+* **Upgrade 1.3 — Normalized Vocab Matrix Preparation (Index-Time):**
+  - Pre-allocate and $L_2$-normalize the analyzed vocabulary tensor $\mathbf{V} \in \mathbb{R}^{N_{\text{vocab}} \times 384}$ as a contiguous CUDA FP16 tensor in `DenseVocabMatrix`. (The query-time GEMM $\mathbf{E}_A \cdot \mathbf{V}^\top$ is a Phase 3 operation, already specified there.)
+  - **Embedding-form note:** $\mathbf{V}$ embeds **surface forms** (BGE is surface-trained), while postings are keyed by **stems**; the analyzer bridges surface ↔ stem (Upgrade 1.7).
+* **Upgrade 1.7 — Analyzer-Parity Wiring (the single source of truth):**
+  - `EdgeRAGAnalyzer` (tokenizer → possessive → stopword → exemption → `stemmer_override` → KStem) is the sole token-producing source of truth.
+  - **1.7a (index-side, Phase 1):** route `CorpusVocabBuilder`, `CorpusIDFRegistry`, and the posting index through `EdgeRAGAnalyzer`, so postings, IDF tables, and the vocab pool are keyed by analyzed stems.
+  - **1.7b (query-side, Phase 2):** route `BM25DenseAspectExtractor`'s query analysis through the same analyzer, so query anchors are analyzed stems matching the index keys.
+* **Upgrade 1.8 — WordNet Suppletion Override (new):**
+  - Add a `stemmer_override` stage to `EdgeRAGAnalyzer` (before KStem) using WordNet `wn_s.pl` / `wn_v.pl` to map suppletive forms (`went → go`, `bought → buy`, `better → good`); exempt technical tokens. This is the only residual morphology work.
+
+> **Retired / relocated from Phase 1** (kept for history; not active):
+> - **1.4 In-Context Sample Embedding** — deferred to V7b/V8.
+> - **1.5 Stem-Diversified Vocabulary Pool** — cancelled (index-time KStem conjoins inflections before the pool is built).
+> - **1.6 `MorphologicalStemRegistry`** — cancelled (redundant once postings are keyed by stem).
+> - **Query-Time Anchor Bailout (formerly part of 1.2)** — relocated to Phase 2 (needs the finished anchor list).
 
 #### 2. Phase 1 Parameter Defaults & Calibration
 | Parameter | Default Value | Mathematical & Operational Rationale |
 | :--- | :---: | :--- |
-| **$N_{\text{vocab}}$ (Vocab Pool Size)** | **$2,500$** | Expands domain coverage $2.5\times$ over V5 with zero latency penalty ($<0.5\text{s}$ TTI, $<0.12\text{GB}$ VRAM). |
-| **$\tau_{\text{rescue\_IDF}}$ (Bailout Anchor IDF Gate)** | **$3.0$** | Enforces that only anchors in $\le 4.98\%$ of the corpus trigger $DF=1$ bailout, preventing generic stopwords from pulling noise. |
-| **$\text{min\_len}_{\text{rescue}}$ (Bailout Anchor Length)** | **$3$ chars** | Permits crucial 3-letter technical anchors (`gpt`, `rag`, `sql`, `ehr`, `llm`) to trigger bailout, using boundary matching to prevent collision. |
-| **Regex Entity Acronym Exception** | **`[A-Z]{2,}`** | Allows short uppercase technical acronyms (`KV`, `AI`, `ML`, `DB`) to trigger strict token-boundary bailout. |
+| **$N_{\text{vocab}}$ (Vocab Pool Size)** | **$\min(2,500,\ \#\text{distinct stems})$** | Ceiling, not a guaranteed fill; re-calibrate post-stemming ($\{1000, 1500, 2500\}$). |
 | **Analyzer `stemmer`** | **`kstem`** | Conservative IR stemmer applied at index and query time; conjoins inflections without derivational conflation. |
 | **Analyzer `use_wordnet_override`** | **`true`** | WordNet `stemmer_override` maps suppletive forms (`went → go`); the only residual morphology stage. |
+
+*Bailout params (`τ_rescue_IDF`, `min_len_rescue`, acronym exception) live in Phase 2, alongside the relocated Anchor Bailout operation.*
 
 ---
 
 ### Phase 2: Query Dissection & Anchor Formulation (Query Analysis)
 * **Module Owner:** `src/pipeline_v2/expansion/` (`bm25_dense_aspect_extractor.py`)
 * **Role:** Analyzes user query intent, isolates explicit technical entities, identifies grounded anchors, and computes continuous base weights $w(a)$.
-* **Core Operations:**
-  1. **Heuristic Entity Extraction:** Regex pattern matching for technical acronyms (`\b[A-Z]{2,}\b`), hyphenated/versioned identifiers (`\b[A-Za-z0-9\.]+(?:-[A-Za-z0-9\.]+)+\b`), and quoted phrases (`"..."`).
-  2. **Linguistic POS Weighting:** Assigns grammatical prior weights:
+* **Analyzer parity (Upgrade 1.7b) & pipeline order:** the query is analyzed with `EdgeRAGAnalyzer`, so anchors are keyed by analyzed stems. **Order matters** — ops 1–2 (entity extraction, POS) run on **raw text** (pre-lowercase, pre-stemming); the analyzer runs between op 2 and op 3; ops 3–7 operate on analyzed stems.
+
+#### 1. Finalized Operations for Phase 2
+  1. **Heuristic Entity Extraction (raw text):** Regex pattern matching for technical acronyms (`\b[A-Z]{2,}\b`), hyphenated/versioned identifiers (`\b[A-Za-z0-9\.]+(?:-[A-Za-z0-9\.]+)+\b`), and quoted phrases (`"..."`). Runs *before* `EdgeRAGAnalyzer` (acronyms require uppercase; the analyzer lowercases).
+  2. **Linguistic POS Weighting (raw text):** Assigns grammatical prior weights on **surface tokens** (POS tagging needs unstemmed words):
      $$w_{\text{POS}}(\text{Noun / Entity}) = 1.25, \quad w_{\text{POS}}(\text{Verb}) = 0.85, \quad w_{\text{POS}}(\text{Modifier / Other}) = 0.70$$
-  3. **Anchor Selection Policy ($p$):** Selects top $N_{\text{anchors}} = \max(2, \lceil p \cdot |Q_{\text{clean}}| \rceil)$ distinct query terms. (Recent empirical sweeps demonstrate $p \in [0.8, 1.0]$ maximizes recall across broad corpora).
+     POS labels are carried onto the corresponding analyzed stems via token index.
+  3. **Anchor Selection Policy ($p$, analyzed):** After `EdgeRAGAnalyzer`, select the top $N_{\text{anchors}} = \max(2, \lceil p \cdot |Q_{\text{clean}}| \rceil)$ distinct analyzed tokens, ranked by **corpus IDF** (Schemas 1–5) or **query centrality** (Schema 6). $|Q_{\text{clean}}|$ = distinct analyzed tokens after stopword removal.
   4. **Query Centrality Formulation:** Computes graph density in BGE embedding space:
      $$\text{Centrality}(a) = \frac{1}{|Q| - 1} \sum_{t \in Q \setminus \{a\}} \cos(\mathbf{e}_a, \mathbf{e}_t) \quad \text{or} \quad \cos(\mathbf{e}_a, \mathbf{e}_Q)$$
+     **Surface-form note:** $\mathbf{e}_a, \mathbf{e}_t$ are embedded from **surface forms** (BGE is surface-trained); the analyzer bridges surface ↔ stem (Phase 1, Upgrade 1.3).
   5. **Continuous Anchor Base Weighting:**
-     $$w(a) = w_{\text{POS}}(a) \times \left(1.0 + \gamma \cdot \frac{\text{IDF}(a)}{\max_{t \in Q} \text{IDF}(t)} \cdot \text{Centrality}(a)\right), \quad \gamma = 2.0$$
-  6. **Anchor Deduplication & Entity Validation (stem-based, additive):**
-     - Replace the current destructive prefix/suffix heuristic (`w.startswith(sel) ... → is_dup`) — which falsely conflates `plan`/`planet`, `cost`/`costume`, `organ`/`organization` — with **stem-equality** (from the analyzed-token space) plus the existing semantic cosine check ($\text{CosSim} \ge 0.90$).
-     - **Additive rule:** dedup may only prevent *duplicate anchor slots*; it must **never drop a surface token from the retrieval vector**.
-* **Output Artifacts:** Grounded anchor dictionary $\mathcal{A} = \{(a, w(a))\}$.
+     $$w(a) = w_{\text{POS}}(a) \times \left(1.0 + \gamma \cdot \frac{\text{IDF}(a)}{\max_{t \in Q} \text{IDF}(t)} \cdot \text{Centrality}(a)\right), \quad \gamma = 2.0 \quad \implies \quad w(a) \in [0.70,\ 3.75]$$
+  6. **Anchor Deduplication & Entity Validation (semantic, additive):**
+     - Replace the destructive prefix/suffix heuristic (`w.startswith(sel) ... → is_dup`) — which falsely conflates `plan`/`planet`, `cost`/`costume`, `organ`/`organization` — with **semantic cosine dedup** ($\text{CosSim} \ge 0.90$). (Stem-equality is now implicit: anchors are already analyzed stems, so identical stems are identical tokens.)
+     - **Additive rule:** dedup may only prevent *duplicate anchor slots*; it must **never drop an analyzed token** from the retrieval vector.
+  7. **Anchor Bailout (Rare Singleton Rescue, technical-only):** For each surviving anchor $a$ meeting the gate ($\text{IDF}(a) \ge 3.0$ and $\text{length}(a) \ge 3$, or $a \in \text{HeuristicEntities}$), perform an instant $O(1)$ token-boundary prefix/suffix lookup in the **exempt (unstemmed) technical slice** of the posting dictionary (`a-`, `a_`, `a.`, `a[0-9]`, `-a`) to bail out matching $DF=1$ compounds, versions, and typos (e.g., `gpt` $\to$ `gpt-4`, `gpt4`; `qwen` $\to$ `qwen2.5`, `qwen-vl`; `kv` $\to$ `kv-cache`).
+     - **Weighting:** a bailed term $a'$ joins $\vec{w}_Q$ with the anchor's weight under score-space IDF damping, $w(a') = w(a) \cdot \min\left(1.0,\ \frac{\text{IDF}(a)}{\text{IDF}(a')}\right)$, **outside** the Phase-4 $\mu(Q)$ synonym budget (bailout is lexical rescue, not semantic expansion).
+
+#### 2. Phase 2 Parameter Defaults & Calibration
+| Parameter | Default Value | Mathematical & Operational Rationale |
+| :--- | :---: | :--- |
+| **$p$ (Anchor Selection Ratio)** | **$0.80$** | Recent sweeps favor $p \in [0.8, 1.0]$ for recall across broad corpora. |
+| **$\gamma$ (Centrality Weight)** | **$2.0$** | Scales the IDF × centrality term in the anchor weight. |
+| **$w_{\text{POS}}$ (POS priors)** | **Noun 1.25 / Verb 0.85 / Other 0.70** | Grammatical prior: content nouns dominate, modifiers damped. |
+| **$\tau_{\text{rescue\_IDF}}$ (Bailout Anchor IDF Gate)** | **$3.0$** | Only anchors in $\le 4.98\%$ of the corpus trigger $DF=1$ bailout. |
+| **$\text{min\_len}_{\text{rescue}}$ (Bailout Anchor Length)** | **$3$ chars** | Permits 3-letter technical anchors (`gpt`, `rag`, `sql`, `ehr`, `llm`). |
+| **Regex Entity Acronym Exception** | **`[A-Z]{2,}`** | Raw-text (pre-lowercase) acronym detection for entity + bailout gates. |
+
+* **Output Artifacts:** Grounded anchor dictionary $\mathcal{A} = \{(a, w(a))\}$ plus any bailed-out technical compounds.
 
 ---
 
@@ -156,14 +180,17 @@ graph TD
 
 | Upgrade / Refinement | Target Phase | Implementation Impact |
 | :--- | :--- | :--- |
-| **Unified Canonical Tokenizer (`EdgeRAGTokenizer`)** | **Phase 1** | Single tokenization source of truth; eliminates cross-module boundary mismatches. *(done)* |
+| **Canonical Tokenization (`EdgeRAGTokenizer`)** | **Phase 1** | Tokenization stage of `EdgeRAGAnalyzer`; eliminates cross-module boundary mismatches. *(done)* |
 | **Analyzer Chain (possessive + stopword + case + KStem, index-time)** | **Phase 1** | Adopted from `EdgeRAGAnalyzer`; stemming is index-time, not query-side. *(done, extend with suppletion override)* |
-| **Punctuation Tokenization & Rare Singleton Rescue** | **Phase 1** | Modifies `CorpusVocabBuilder` to preserve $DF=1$ alphanumeric technical entities. |
-| **Analyzer-Parity Wiring (Upgrade 1.7)** | **Phase 1** | Route VocabBuilder / IDF registry / extractor through `EdgeRAGAnalyzer`. |
-| **1-Pass Batch Tensor Probing** | **Phase 1 / 3** | Replaces sequential loop probing with single matrix multiplication $\mathbf{E}_A \cdot \mathbf{V}^\top$ in `DenseVocabMatrix`. |
+| **Punctuation Tokenization** | **Phase 1** | Canonical `EdgeRAGTokenizer`; splits delimiters, preserves technical compounds. *(done)* |
+| **WordNet Suppletion Override (Upgrade 1.8)** | **Phase 1** | Add `stemmer_override` stage to `EdgeRAGAnalyzer` (suppletion → lemma). |
+| **Analyzer-Parity Wiring — index-side (Upgrade 1.7a)** | **Phase 1** | Route VocabBuilder / IDF registry / posting index through `EdgeRAGAnalyzer`. |
+| **Analyzer-Parity Wiring — query-side (Upgrade 1.7b)** | **Phase 2** | Route `BM25DenseAspectExtractor` query analysis through `EdgeRAGAnalyzer`. |
+| **Rare Singleton Rescue / Anchor Bailout** | **Phase 2** | Query-time bailout rescues $DF=1$ technical compounds; pool floor stays $DF \ge 2$. |
+| **1-Pass Batch Tensor Probing** | **Phase 3** | Single matrix multiplication $\mathbf{E}_A \cdot \mathbf{V}^\top$ in `DenseVocabMatrix`. |
 | **High Anchor Selection Ratio ($p \in [0.8, 1.0]$)** | **Phase 2** | Updates default $p$ parameter in `configs/pipeline_v2.yaml` and anchor extractor. |
-| **Continuous POS & Centrality Weighting** | **Phase 2** | Implements continuous $w(a) \in [1.0, 3.75]$ replacing discrete integer repetition. |
-| **Stem-Based Anchor Dedup (additive)** | **Phase 2** | Replaces destructive prefix/suffix heuristic with stem-equality + cosine. |
+| **Continuous POS & Centrality Weighting** | **Phase 2** | Implements continuous $w(a) \in [0.70, 3.75]$ replacing discrete integer repetition. |
+| **Semantic Anchor Dedup (additive)** | **Phase 2** | Replaces destructive prefix/suffix heuristic with cosine $\ge 0.90$ dedup (stems already conjoined by the analyzer). |
 | **Adaptive Similarity Quality Gate ($\tau_{\text{sim}} \in [0.80, 0.90]$)** | **Phase 3** | Replaces hard binary entity freezing with dynamic similarity cutoff based on anchor IDF. |
 | **Dual-Sim Context Synthesis ($\beta = 0.65$)** | **Phase 3** | Combines local anchor embedding with global query embedding. |
 | **IT-MPE Continuous Mass Allocation & Score-Space Damping** | **Phase 4** | Enforces $\min(1, \text{IDF}_a/\text{IDF}_s)$ damping and temperature-scaled softmax allocation (single-tier). |

@@ -97,7 +97,7 @@ graph TD
   `Tokenizer → PossessiveFilter → StopwordFilter → KeywordMarkerExemption → StemmerOverride → KStem`.
 * **StemmerOverride** (new, small): a static dict from WordNet `wn_s.pl` / `wn_v.pl` mapping suppletive forms to lemma (`went → go`, `bought → buy`, `better → good`, `best → good`). Applied before KStem; exempt tokens are skipped.
 * **Exemption set** (unchanged): tokens matching the technical patterns `[a-z0-9]+(?:[-._][a-z0-9]+)+`, `[A-Z]{2,}`, or containing digits are never stemmed and never overridden.
-* **Result:** postings, IDF tables, the vocabulary pool, and query anchors all share one analyzed-token space — the "single source of truth" from V7 Upgrade 1.1, extended from *tokenizer* parity to *analyzer* parity.
+* **Result:** postings, IDF tables, the vocabulary pool, and query anchors all share one analyzed-token space — the "single source of truth" from V7 Upgrade 1.7 (analyzer parity), built on top of the tokenizer (Upgrade 1.1).
 
 ### 4.2 Cross-root semantic probing (the surviving channel)
 
@@ -121,7 +121,7 @@ This is the original Tier-2 formula with the fold-in and synonym-closure terms d
 
 ### 4.5 Analyzer-parity wiring (the real integration work)
 
-A stemmed index only works if every producer of $\vec{w}_Q$ keys emits the same analyzed stems the postings are keyed on. `CorpusVocabBuilder`, `CorpusIDFRegistry`, and `BM25DenseAspectExtractor` must all consume `EdgeRAGAnalyzer`, not raw tokens — otherwise injected synonyms and anchors will miss postings. This is the concrete carry-over of V7 Upgrade 1.1 from *tokenizer* parity to *analyzer* parity.
+A stemmed index only works if every producer of $\vec{w}_Q$ keys emits the same analyzed stems the postings are keyed on. `CorpusVocabBuilder`, `CorpusIDFRegistry`, and `BM25DenseAspectExtractor` must all consume `EdgeRAGAnalyzer`, not raw tokens — otherwise injected synonyms and anchors will miss postings. This is the concrete carry-over of V7 Upgrade 1.7 (analyzer parity), built on top of the tokenizer (Upgrade 1.1).
 
 ---
 
