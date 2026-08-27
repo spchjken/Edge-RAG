@@ -92,37 +92,35 @@ graph TD
 
 ### Phase 2: Query Dissection & Anchor Formulation (Query Analysis)
 * **Module Owner:** `src/pipeline_v2/expansion/` (`bm25_dense_aspect_extractor.py`)
-* **Role:** Analyzes user query intent, isolates explicit technical entities, identifies grounded anchors, and computes continuous base weights $w(a)$.
-* **Analyzer parity (Upgrade 1.7b) & pipeline order:** the query is analyzed with `EdgeRAGAnalyzer`, so anchors are keyed by analyzed stems. **Order matters** — ops 1–2 (entity extraction, POS) run on **raw text** (pre-lowercase, pre-stemming); the analyzer runs between op 2 and op 3; ops 3–7 operate on analyzed stems.
+* **Role:** Analyzes the user query, identifies technical entities, and assigns every analyzed token an anchor weight — **no selection, no centrality, no extra-IDF scaling** (all retired on empirical grounds).
+* **Analyzer parity (Upgrade 1.7b) & pipeline order:** the query is analyzed with `EdgeRAGAnalyzer`, so anchors are keyed by analyzed stems. **Order matters** — ops 1–2 (entity detection, POS) run on **raw text** (pre-lowercase, pre-stemming); the analyzer runs between op 2 and op 3; ops 3–5 operate on analyzed stems.
+* **Empirical basis** (see [`weighting_expansion_ablation_spec.md`](weighting_expansion_ablation_spec.md) and [`pos_ratio_grid_ablation_spec.md`](pos_ratio_grid_ablation_spec.md)): the weighting ablation (W0–W4) showed **POS (W2) is the only positive external-weighting signal** — extra-IDF scaling (W1) and centrality (W3) are neutral-to-negative, and the full composite (W4) is *worse* than POS alone. The POS-ratio grid calibrated the priors; its gain is **concentrated in `financebench_doc_level`** (neutral elsewhere — disclosed, not hidden).
 
 #### 1. Finalized Operations for Phase 2
-  1. **Heuristic Entity Extraction (raw text):** Regex pattern matching for technical acronyms (`\b[A-Z]{2,}\b`), hyphenated/versioned identifiers (`\b[A-Za-z0-9\.]+(?:-[A-Za-z0-9\.]+)+\b`), and quoted phrases (`"..."`). Runs *before* `EdgeRAGAnalyzer` (acronyms require uppercase; the analyzer lowercases).
-  2. **Linguistic POS Weighting (raw text):** Assigns grammatical prior weights on **surface tokens** (POS tagging needs unstemmed words):
-     $$w_{\text{POS}}(\text{Noun / Entity}) = 1.25, \quad w_{\text{POS}}(\text{Verb}) = 0.85, \quad w_{\text{POS}}(\text{Modifier / Other}) = 0.70$$
-     POS labels are carried onto the corresponding analyzed stems via token index.
-  3. **Anchor Selection Policy ($p$, analyzed):** After `EdgeRAGAnalyzer`, select the top $N_{\text{anchors}} = \max(2, \lceil p \cdot |Q_{\text{clean}}| \rceil)$ distinct analyzed tokens, ranked by **corpus IDF** (Schemas 1–5) or **query centrality** (Schema 6). $|Q_{\text{clean}}|$ = distinct analyzed tokens after stopword removal.
-  4. **Query Centrality Formulation:** Computes graph density in BGE embedding space:
-     $$\text{Centrality}(a) = \frac{1}{|Q| - 1} \sum_{t \in Q \setminus \{a\}} \cos(\mathbf{e}_a, \mathbf{e}_t) \quad \text{or} \quad \cos(\mathbf{e}_a, \mathbf{e}_Q)$$
-     **Surface-form note:** $\mathbf{e}_a, \mathbf{e}_t$ are embedded from **surface forms** (BGE is surface-trained); the analyzer bridges surface ↔ stem (Phase 1, Upgrade 1.3).
-  5. **Continuous Anchor Base Weighting:**
-     $$w(a) = w_{\text{POS}}(a) \times \left(1.0 + \gamma \cdot \frac{\text{IDF}(a)}{\max_{t \in Q} \text{IDF}(t)} \cdot \text{Centrality}(a)\right), \quad \gamma = 2.0 \quad \implies \quad w(a) \in [0.70,\ 3.75]$$
-  6. **Anchor Deduplication & Entity Validation (semantic, additive):**
-     - Replace the destructive prefix/suffix heuristic (`w.startswith(sel) ... → is_dup`) — which falsely conflates `plan`/`planet`, `cost`/`costume`, `organ`/`organization` — with **semantic cosine dedup** ($\text{CosSim} \ge 0.90$). (Stem-equality is now implicit: anchors are already analyzed stems, so identical stems are identical tokens.)
-     - **Additive rule:** dedup may only prevent *duplicate anchor slots*; it must **never drop an analyzed token** from the retrieval vector.
-  7. **Anchor Bailout (Rare Singleton Rescue, technical-only):** For each surviving anchor $a$ meeting the gate ($\text{IDF}(a) \ge 3.0$ and $\text{length}(a) \ge 3$, or $a \in \text{HeuristicEntities}$), perform an instant $O(1)$ token-boundary prefix/suffix lookup in the **exempt (unstemmed) technical slice** of the posting dictionary (`a-`, `a_`, `a.`, `a[0-9]`, `-a`) to bail out matching $DF=1$ compounds, versions, and typos (e.g., `gpt` $\to$ `gpt-4`, `gpt4`; `qwen` $\to$ `qwen2.5`, `qwen-vl`; `kv` $\to$ `kv-cache`).
+  1. **Technical Entity Detection (raw text):** Regex detection of technical acronyms (`\b[A-Z]{2,}\b`) and hyphenated/versioned identifiers (`\b[A-Za-z0-9\.]+(?:-[A-Za-z0-9\.]+)+\b`), running *before* `EdgeRAGAnalyzer` (acronyms require uppercase; the analyzer lowercases). **Quoted-phrase extraction is removed** — the posting index has no term positions, so phrases have nothing to match (parity-plan Stage 4). The entity signal feeds the Anchor Bailout gate (op 5); the analyzer's exemption flags can serve as the same signal.
+  2. **Linguistic POS Tagging & Weighting (raw text):** POS-tag **surface tokens** (POS tagging needs unstemmed words) and assign the calibrated priors:
+     $$w_{\text{POS}}(\text{Noun / Entity}) = 1.0, \quad w_{\text{POS}}(\text{Verb}) = 0.75, \quad w_{\text{POS}}(\text{Modifier / Other}) = 0.60$$
+     Labels are carried onto the corresponding analyzed stems via token index. *(The ratio grid landscape is a broad plateau — only the `noun > verb > modifier` order is structurally required. Technical tokens default to Noun/Entity.)*
+  3. **Anchor Formation (no selection):** After `EdgeRAGAnalyzer`, **every analyzed token is an anchor** — the top-$p$ selection mechanism is retired ($p=1.0$ is the empirical optimum; the p-sweep showed selection only ever hurt recall). $|Q_{\text{clean}}|$ = distinct analyzed tokens after stopword removal.
+  4. **Anchor Weighting:**
+     $$w(a) = w_{\text{POS}}(a)$$
+     No IDF re-scaling, no centrality multiplier. BM25's own `IDF(t)` inside the scoring function is the term weight; the external `w_Q(a)` layer is the POS prior only — empirically the best external layer, and the composite was worse than POS alone.
+  5. **Anchor Bailout (Rare Singleton Rescue, technical-only):** For each anchor $a$ meeting the gate ($\text{IDF}(a) \ge 3.0$ and $\text{length}(a) \ge 3$, or $a \in \text{TechnicalEntities}$), perform an instant $O(1)$ token-boundary prefix/suffix lookup in the **exempt (unstemmed) technical slice** of the posting dictionary (`a-`, `a_`, `a.`, `a[0-9]`, `-a`) to bail out matching $DF=1$ compounds, versions, and typos (e.g., `gpt` $\to$ `gpt-4`, `gpt4`; `qwen` $\to$ `qwen2.5`, `qwen-vl`; `kv` $\to$ `kv-cache`).
      - **Weighting:** a bailed term $a'$ joins $\vec{w}_Q$ with the anchor's weight under score-space IDF damping, $w(a') = w(a) \cdot \min\left(1.0,\ \frac{\text{IDF}(a)}{\text{IDF}(a')}\right)$, **outside** the Phase-4 $\mu(Q)$ synonym budget (bailout is lexical rescue, not semantic expansion).
+
+> **No separate anchor dedup.** Morphological variants (`upload`/`uploads`, `steal`/`stole`/`stolen`, `went`/`go`) are already conjoined by the analyzer (KStem + WordNet override), and no-selection keeps every analyzed token — so there is no dedup step. The legacy destructive prefix/suffix heuristic is simply **not used** (V7 doesn't select anchors).
 
 #### 2. Phase 2 Parameter Defaults & Calibration
 | Parameter | Default Value | Mathematical & Operational Rationale |
 | :--- | :---: | :--- |
-| **$p$ (Anchor Selection Ratio)** | **$0.80$** | Recent sweeps favor $p \in [0.8, 1.0]$ for recall across broad corpora. |
-| **$\gamma$ (Centrality Weight)** | **$2.0$** | Scales the IDF × centrality term in the anchor weight. |
-| **$w_{\text{POS}}$ (POS priors)** | **Noun 1.25 / Verb 0.85 / Other 0.70** | Grammatical prior: content nouns dominate, modifiers damped. |
+| **$w_{\text{POS}}$ (POS priors)** | **Noun/Entity 1.0 / Verb 0.75 / Modifier-Other 0.60** | Calibrated by the POS-ratio grid; plateau-robust (only `noun > verb > modifier` required). Gain concentrated in `financebench` — disclosed. |
 | **$\tau_{\text{rescue\_IDF}}$ (Bailout Anchor IDF Gate)** | **$3.0$** | Only anchors in $\le 4.98\%$ of the corpus trigger $DF=1$ bailout. |
 | **$\text{min\_len}_{\text{rescue}}$ (Bailout Anchor Length)** | **$3$ chars** | Permits 3-letter technical anchors (`gpt`, `rag`, `sql`, `ehr`, `llm`). |
-| **Regex Entity Acronym Exception** | **`[A-Z]{2,}`** | Raw-text (pre-lowercase) acronym detection for entity + bailout gates. |
+| **Regex Entity Acronym Exception** | **`[A-Z]{2,}`** | Raw-text (pre-lowercase) acronym detection for the entity/bailout gate. |
 
-* **Output Artifacts:** Grounded anchor dictionary $\mathcal{A} = \{(a, w(a))\}$ plus any bailed-out technical compounds.
+> **Retired from Phase 2**: anchor selection (`p < 1`), query-centrality weighting, and extra-IDF anchor scaling (`γ`) — empirically unsupported; **anchor dedup** (morphological + semantic) — obsolete, since the analyzer (KStem + WordNet override) conjoins variants and no-selection keeps every token.
+
+* **Output Artifacts:** Grounded anchor dictionary $\mathcal{A} = \{(a, w(a))\}$ with $w(a) = w_{\text{POS}}(a)$, plus any bailed-out technical compounds.
 
 ---
 
@@ -188,9 +186,8 @@ graph TD
 | **Analyzer-Parity Wiring — query-side (Upgrade 1.7b)** | **Phase 2** | Route `BM25DenseAspectExtractor` query analysis through `EdgeRAGAnalyzer`. |
 | **Rare Singleton Rescue / Anchor Bailout** | **Phase 2** | Query-time bailout rescues $DF=1$ technical compounds; pool floor stays $DF \ge 2$. |
 | **1-Pass Batch Tensor Probing** | **Phase 3** | Single matrix multiplication $\mathbf{E}_A \cdot \mathbf{V}^\top$ in `DenseVocabMatrix`. |
-| **High Anchor Selection Ratio ($p \in [0.8, 1.0]$)** | **Phase 2** | Updates default $p$ parameter in `configs/pipeline_v2.yaml` and anchor extractor. |
-| **Continuous POS & Centrality Weighting** | **Phase 2** | Implements continuous $w(a) \in [0.70, 3.75]$ replacing discrete integer repetition. |
-| **Semantic Anchor Dedup (additive)** | **Phase 2** | Replaces destructive prefix/suffix heuristic with cosine $\ge 0.90$ dedup (stems already conjoined by the analyzer). |
+| **No Anchor Selection (all tokens; $p = 1.0$)** | **Phase 2** | Every analyzed token is an anchor; the top-$p$ selection mechanism is retired (p-sweep optimum). |
+| **POS-Only Anchor Weighting (calibrated)** | **Phase 2** | $w(a) = w_{\text{POS}}(a)$ with ratios $1.0/0.75/0.60$; centrality and extra-IDF retired (weighting ablation). |
 | **Adaptive Similarity Quality Gate ($\tau_{\text{sim}} \in [0.80, 0.90]$)** | **Phase 3** | Replaces hard binary entity freezing with dynamic similarity cutoff based on anchor IDF. |
 | **Dual-Sim Context Synthesis ($\beta = 0.65$)** | **Phase 3** | Combines local anchor embedding with global query embedding. |
 | **IT-MPE Continuous Mass Allocation & Score-Space Damping** | **Phase 4** | Enforces $\min(1, \text{IDF}_a/\text{IDF}_s)$ damping and temperature-scaled softmax allocation (single-tier). |
@@ -198,7 +195,7 @@ graph TD
 | **Posting-List Index (no full scan)** | **Phase 5** | Compact posting arrays; traversal cost ∝ matched postings. *(done)* |
 | **Float-Weighted Inverted Posting Accumulator** | **Phase 5** | `retrieve_weighted` consumes $\vec{w}_Q$ directly. *(done)* |
 
-Removed (obsolete under index-time stemming): Stem-Diversified Vocabulary Pool (1.5), `MorphologicalStemRegistry` (1.6), Stem-Diversity Gate, Tier-1 Fold-In + Synonym Closure, Budget Tier-Split ($\eta_{\text{morph}}$).
+Removed: Stem-Diversified Vocabulary Pool (1.5), `MorphologicalStemRegistry` (1.6), Stem-Diversity Gate, Tier-1 Fold-In + Synonym Closure, Budget Tier-Split ($\eta_{\text{morph}}$) — obsolete under index-time stemming; **Anchor Selection (top-$p$), Query Centrality, extra-IDF anchor scaling, Anchor Dedup (semantic)** — retired (p-sweep + weighting ablation; the analyzer already conjoins variants).
 
 ---
 
