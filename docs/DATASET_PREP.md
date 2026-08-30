@@ -202,8 +202,8 @@ git clone https://github.com/chen700564/RGB.git data/raw/rgb/
 ```bash
 # Clone dataset repository
 git clone https://github.com/yixuantt/MultiHop-RAG.git data/raw/multihop_rag/
-# Preprocessing: Map corpus JSON lines to data/benchmarks/multihop_rag/corpus.json
-# Map multi-hop question triplets to data/benchmarks/multihop_rag/final_benchmark_multihop.json
+# Convert to document-level format (data/benchmarks/multihop_rag_doc_level/):
+.venv/bin/python3 scripts/data_adapters/convert_retriever_doc_level_benchmarks.py --datasets multihop_rag
 ```
 
 ---
@@ -213,8 +213,8 @@ git clone https://github.com/yixuantt/MultiHop-RAG.git data/raw/multihop_rag/
 * **Authors / Institution:** Su et al. (University of Hong Kong, Cohere, University of Waterloo)
 * **Paper / Code:** [arXiv:2407.12883](https://arxiv.org/abs/2407.12883) | [Website](https://brightbenchmark.github.io/)
 * **Corpus & Query Profile:**
-  - **Domains:** 12 Challenging Technical Domains: *LeetCode (Python/C++ solutions), StackOverflow, AIME/Math Olympiad proofs, Theoretical Economics, Physics, Robotics, Biology, Theorem Proving*.
-  - **Scale:** 1,385 reasoning-intensive queries over large technical corpora.
+  - **Domains:** 12 Challenging Technical Domains in the full release: *LeetCode (Python/C++ solutions), StackOverflow, AIME/Math Olympiad proofs, Theoretical Economics, Physics, Robotics, Biology, Theorem Proving*.
+  - **Scale (local subset):** 566 reasoning-intensive queries over 5 integrated domains — economics, leetcode, stackoverflow, robotics, biology (full release: 1,385 queries / 12 domains).
   - **Key Challenge:** Relevant documents share **near-zero surface keywords or standard bi-encoder semantic similarity** with the query. Retrieval requires understanding logical equivalence, mathematical identities, and algorithmic transformations.
 * **Evaluation Tasks & Metrics:**
   - Pure Retrieval: $\text{NDCG@}10$, $\text{Recall@}10$, $\text{Recall@}100$, $\text{MRR@}10$.
@@ -248,12 +248,12 @@ git clone https://github.com/yixuantt/MultiHop-RAG.git data/raw/multihop_rag/
 
 ---
 
-## 3.1 EnterpriseRAG (Corporate Technical Documentation)
-* **Status in Edge-RAG:** Active Primary Internal Benchmark
+## 3.1 EnterpriseRAG (Enterprise Workspace Retrieval)
+* **Status in Edge-RAG:** Active Primary External Benchmark
 * **Corpus & Query Profile:**
-  - **Domains:** Enterprise corporate APIs, SDK developer manuals, cloud platform architectures.
-  - **Scale:** 100 enterprise queries evaluated against 40 dense corporate documentation manuals (1,000+ chunks).
-  - **Characteristics:** Dense technical identifiers (`REST_API_V2`, `OAuth2.0`, `JWT_SECRET`), hyphenated parameters (`--max-retry-attempts`), code blocks, error trace tables.
+  - **Domains:** Enterprise collaboration workspace data across 9 source types — Slack, Gmail, Confluence, Jira, Linear, Google Drive, GitHub, HubSpot, Fireflies.
+  - **Scale:** 500 queries across 10 query types (basic, semantic, intra-document reasoning, project related, completeness, conflicting info, constrained, high level, info-not-found, miscellaneous), evaluated against 1,722 full documents (722 gold + 1,000 distractors).
+  - **Characteristics:** Mixed chat threads, emails, tickets, wiki pages, source code, CRM records, and meeting transcripts — dense with technical identifiers (`REST_API_V2`, `OAuth2.0`, `JWT_SECRET`), hyphenated parameters (`--max-retry-attempts`), code blocks, and error trace tables.
 * **Evaluation Tasks & Metrics:**
   - Pre-Rerank Recall, Reranker Micro/Macro Recall, Precision, Compression Ratio, Peak VRAM, Pipeline Latency.
 
@@ -271,7 +271,7 @@ git clone https://github.com/yixuantt/MultiHop-RAG.git data/raw/multihop_rag/
 * **Paper / Code:** [arXiv:2311.11944](https://arxiv.org/abs/2311.11944) | [HuggingFace](https://huggingface.co/datasets/patronus-ai/financebench)
 * **Corpus & Query Profile:**
   - **Domains:** U.S. SEC public financial filings (10-K annual reports, 10-Q quarterly reports, 8-K material event disclosures, earnings releases).
-  - **Scale:** 10,231 gold standard QA pairs covering 150 publicly traded corporations (e.g., Apple, Microsoft, Tesla, Pfizer).
+  - **Scale (local subset):** 150 QA pairs over 168 page-level gold documents (32 companies / 84 distinct SEC 10-K filings), expanded with 2,000 injected distractor pages (2,168 total documents). The full release is 10,231 QA pairs over 150 corporations.
   - **Modality:** Long multi-page PDFs (often 50–200 pages per filing), dense numerical balance sheets, cash flow tables, footnotes, audit opinions.
 * **Evaluation Tasks & Metrics:**
   - Retrieval: Evidence Passage Retrieval Recall@k, Top-1 Passage Hit Rate.
@@ -349,10 +349,10 @@ python3 -c "from datasets import load_dataset; ds = load_dataset('patronus-ai/fi
 ---
 
 ## 4.1 LiveRAG (Streaming News & Ephemeral Web)
-* **Status in Edge-RAG:** Active Primary Internal Benchmark
+* **Status in Edge-RAG:** Active Primary External Benchmark
 * **Corpus & Query Profile:**
   - **Domains:** Streaming live news feeds, financial breaking bulletins, real-time web transcripts.
-  - **Scale:** 150 temporal queries evaluated over 169 dynamic news context chunks.
+  - **Scale:** 895 queries evaluated over 970 documents, spanning two collection windows (`First` / `Second` / `Both`) preserved via the per-query `session` field.
   - **Key Challenge:** Zero-shot ad-hoc indexing. Corpus arrives in real-time; the system cannot spend minutes building heavy neural bi-encoder vector indices.
 * **Evaluation Tasks & Metrics:**
   - Time-To-Index (TTI), Pre-Rerank Recall, Reranker Precision, Latency, Peak VRAM.
@@ -510,11 +510,57 @@ corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="te
 
 # 7. Standard Data Schema & Preprocessing Pipeline for Edge-RAG
 
-To evaluate any external benchmark on Edge-RAG, the raw data must be mapped into the standard **Edge-RAG Benchmark Schema** stored under `data/benchmarks/<benchmark_name>/`.
+Edge-RAG stores benchmarks under `data/benchmarks/`. There are two distinct schemas — external **document-level** benchmarks and **synthetic** (chunked) benchmarks.
 
-## 7.1 Unified JSON Data Contract
+## 7.1 External Document-Level Benchmarks (`<name>_doc_level/`)
 
-### 1. Corpus File (`corpus.json` or `chunks.json`)
+Converted from BEIR, BRIGHT, MultiHop-RAG, FinanceBench, EnterpriseRAG, and LiveRAG by [`scripts/data_adapters/`](scripts/data_adapters/). Each benchmark is a flat directory:
+
+```
+<name>_doc_level/
+├── documents/<doc_id>.json        # one JSON per un-chunked document
+├── final_benchmark.json           # default query set
+├── final_benchmark_capped.json    # stratified capped query subset (where applicable)
+└── final_benchmark_full.json      # full query set (explicit)
+```
+
+**Document file** (`documents/<doc_id>.json`):
+```json
+{
+  "doc_id": "dsid_00000f26be76466b9b871cb48ed51a28",
+  "text": "maria: FYI AcmePayments opened a support ticket ...",
+  "title": "customer-success",
+  "source_type": "slack",
+  "doc_length": 616
+}
+```
+
+FinanceBench documents additionally carry `company`, `cik`, and `is_distractor`; LiveRAG documents carry `sessions` (the `First` / `Second` / `Both` collection windows).
+
+**Query & ground-truth file** (`final_benchmark.json`):
+```json
+[
+  {
+    "query_id": "q_ent_0",
+    "query_group": "Enterprise RAG",
+    "query_type": "basic",
+    "question": "...",
+    "raw_question": "...",
+    "golden_answer": "...",
+    "doc_id_source": "dsid_...",
+    "expected_doc_ids": ["dsid_...", "dsid_..."],
+    "ground_truth_child_chunks": [{"chunk_id": "dsid_...", "text": ""}]
+  }
+]
+```
+
+LiveRAG queries additionally carry `session`.
+
+## 7.2 Synthetic (Chunked) Benchmarks (`synthetic/<domain>/<tier>/`)
+
+Generated by [`scripts/benchmark_creation/`](scripts/benchmark_creation/) into domains `ai`, `biomedical`, `fintech`, `fused`, and `systems_security`, under tiers `corpus_single_*`, `corpus_multi_*`, and `corpus_stress_*`.
+
+**Corpus file** (`chunks.json`):
 ```json
 [
   {
@@ -530,7 +576,7 @@ To evaluate any external benchmark on Edge-RAG, the raw data must be mapped into
 ]
 ```
 
-### 2. Benchmark Queries & Ground Truth (`final_benchmark_<benchmark_name>.json`)
+**Queries & ground truth** (`final_benchmark_<tier>.json`):
 ```json
 [
   {
@@ -546,11 +592,10 @@ To evaluate any external benchmark on Edge-RAG, the raw data must be mapped into
 ]
 ```
 
----
+## 7.3 Preprocessing Pipelines
 
-## 7.2 Automated Dataset Preprocessing Pipeline
-
-Use the standard 5-step benchmark generation script in [`scripts/benchmark_creation/`](file:///home/donghv/Projects/Edge-RAG/scripts/benchmark_creation/) to parse external documents into Edge-RAG format:
+1. **External benchmarks** — converted by [`convert_retriever_doc_level_benchmarks.py`](scripts/data_adapters/convert_retriever_doc_level_benchmarks.py) (BEIR, MultiHop-RAG, FinanceBench, BRIGHT) and [`convert_doc_level_benchmarks.py`](scripts/data_adapters/convert_doc_level_benchmarks.py) (EnterpriseRAG, LiveRAG).
+2. **Synthetic benchmarks** — generated by the 5-step pipeline in [`scripts/benchmark_creation/`](scripts/benchmark_creation/):
 
 ```mermaid
 flowchart LR
@@ -559,7 +604,7 @@ flowchart LR
     S2 --> S3[step3_query_paraphrasing.py: Vocabulary Gap Injection]
     S3 --> S4[step4_global_recall.py: False Negative Mining]
     S4 --> S5[step5_oracle_filtering.py: LLM Binary Relevance Audit]
-    S5 --> BENCH[(data/benchmarks/<name>/final_benchmark.json)]
+    S5 --> BENCH[(data/benchmarks/synthetic/<domain>/<tier>/final_benchmark_<tier>.json)]
 ```
 
 ---
@@ -570,12 +615,12 @@ The table below provides a comprehensive comparison of all 20+ surveyed benchmar
 
 | # | Benchmark Name | Release Date | Primary Domain / Focus | Scale (Queries / Corpus) | Multi-Hop? | Full Pipeline Fit | Retriever-Only Fit | Recommended Action for Edge-RAG |
 | :---: | :--- | :---: | :--- | :--- | :---: | :---: | :---: | :--- |
-| **1** | **LiveRAG** | Active | Dynamic Web / News Chunks | 150 Q / 169 Chunks | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Primary Active Baseline** |
-| **2** | **EnterpriseRAG** | Active | Corporate Tech Documentation | 100 Q / 1,000+ Chunks | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Primary Active Baseline** |
+| **1** | **LiveRAG** | Active | Dynamic Web / News Chunks | 895 Q / 970 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Primary Active Baseline** |
+| **2** | **EnterpriseRAG** | Active | Enterprise Workspace (9 Source Types) | 500 Q / 1,722 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Primary Active Baseline** |
 | **3** | **BEIR (FiQA, SciFact, NFCorpus, TREC-COVID)** | NeurIPS 2021 | Standard Academic Heterogeneous IR | 18 Datasets (3k–5M docs) | Diverse | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Immediately** (Standard IR Credibility) |
-| **4** | **BRIGHT / BRIGHT+** | Jul 2024 | Reasoning-Intensive (Math, Code, Proofs) | 1,385 Q / 12 Domains | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Immediately** (Tests Vocab Bridging) |
+| **4** | **BRIGHT / BRIGHT+** | Jul 2024 | Reasoning-Intensive (Math, Code, Proofs) | 566 Q / 5 Domains (local) | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Immediately** (Tests Vocab Bridging) |
 | **5** | **MultiHop-RAG** | Jan 2024 | Cross-Document Evidence Synthesis | 2,556 Q / 2–4 Docs/Q | Yes (2–4 hops)| ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Immediately** (Tests Aspect Coverage) |
-| **6** | **FinanceBench** | Nov 2023 | Enterprise SEC 10-K/10-Q Financial Reports | 10,231 QA / 150 SEC Filings | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Immediately** (Enterprise Extension) |
+| **6** | **FinanceBench** | Nov 2023 | Enterprise SEC 10-K/10-Q Financial Reports | 150 QA / 32 Companies (local) | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Immediately** (Enterprise Extension) |
 | **7** | **FlashRAG Suite** | May 2024 | Standardized 32+ RAG Datasets (NQ, Trivia) | 32 Datasets / Unified JSON | Both | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Adopt Suite** (Rapid Multi-Dataset Eval) |
 | **8** | **RAGBench** | May 2024 | Explainable Industrial RAG (5 Domains) | ~100k Examples | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐ (4/5) | **High Priority** (Enterprise Generalization) |
 | **9** | **RAGChecker** | Aug 2024 | Atomic Claim-Level Diagnostic Retrieval | 6 Diverse Domains | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐ (3/5) | **High Priority** (Snippet Evaluation) |
