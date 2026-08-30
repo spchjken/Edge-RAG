@@ -11,7 +11,7 @@
 | **Score-Space Anchor Dominance (Theorem 1, IT-MPE)** | Theorem | ✅ Proven | Exact algebraic bound in the BM25/Lucene score space; assumptions explicit (§5.1) |
 | **High-IDF Noise Immunity (Corollary 1)** | Corollary | ✅ Proven | Follows from Theorem 1 with $\text{IDF}(s) \to \infty$ |
 | **Query-Level Bound (Corollary 2)** | Corollary | ✅ Proven | Summation of Theorem 1 over anchors; justifies global capacity budgets |
-| **Expansion Mass Ceiling $\mu \le 1/3$ (Axiom 1)** | Axiom | 🏛️ IR Consensus | RM3 query-interpolation consensus, $\lambda^* \approx 0.75$ (Lavrenko & Croft, 2001) |
+| **Expansion Mass Ceiling $\mu$ (Axiom 1)** | Axiom | ⚙️ Free parameter | $\mu \in (0, 1]$ — the ceiling on expansion mass relative to anchor mass; a calibration choice, not a theorem value (§4.1) |
 | **Anchor weight composition, candidate generation, gating, capacity policy** | Given inputs / operational parameters | ⚙️ Out of scope | Specified by the V7 architectural plan |
 
 ### 1.2 Scope & Consolidation Note
@@ -29,11 +29,11 @@ These are operational parameters of the retrieval architecture, not part of the 
 
 ### 1.3 Core Invariant
 
-For every anchor $a$ and every expansion set $\text{Syn}(a)$, the total BM25 scoring mass of the expansion terms cannot exceed a fraction $\mu \le 1/3$ of the anchor's own scoring mass:
+For every anchor $a$ and every expansion set $\text{Syn}(a)$, the total BM25 scoring mass of the expansion terms cannot exceed a fraction $\mu$ of the anchor's own scoring mass:
 
-$$\frac{\sum_{s \in \text{Syn}(a)} \text{Score}(s, D)}{\text{Score}(a, D^*)} \le \mu \le \frac{1}{3}$$
+$$\frac{\sum_{s \in \text{Syn}(a)} \text{Score}(s, D)}{\text{Score}(a, D^*)} \le \mu$$
 
-under the explicit conditions of Theorem 1. (The implementation's operational cap is $\mu \le 0.35$; see Axiom 1.)
+under the explicit conditions of Theorem 1, where $\mu \in (0, 1]$ is the expansion mass ceiling (Axiom 1).
 
 ---
 
@@ -68,11 +68,11 @@ A query-side-only bound on weights — e.g., $w(s) \le \mu \cdot w(a)$ — does 
 
 $$M(s) = w(s) \cdot \text{IDF}(s) \quad \text{vs.} \quad M(a) = w(a) \cdot \text{IDF}(a)$$
 
-*Concrete example:* in biomedical retrieval, anchor $a = \text{"EHR"}$ ($\text{IDF} \approx 2.5$) expanded into rare cancer gene $s = \text{"erbb2"}$ ($\text{IDF} \approx 7.5$). Even with a conservative query weight $w(s) = 0.33 \cdot w(a)$, the mass $M(s) = 0.33 \times 7.5 = 2.48 \approx M(a) = 2.5$. Distractor papers mentioning `erbb2` tied or outranked true gold papers about EHR — the gold chunk dropped from **Rank 1 to Rank 18**. With $K$ synonyms accumulating, the aggregate can exceed the anchor outright.
+*Concrete example:* in biomedical retrieval, anchor $a = \text{"EHR"}$ ($\text{IDF} \approx 2.5$) expanded into rare cancer gene $s = \text{"erbb2"}$ ($\text{IDF} \approx 7.5$). Even with a query weight $w(s) = 0.5 \cdot w(a)$ (half the anchor's weight), the mass $M(s) = 0.5 \times 7.5 = 3.75 > M(a) = 2.5$. Distractor papers mentioning `erbb2` outranked true gold papers about EHR — the gold chunk dropped from **Rank 1 to Rank 18**. With $K$ synonyms accumulating, the aggregate can exceed the anchor outright.
 
 ### 2.4 The Overall Target
 
-We require a weighting function $w(s_k \mid a)$ that strictly guarantees **score-space anchor dominance** for **any number $K \ge 1$ of expansion terms**: the total BM25 scoring mass of all expanded synonyms of $a$ cannot exceed a fraction $\mu \le 1/3$ of the anchor's own scoring mass.
+We require a weighting function $w(s_k \mid a)$ that strictly guarantees **score-space anchor dominance** for **any number $K \ge 1$ of expansion terms**: the total BM25 scoring mass of all expanded synonyms of $a$ cannot exceed a fraction $\mu$ of the anchor's own scoring mass.
 
 ---
 
@@ -86,7 +86,7 @@ We require a weighting function $w(s_k \mid a)$ that strictly guarantees **score
 | $w(a)$ | Positive BM25/Lucene query weight of $a$; its internal composition is external to this theory |
 | $\text{Syn}(a) = \{s_1, \dots, s_K\}$ | Candidate expansion terms of $a$; $K \ge 1$ arbitrary |
 | $\text{IDF}(t)$ | Inverse document frequency of $t$; positive for every indexed term |
-| $\mu$ | Expansion mass ratio; $\mu \le \mu_{max} = 1/3$ (Axiom 1) |
+| $\mu$ | Expansion mass ceiling; a free parameter $\mu \in (0, 1]$ (Axiom 1) |
 | $p = (p_1, \dots, p_K)$ | Allocation distribution over $\text{Syn}(a)$: $p_k \ge 0$, $\sum_{k=1}^K p_k = 1$ |
 | $\psi(\text{TF}, |D|)$ | BM25 term-frequency saturation factor, Eq. (2) |
 | $M(t) = w(t) \cdot \text{IDF}(t)$ | Score-space information mass of term $t$, Eq. (3) |
@@ -104,7 +104,7 @@ The theorem treats as given, and does not prove anything about:
 
 For candidate terms $s_k \in \text{Syn}(a)$:
 
-$$w(s_k \mid a) = \mu \cdot w(a) \cdot \min\!\left(1.0, \ \frac{\text{IDF}(a)}{\text{IDF}(s_k)}\right) \cdot p_k, \qquad \mu \le \frac{1}{3} \tag{4}$$
+$$w(s_k \mid a) = \mu \cdot w(a) \cdot \min\!\left(1.0, \ \frac{\text{IDF}(a)}{\text{IDF}(s_k)}\right) \cdot p_k \tag{4}$$
 
 Three immediate observations:
 
@@ -118,21 +118,24 @@ Three immediate observations:
 
 ### 4.1 Relevance Model 3 (RM3) Query Prior Interpolation
 
-In probabilistic pseudo-relevance feedback (Lavrenko & Croft, 2001), the expanded query language model is a linear interpolation between the maximum-likelihood user intent and the latent expansion model:
+The relevance-model framework is due to Lavrenko & Croft (2001, *Relevance-Based Language Models*, SIGIR); the **RM3** "query mix" that interpolates the relevance model with the original query is due to Abdul-Jaleel et al. (2004, *UMass at TREC 2004*). In RM3, the expanded query language model is a linear interpolation between the original query and the latent expansion model:
 
 $$P(t \mid Q') = \lambda \, P(t \mid Q_{orig}) + (1 - \lambda) \, P(t \mid \theta_{expansion})$$
 
-Extensive empirical consensus on TREC and web benchmarks places the optimal query conservatism prior in the range:
+The interpolation weight $\lambda$ is an **operational setting**. Common values span $\lambda \in [0.5, 0.8]$, with $\lambda = 0.5$ the common toolkit default; reported optima vary by corpus and query. The expansion-to-anchor mass ratio is a function of the chosen $\lambda$:
 
-$$\lambda^* \in [0.70, \ 0.80], \quad \text{canonical peak } \lambda^* \approx 0.75$$
+$$\mu(\lambda) = \frac{1 - \lambda}{\lambda}$$
 
-The resulting expansion-to-anchor mass ratio ceiling is exact:
-
-$$\mu_{max} = \frac{1 - \lambda^*}{\lambda^*} = \frac{1 - 0.75}{0.75} = \frac{1}{3}$$
+| $\lambda$ | $\mu = (1-\lambda)/\lambda$ |
+| :---: | :---: |
+| 0.50 (toolkit default) | 1.00 |
+| 0.60 | 0.67 |
+| 0.70 | 0.43 |
+| 0.75 | 0.33 |
+| 0.80 | 0.25 |
 
 **Axiom 1 (Expansion Mass Ceiling):** for every anchor $a$,
-$\sum_{k=1}^{K} w(s_k \mid a) \le \mu \cdot w(a)$ with $\mu \le \mu_{max} = 1/3$.
-The implementation's operational cap $\mu \le 0.35$ corresponds to $\lambda \approx 0.74$, still inside the empirical band; when $\mu > 0.35$ ($\lambda < 0.74$), expansion mass begins to overpower explicit anchor constraints.
+$\sum_{k=1}^{K} w(s_k \mid a) \le \mu \cdot w(a)$, where $\mu \in (0, 1]$ is a free parameter — the ceiling on expansion mass relative to anchor mass. The value of $\mu$ is a calibration choice external to this theory.
 
 ### 4.2 Bayesian Prior vs. Conditional Semantic Association
 
@@ -149,14 +152,14 @@ The allocation distribution $p$ of Eq. (4) instantiates the relative conditional
 ### 5.1 Statement
 
 **Theorem 1 (Information-Theoretic Mass-Preserving Expansion).**
-Let $a$ be an anchor with query weight $w(a) > 0$, and let $\text{Syn}(a) = \{s_1, \dots, s_K\}$ be any finite candidate set with $\text{IDF}(s_k) > 0$ for all $k$, weighted according to Eq. (4) with $\mu \le 1/3$. Consider two documents with normalized lengths $|D_{gold}| \approx |D_{dist}| \approx \text{avgDL}$, where
+Let $a$ be an anchor with query weight $w(a) > 0$, and let $\text{Syn}(a) = \{s_1, \dots, s_K\}$ be any finite candidate set with $\text{IDF}(s_k) > 0$ for all $k$, weighted according to Eq. (4) with any $\mu > 0$. Consider two documents with normalized lengths $|D_{gold}| \approx |D_{dist}| \approx \text{avgDL}$, where
 
 - $D_{gold}$ matches anchor $a$ with frequency $\text{TF}(a, D_{gold}) \ge 1$,
 - $D_{dist}$ matches each synonym with frequency $\text{TF}(s_k, D_{dist}) = 1$ and the anchor with $\text{TF}(a, D_{dist}) = 0$.
 
 Then the aggregate BM25 score of all expanded synonyms is strictly bounded by:
 
-$$\sum_{k=1}^{K} \text{Score}(s_k, D_{dist}) \le \mu \cdot \text{Score}(a, D_{gold}) \le \tfrac{1}{3} \cdot \text{Score}(a, D_{gold})$$
+$$\sum_{k=1}^{K} \text{Score}(s_k, D_{dist}) \le \mu \cdot \text{Score}(a, D_{gold})$$
 
 ### 5.2 Proof
 
@@ -188,7 +191,7 @@ In both cases: $\min(1, \text{IDF}_a/\text{IDF}_{s_k}) \cdot \text{IDF}(s_k) \le
 #### Step 4: Aggregate over the allocation distribution
 $$\text{Score}(\text{Syn}(a), D_{dist}) \le \mu \cdot w(a) \cdot \text{IDF}(a) \cdot \underbrace{\sum_{k=1}^{K} p_k}_{= 1.0} \le \mu \cdot \left[ w(a) \cdot \text{IDF}(a) \right] \le \mu \cdot \text{Score}(a, D_{gold})$$
 
-Since $\mu \le \mu_{max} = 1/3$: $\text{Score}(\text{Syn}(a), D_{dist}) \le \tfrac{1}{3} \cdot \text{Score}(a, D_{gold})$. $\blacksquare$
+so $\text{Score}(\text{Syn}(a), D_{dist}) \le \mu \cdot \text{Score}(a, D_{gold})$. $\blacksquare$
 
 ### 5.3 Remarks
 
@@ -209,9 +212,9 @@ Since $\psi(\text{TF}) > 1$ for $\text{TF} \ge 2$ (at $|D| = \text{avgDL}$), the
 ### 6.1 Corollary 1: Immunity to High-IDF Out-of-Domain Noise
 Let $s_{noise}$ be an arbitrary out-of-domain token with arbitrarily high IDF ($\text{IDF}(s_{noise}) \to \infty$). Under Eq. (4), its individual scoring impact on any document is bounded by:
 
-$$\text{Score}(s_{noise}, D) \le \mu \cdot w(a) \cdot \text{IDF}(a) \cdot p_{noise} \le \mu \cdot \text{Score}(a, D_{gold}) \le \tfrac{1}{3} \cdot \text{Score}(a, D_{gold})$$
+$$\text{Score}(s_{noise}, D) \le \mu \cdot w(a) \cdot \text{IDF}(a) \cdot p_{noise} \le \mu \cdot \text{Score}(a, D_{gold})$$
 
-Even if an out-of-domain term is admitted as a candidate, it can never contribute more than one third of the anchor's score — catastrophic query drift is eliminated by construction.
+Even if an out-of-domain term is admitted as a candidate, its contribution is bounded by $\mu \cdot \text{Score}(a, D_{gold})$ — so catastrophic query drift is eliminated by construction.
 
 ### 6.2 Corollary 2: Query-Level Bound (Composition Across Anchors)
 Summing Theorem 1 over all anchors $a \in Q$: for any document $D'$ matching only expanded synonyms (single mention each) and any document $D^{*}$ matching every anchor at least once, with all lengths $\approx \text{avgDL}$:
@@ -237,4 +240,4 @@ This section defines how the *theorem itself* can be checked against real retrie
 | :--- | :---: | :---: | :--- |
 | **Naive Expansion** | Unweighted ($w(s) = 1$ flat) | ❌ None — mass ratio up to $\text{IDF}(s)/\text{IDF}(a)$ | No damping, no mass ceiling |
 | **Discrete Repetition (V2, $R \in [2, 5]$)** | Integer $R \ge 1$ | ❌ Broken when $\text{IDF}(s) > \text{IDF}(a)$ | Cannot represent damping $< 1$ (§3.3, obs. 3) |
-| **Continuous IT-MPE (Eq. 4)** | Continuous $\mathbf{w} \in \mathbb{R}^{|V|}$ | ✅ $\le \mu \le 1/3$ for any $K \ge 1$ | Bounded drift only; recall and semantic fit are governed by candidate generation & filtering (§1.2) |
+| **Continuous IT-MPE (Eq. 4)** | Continuous $\mathbf{w} \in \mathbb{R}^{|V|}$ | ✅ $\le \mu \cdot \text{Score}(a)$ for any $K \ge 1$ ($\mu \in (0,1]$, Axiom 1) | Bounded drift only; recall and semantic fit are governed by candidate generation & filtering (§1.2) |
