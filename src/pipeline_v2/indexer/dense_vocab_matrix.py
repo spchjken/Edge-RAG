@@ -56,23 +56,34 @@ class DenseVocabMatrix:
         self.vocab_embeddings: Optional[torch.Tensor] = None
         self.full_stem_map: Dict[str, torch.Tensor] = {}
 
+    def build(self, vocab_stems: List[str], surface_forms: Optional[List[str]] = None) -> torch.Tensor:
+        """
+        Embeds vocab_stems (optionally via their canonical surface forms).
+        Returns normalized PyTorch Tensor matrix [N_vocab, hidden_dim].
+        """
+        self.vocab_terms = vocab_stems
+        if not vocab_stems:
+            self.vocab_embeddings = torch.empty((0, 384))
+            return self.vocab_embeddings
+
+        texts = surface_forms if (surface_forms and len(surface_forms) == len(vocab_stems)) else vocab_stems
+        with suppress_progress_bars():
+            embeddings_np = self.model.encode(texts, batch_size=len(texts))
+        tensor_emb = torch.from_numpy(embeddings_np).float()
+        self.vocab_embeddings = torch.nn.functional.normalize(tensor_emb, p=2, dim=1)
+        self.full_stem_map.clear()
+        self.full_stem_tensor = self.vocab_embeddings
+        self.stem_to_idx = {stem: idx for idx, stem in enumerate(vocab_stems)}
+        for i, term in enumerate(vocab_stems):
+            self.full_stem_map[term] = self.vocab_embeddings[i:i+1]
+        return self.vocab_embeddings
+
     def build_matrix(self, vocab_terms: List[str]) -> torch.Tensor:
         """
         Embeds vocab_terms directly in a single batch call.
         Returns normalized PyTorch Tensor matrix [N_vocab, hidden_dim].
         """
-        self.vocab_terms = vocab_terms
-        if not vocab_terms:
-            self.vocab_embeddings = torch.empty((0, 384))
-            return self.vocab_embeddings
-
-        with suppress_progress_bars():
-            embeddings_np = self.model.encode(vocab_terms, batch_size=len(vocab_terms))
-        tensor_emb = torch.from_numpy(embeddings_np).float()
-        self.vocab_embeddings = torch.nn.functional.normalize(tensor_emb, p=2, dim=1)
-        for i, term in enumerate(vocab_terms):
-            self.full_stem_map[term] = self.vocab_embeddings[i:i+1]
-        return self.vocab_embeddings
+        return self.build(vocab_terms)
 
     def build_with_fps(
         self,

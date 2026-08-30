@@ -97,7 +97,9 @@ class V7AspectExtractor:
         bailout_tau_idf: float = 3.0,
         min_len_rescue: int = 3,
         mass_floor: float = 0.0,
-        epsilon: Optional[float] = None
+        epsilon: Optional[float] = None,
+        allocation: str = "normalized_cosine",
+        gate_variant: str = "single"
     ):
         self.idf_registry = idf_registry
         self.vocab_matrix = vocab_matrix
@@ -111,6 +113,8 @@ class V7AspectExtractor:
         self.bailout_tau_idf = bailout_tau_idf
         self.min_len_rescue = min_len_rescue
         self.mass_floor = float(epsilon) if epsilon is not None else float(mass_floor)
+        self.allocation = allocation
+        self.gate_variant = gate_variant
         self.pos_tagger = POSTaggerHelper()
         self.vocab_idfs_np = np.array(
             [self.idf_registry.get_idf(t) for t in self.vocab_matrix.vocab_terms],
@@ -219,12 +223,15 @@ class V7AspectExtractor:
         t_p2_bail = time.perf_counter()
 
         # --- PHASE 3: Dense Semantic Probing & Adaptive Gating ---
+        query_sim_np = None
         if self.vocab_matrix.vocab_embeddings is not None and self.vocab_matrix.vocab_embeddings.numel() > 0 and anchor_vecs.numel() > 0:
             sim_matrix = torch.mm(anchor_vecs, self.vocab_matrix.vocab_embeddings.T)  # [N_anchors, N_vocab]
-            if self.beta < 1.0:
+            if self.beta < 1.0 or self.gate_variant in ("two_gate", "soft_reweight"):
                 query_vec = self.vocab_matrix.encode_query(query)
                 query_sim = torch.mm(query_vec, self.vocab_matrix.vocab_embeddings.T)
-                sim_matrix = self.beta * sim_matrix + (1.0 - self.beta) * query_sim
+                query_sim_np = query_sim.cpu().numpy()[0]
+                if self.beta < 1.0:
+                    sim_matrix = self.beta * sim_matrix + (1.0 - self.beta) * query_sim
             sim_matrix_np = sim_matrix.cpu().numpy()
         else:
             sim_matrix_np = np.empty((len(distinct_anchors), 0))
@@ -272,6 +279,14 @@ class V7AspectExtractor:
                     if cand == a:
                         continue
                     sim_val = float(sims_a[idx])
+
+                    # Handle Gate Variants
+                    if self.gate_variant == "two_gate" and query_sim_np is not None:
+                        if query_sim_np[idx] < 0.40:
+                            continue
+                    elif self.gate_variant == "soft_reweight" and query_sim_np is not None:
+                        sim_val = sim_val * max(0.0, float(query_sim_np[idx]))
+
                     cand_idf = float(self.vocab_idfs_np[idx]) if len(self.vocab_idfs_np) > idx else self.idf_registry.get_idf(cand)
                     passed_cands.append((cand, sim_val, cand_idf))
 
@@ -286,26 +301,39 @@ class V7AspectExtractor:
                     if cand not in best_cands or sim_val > best_cands[cand][0]:
                         best_cands[cand] = (sim_val, cand_idf)
 
-                sum_cos = sum(v[0] for v in best_cands.values())
-                if sum_cos > 0:
-                    for cand, (sim_val, cand_idf) in best_cands.items():
-                        p_cond = sim_val / sum_cos
-                        # Score-space damping: min(1.0, IDF_a / IDF_s)
-                        score_damping = min(1.0, anchor_idf / max(cand_idf, 1e-6))
-                        w_syn = anchor_base_weights[a] * score_damping * (mu_q * p_cond)
+                # Allocation Distribution Probability p(s | a)
+                if self.allocation == "uniform":
+                    k_total = len(best_cands)
+                    p_cond_map = {c: 1.0 / k_total for c in best_cands}
+                elif "softmax" in self.allocation:
+                    tau = 0.1 if "0.1" in self.allocation else 1.0
+                    sim_arr = np.array([v[0] for v in best_cands.values()], dtype=np.float64)
+                    exp_sim = np.exp((sim_arr - np.max(sim_arr)) / tau)
+                    p_arr = exp_sim / np.sum(exp_sim)
+                    p_cond_map = {c: float(p) for c, p in zip(best_cands.keys(), p_arr)}
+                else:
+                    # Default: normalized_cosine
+                    sum_cos = sum(v[0] for v in best_cands.values())
+                    p_cond_map = {c: (v[0] / sum_cos) if sum_cos > 0 else (1.0 / len(best_cands)) for c, v in best_cands.items()}
 
-                        # Mass floor: drop synonyms with w(s | a) < epsilon * w(a)
-                        if self.mass_floor > 0.0 and w_syn < (self.mass_floor * anchor_base_weights[a]):
-                            continue
+                for cand, (sim_val, cand_idf) in best_cands.items():
+                    p_cond = p_cond_map.get(cand, 0.0)
+                    # Score-space damping: min(1.0, IDF_a / IDF_s)
+                    score_damping = min(1.0, anchor_idf / max(cand_idf, 1e-6))
+                    w_syn = anchor_base_weights[a] * score_damping * (mu_q * p_cond)
 
-                        synonym_entries.append({
-                            "term": cand,
-                            "similarity": round(sim_val, 4),
-                            "weight": round(w_syn, 4)
-                        })
-                        # Sum weights on collision (Lucene boost-summing per Theory Corollary 2)
-                        final_term_weights[cand] = final_term_weights.get(cand, 0.0) + round(w_syn, 4)
-                        total_synonyms_injected += 1
+                    # Mass floor: drop synonyms with w(s | a) < epsilon * w(a)
+                    if self.mass_floor > 0.0 and w_syn < (self.mass_floor * anchor_base_weights[a]):
+                        continue
+
+                    synonym_entries.append({
+                        "term": cand,
+                        "similarity": round(sim_val, 4),
+                        "weight": round(w_syn, 4)
+                    })
+                    # Sum weights on collision (Lucene boost-summing per Theory Corollary 2)
+                    final_term_weights[cand] = final_term_weights.get(cand, 0.0) + round(w_syn, 4)
+                    total_synonyms_injected += 1
 
             aspect_data = {
                 "anchor": a,

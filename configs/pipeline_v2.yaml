@@ -7,7 +7,7 @@ pipeline_v2:
     stemmer: "kstem"                 # IR stemmer: kstem (recommended) | snowball | porter | none
     use_wordnet_override: true       # WordNet suppletion override (went -> go, better -> good, children -> child)
     mode: "parity"                   # Inverted posting list mode: parity | legacy
-    vocab_selection: "coverage"      # Pool selection: coverage (FPS) | salience | idf | random
+    vocab_selection: "salience"      # Calibrated: salience (IDF * ln(1+DF)) beats pure coverage FPS
     max_vocab_pool_size: 2500        # Candidate vocabulary pool size extracted from corpus
 
   expansion:
@@ -16,11 +16,11 @@ pipeline_v2:
       verb: 0.75                     # Verb POS Prior
       modifier: 0.60                 # Modifier / Other POS Prior
     tau_base: 0.55                   # Base Dual/Anchor Similarity cutoff
-    delta_tau: 0.0                   # Signed adaptive similarity gate slope (default: 0.0)
+    delta_tau: 0.10                  # Calibrated: Delta_tau = +0.10 (rarer anchors -> stricter gate)
     beta: 1.0                        # Pure anchor-candidate similarity (1.0 = anchor-only, <1.0 = Dual-Sim)
     mu_ceil: 0.50                    # Query-level IT-MPE expansion budget ceiling (default: 0.50)
     eta: 0.0                         # IT-MPE budget direction (default: 0.0)
-    mass_floor: 0.0                  # Mass floor epsilon (default: 0.0 = pure gate-only; drops w(s|a) < epsilon * w(a))
+    mass_floor: 0.005                # Calibrated: mass_floor = 0.5% of w(a) (bounds |w_Q| and cuts latency in half)
     bailout_tau_idf: 3.0             # Anchor IDF threshold for triggering not-in-pool candidate bailout
     min_len_rescue: 3                # Minimum anchor length for bailout candidate generation
     bge_model_name: "BAAI/bge-small-en-v1.5"
