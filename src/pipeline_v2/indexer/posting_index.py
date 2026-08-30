@@ -45,7 +45,7 @@ class InvertedPostingIndex:
 
     def __init__(
         self,
-        k1: float = 1.5,
+        k1: float = 1.2,
         b: float = 0.75,
     ):
         self.k1: float = float(k1)

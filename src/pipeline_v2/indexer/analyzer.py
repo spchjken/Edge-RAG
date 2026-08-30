@@ -143,8 +143,8 @@ class EdgeRAGAnalyzer:
         """Determines if a token is protected from stemming and overrides."""
         if not self.exempt_technical:
             return False
-        # Do not stem short tokens (len <= 3), compounds (qwen2.5-7b, gpt-4, fp16), or strings with digits
-        if len(token) <= 3:
+        # Protect compounds (qwen2.5-7b, gpt-4, fp16), strings with digits, or technical patterns
+        if "-" in token or "." in token or "_" in token or any(c.isdigit() for c in token):
             return True
         return bool(TECHNICAL_PATTERN.match(token))
 
@@ -175,17 +175,19 @@ class EdgeRAGAnalyzer:
                 if not ("-" in token or "." in token or "_" in token or any(c.isdigit() for c in token)):
                     continue
 
-            # 4. Keyword Marker Exemption
+            # 4. StemmerOverride Filter (WordNet irregular suppletion overrides)
+            if self.use_wordnet_override and token in self.overrides:
+                token = self.overrides[token]
+                analyzed_tokens.append(token)
+                continue
+
+            # 5. Technical Keyword Marker Exemption
             if self.is_stem_exempt(token):
                 if token:
                     analyzed_tokens.append(token)
                 continue
 
-            # 5. StemmerOverride Filter (WordNet suppletion)
-            if self.use_wordnet_override and token in self.overrides:
-                token = self.overrides[token]
-
-            # 6. Stem Filter (applied to non-exempt tokens)
+            # 6. Stem Filter (applied to standard words)
             token = self.stem_fn(token)
 
             if token:

@@ -2,7 +2,7 @@ import math
 import re
 import random
 from collections import Counter
-from typing import List, Set, Optional, Tuple, Dict
+from typing import List, Set, Optional, Tuple, Dict, Any
 from .corpus_idf_registry import CorpusIDFRegistry
 from .analyzer import EdgeRAGAnalyzer, LUCENE_STOPWORDS
 from .tokenizer import EdgeRAGTokenizer
@@ -49,8 +49,9 @@ class CorpusVocabBuilder:
         # Track surface token frequencies per stem
         stem_surface_counts: Dict[str, Counter] = {}
 
-        # Scan documents (sample up to 2000 chunks for fast surface form extraction)
-        sample_corpus = corpus[:2000] if len(corpus) > 2000 else corpus
+        # Scan documents (sample up to 5000 chunks with deterministic seed for representative surface form extraction)
+        rng = random.Random(42)
+        sample_corpus = rng.sample(corpus, min(len(corpus), 5000)) if len(corpus) > 5000 else corpus
         for doc in sample_corpus:
             raw_tokens = EdgeRAGTokenizer.tokenize(doc)
             for raw_tok in raw_tokens:
@@ -86,36 +87,41 @@ class CorpusVocabBuilder:
             salience = idf_val * math.log(1.0 + df)
             candidate_tuples.append((stem, best_surface, salience))
 
-        # Sort by salience descending and cap candidate pool to 2x target pool size (max 5000) for sub-second BGE encoding
-        max_candidates = max(self.max_vocab_size * 2, 5000)
-        candidate_tuples.sort(key=lambda x: x[2], reverse=True)
-        top_candidates = candidate_tuples[:max_candidates]
-
-        candidate_stems = [c[0] for c in top_candidates]
-        canonical_surfaces = [c[1] for c in top_candidates]
+        candidate_stems = [c[0] for c in candidate_tuples]
+        canonical_surfaces = [c[1] for c in candidate_tuples]
 
         return candidate_stems, canonical_surfaces
 
     def build_clean_vocabulary(
         self,
         corpus: List[str],
-        strategy: str = "salience",
-        seed: int = 42
+        strategy: str = "coverage",
+        seed: int = 42,
+        vocab_matrix: Optional[Any] = None
     ) -> List[str]:
         """
         Builds candidate vocabulary pool using the requested strategy.
         
         Strategies:
+        - 'coverage': FPS semantic hub selection on DenseVocabMatrix
         - 'salience': Score(t) = IDF(t) * ln(1 + DF(t))
         - 'idf': Pure IDF descending
         - 'random': Uniform random sample
         """
-        candidate_stems, _ = self.extract_candidates_with_surface_forms(corpus)
+        candidate_stems, canonical_surfaces = self.extract_candidates_with_surface_forms(corpus)
         if not candidate_stems:
             return []
 
         if len(candidate_stems) <= self.max_vocab_size:
             return candidate_stems
+
+        if strategy == "coverage" and vocab_matrix is not None:
+            vocab_matrix.build_with_fps(
+                candidate_stems,
+                surface_forms=canonical_surfaces,
+                target_pool_size=self.max_vocab_size
+            )
+            return vocab_matrix.vocab_terms
 
         if strategy == "idf":
             scored = [(s, self.idf_registry.get_idf(s)) for s in candidate_stems]
@@ -124,15 +130,12 @@ class CorpusVocabBuilder:
 
         elif strategy == "random":
             rng = random.Random(seed)
-            return rng.sample(candidate_stems, min(self.max_vocab_size, len(candidate_stems)))
+            return rng.sample(candidate_stems, self.max_vocab_size)
 
-        else: # Default: 'salience'
-            scored = []
-            for s in candidate_stems:
-                idf_val = self.idf_registry.get_idf(s)
-                df = self.idf_registry.doc_freqs.get(s, 1)
-                salience = idf_val * math.log(1.0 + df)
-                scored.append((s, salience))
+        else:  # 'salience' default fallback
+            scored = [
+                (s, self.idf_registry.get_idf(s) * math.log(1.0 + self.idf_registry.doc_freqs.get(s, 1)))
+                for s in candidate_stems
+            ]
             scored.sort(key=lambda x: x[1], reverse=True)
             return [s for s, _ in scored[:self.max_vocab_size]]
-

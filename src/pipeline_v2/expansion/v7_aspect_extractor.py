@@ -142,10 +142,13 @@ class V7AspectExtractor:
         heuristic_entities = self.extract_heuristics(query)
         heur_set = set(h.lower() for h in heuristic_entities)
 
-        # 1. Full analyzed stems as anchors (p = 1.0)
+        # 1. Analyzed stems as anchors (p = 1.0)
         analyzed_anchors = self.analyzer.analyze(query)
-        raw_words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9\-_]{2,}\b', query) if w.lower() not in LUCENE_STOPWORDS]
-        all_candidate_anchors = list(dict.fromkeys(analyzed_anchors + raw_words))
+        heuristic_entities = self.extract_heuristics(query)
+        analyzed_heuristics = []
+        for h in heuristic_entities:
+            analyzed_heuristics.extend(self.analyzer.analyze(h))
+        all_candidate_anchors = list(dict.fromkeys(analyzed_anchors + analyzed_heuristics))
 
         # 2. Dedup & OOV clamping via registry
         distinct_anchors = []
@@ -202,9 +205,9 @@ class V7AspectExtractor:
                             damped_w = anchor_base_weights[a] * min(1.0, anchor_idf / max(cand_idf, 1e-6))
                             bailed_candidates_per_anchor[a].append({
                                 "term": cand_term,
-                                "similarity": cossim,
-                                "idf": cand_idf,
-                                "weight": damped_w
+                                "similarity": round(cossim, 4),
+                                "idf": round(cand_idf, 4),
+                                "weight": round(damped_w, 4)
                             })
                             total_bailed += 1
 
@@ -244,61 +247,52 @@ class V7AspectExtractor:
             anchor_idf = self.idf_registry.get_idf(a)
             tau_sim_a = self.tau_base + self.delta_tau * min(1.0, anchor_idf / max_corpus_idf)
 
-            # Extract in-pool candidates passing gate (in pure CPU NumPy cache)
+            # 1. Apply Bailout Candidates Directly (Outside mu budget)
+            bailed_list = bailed_candidates_per_anchor.get(a, [])
+            for b in bailed_list:
+                final_term_weights[b["term"]] = final_term_weights.get(b["term"], 0.0) + b["weight"]
+
+            # 2. Extract In-Pool Candidates Passing Gate (for IT-MPE Simplex Distribution)
             passed_cands: List[Tuple[str, float, float]] = []  # (term, sim, idf)
             if sim_matrix_np.shape[1] > 0:
                 sims_a = sim_matrix_np[i]
                 above_indices = np.where(sims_a >= tau_sim_a)[0]
                 total_cands_above_tau += len(above_indices)
 
-                if len(above_indices) > 0:
-                    if len(above_indices) > 10:
-                        top_sub = np.argpartition(-sims_a[above_indices], 10)[:10]
-                        selected_indices = above_indices[top_sub]
-                    else:
-                        selected_indices = above_indices
+                for idx in above_indices:
+                    cand = vocab_terms[idx]
+                    if cand == a:
+                        continue
+                    sim_val = float(sims_a[idx])
+                    cand_idf = float(self.vocab_idfs_np[idx]) if len(self.vocab_idfs_np) > idx else self.idf_registry.get_idf(cand)
+                    passed_cands.append((cand, sim_val, cand_idf))
 
-                    for idx in selected_indices:
-                        cand = vocab_terms[idx]
-                        if cand == a:
-                            continue
-                        sim_val = float(sims_a[idx])
-                        cand_idf = float(self.vocab_idfs_np[idx]) if len(self.vocab_idfs_np) > idx else self.idf_registry.get_idf(cand)
-                        passed_cands.append((cand, sim_val, cand_idf))
-
-            # Include bailed candidates
-            bailed_list = bailed_candidates_per_anchor.get(a, [])
-            for b in bailed_list:
-                passed_cands.append((b["term"], b["similarity"], b["idf"]))
-
-            # Distribute IT-MPE Mass with Top-10 Salience Pruning
+            # 3. Distribute IT-MPE Mass across in-pool semantic candidates
             synonym_entries = []
-            if passed_cands and mu_q > 0:
+            if not passed_cands:
+                starved_aspects += 1
+            elif mu_q > 0:
                 # Deduplicate by term keeping highest similarity
                 best_cands: Dict[str, Tuple[float, float]] = {}
                 for cand, sim_val, cand_idf in passed_cands:
                     if cand not in best_cands or sim_val > best_cands[cand][0]:
                         best_cands[cand] = (sim_val, cand_idf)
 
-                # Sort descending by cosine similarity and cap to top 10
-                sorted_cands = sorted(best_cands.items(), key=lambda x: x[1][0], reverse=True)[:10]
-                sum_cos = sum(v[0] for _, v in sorted_cands)
+                sum_cos = sum(v[0] for v in best_cands.values())
                 if sum_cos > 0:
-                    for cand, (sim_val, cand_idf) in sorted_cands:
+                    for cand, (sim_val, cand_idf) in best_cands.items():
                         p_cond = sim_val / sum_cos
                         # Score-space damping: min(1.0, IDF_a / IDF_s)
                         score_damping = min(1.0, anchor_idf / max(cand_idf, 1e-6))
                         w_syn = anchor_base_weights[a] * score_damping * (mu_q * p_cond)
-                        if w_syn >= 0.001:
-                            synonym_entries.append({
-                                "term": cand,
-                                "similarity": round(sim_val, 4),
-                                "weight": round(w_syn, 4)
-                            })
-                            final_term_weights[cand] = max(final_term_weights.get(cand, 0.0), round(w_syn, 4))
-                            total_synonyms_injected += 1
-            else:
-                starved_aspects += 1
+                        synonym_entries.append({
+                            "term": cand,
+                            "similarity": round(sim_val, 4),
+                            "weight": round(w_syn, 4)
+                        })
+                        # Sum weights on collision (Lucene boost-summing per Theory Corollary 2)
+                        final_term_weights[cand] = final_term_weights.get(cand, 0.0) + round(w_syn, 4)
+                        total_synonyms_injected += 1
 
             aspect_data = {
                 "anchor": a,
