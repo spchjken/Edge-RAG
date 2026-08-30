@@ -1,7 +1,7 @@
 import os
 import re
 import yaml
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Set
 import torch
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
@@ -9,27 +9,38 @@ from sklearn.cluster import AgglomerativeClustering
 from ..indexer.corpus_idf_registry import CorpusIDFRegistry
 from ..indexer.dense_vocab_matrix import DenseVocabMatrix
 from ..indexer.corpus_vocab_builder import CorpusVocabBuilder
+from ..indexer.analyzer import EdgeRAGAnalyzer, LUCENE_STOPWORDS
+from ..indexer.tokenizer import EdgeRAGTokenizer
+from .v7_aspect_extractor import V7AspectExtractor, POSTaggerHelper
 
 
 class BM25DenseAspectExtractor:
     """
     Hybrid BM25 IDF + Aspect-Grouped Dense Vocabulary Query Expansion Module.
-    Implements Schemas 1-5 with Token Repetition weighting for Lucene BM25.
+    Supports Schemas 1-6 (legacy token repetition) and delegates V7 to V7AspectExtractor.
     """
 
     def __init__(
         self,
         idf_registry: CorpusIDFRegistry,
         vocab_matrix: DenseVocabMatrix,
-        schema: str = "BM25Dense_AspectInject",
+        schema: str = "BM25Dense_V7",
         p: float = 0.50,
         C_exp: int = 2,
         tau_sim: float = 0.55,
-        beta: float = 0.65,
+        beta: float = 1.0,
         c: int = -1,
         r_min: int = 2,
         r_max: int = 4,
         n_reps: int = 3,
+        tau_base: float = 0.55,
+        delta_tau: float = 0.0,
+        mu_ceil: float = 0.50,
+        eta: float = 0.0,
+        pos_ratios: Optional[Dict[str, float]] = None,
+        bailout_tau_idf: float = 3.0,
+        min_len_rescue: int = 3,
+        analyzer: Optional[EdgeRAGAnalyzer] = None
     ):
         self.idf_registry = idf_registry
         self.vocab_matrix = vocab_matrix
@@ -42,6 +53,30 @@ class BM25DenseAspectExtractor:
         self.r_min = r_min
         self.r_max = r_max
         self.n_reps = n_reps
+        self.tau_base = tau_base
+        self.delta_tau = delta_tau
+        self.mu_ceil = mu_ceil
+        self.eta = eta
+        self.pos_ratios = pos_ratios if pos_ratios is not None else {"noun": 1.0, "verb": 0.75, "modifier": 0.60}
+        self.bailout_tau_idf = bailout_tau_idf
+        self.min_len_rescue = min_len_rescue
+        self.analyzer = analyzer if analyzer is not None else EdgeRAGAnalyzer()
+        self.pos_tagger = POSTaggerHelper()
+
+        # Dedicated V7 Retriever Delegate
+        self._v7_extractor = V7AspectExtractor(
+            idf_registry=self.idf_registry,
+            vocab_matrix=self.vocab_matrix,
+            analyzer=self.analyzer,
+            tau_base=self.tau_base,
+            delta_tau=self.delta_tau,
+            beta=self.beta,
+            mu_ceil=self.mu_ceil,
+            eta=self.eta,
+            pos_ratios=self.pos_ratios,
+            bailout_tau_idf=self.bailout_tau_idf,
+            min_len_rescue=self.min_len_rescue
+        )
 
     @classmethod
     def from_config(
@@ -66,7 +101,11 @@ class BM25DenseAspectExtractor:
 
         # Merge YAML defaults with runtime overrides
         merged_kwargs = {**config_data, **overrides}
-        valid_keys = {"schema", "p", "C_exp", "tau_sim", "beta", "c", "r_min", "r_max", "n_reps"}
+        valid_keys = {
+            "schema", "p", "C_exp", "tau_sim", "beta", "c", "r_min", "r_max", "n_reps",
+            "tau_base", "delta_tau", "mu_ceil", "eta", "pos_ratios", "bailout_tau_idf",
+            "min_len_rescue"
+        }
         filtered_kwargs = {k: v for k, v in merged_kwargs.items() if k in valid_keys}
 
         return cls(idf_registry=idf_registry, vocab_matrix=vocab_matrix, **filtered_kwargs)
@@ -86,51 +125,14 @@ class BM25DenseAspectExtractor:
         Returns:
             {
                 "aspects": [...],
-                "augmented_token_list": [...]  # flattened w/ token repetition
+                "augmented_token_list": [...],
+                "term_weights": {...},
+                "telemetry": {...}
             }
         """
-        # Step 1: Heuristic Entity Extraction
-        heuristic_entities = self.extract_heuristics(query)
-
-        # Step 2: Extract candidate query words
-        raw_words = [
-            w.lower() for w in re.findall(r'\b[a-zA-Z0-9\-_]{2,}\b', query)
-            if w.lower() not in CorpusVocabBuilder.ENGLISH_STOPWORDS
-        ]
-        distinct_words = list(dict.fromkeys(raw_words)) # Preserve order while deduplicating
-        non_entity_words = [w for w in distinct_words if w not in [h.lower() for h in heuristic_entities]]
-
-        # Schema 6a & 6b: Use Query Centrality Scoring + Stem Deduplication + Fix B Entity Validation
-        if self.schema in ("BM25Dense_CentralityFixedRep", "pipeline_v2_v6a", "v6a",
-                           "BM25Dense_CentralityDynamicInject", "pipeline_v2_v6b", "v6b"):
-            all_anchors, validated_entities = self._score_and_deduplicate_anchors_v6(
-                query, heuristic_entities, non_entity_words
-            )
-            if self.schema in ("BM25Dense_CentralityFixedRep", "pipeline_v2_v6a", "v6a"):
-                return self._extract_centrality_fixed_rep(query, all_anchors, validated_entities)
-            else:
-                return self._extract_centrality_dynamic_inject(query, all_anchors, validated_entities)
-
-        # Standard Schemas (1 - 5): Rank non-entity query words by raw IDF score
-        ranked_words = sorted(non_entity_words, key=lambda w: self.idf_registry.get_idf(w), reverse=True)
-        N_aspects = max(2, int(np.ceil(self.p * len(distinct_words)))) if distinct_words else 2
-        anchor_keywords = ranked_words[:N_aspects]
-
-        # Combine Heuristic Entities + Anchor Keywords as final Aspect Anchors
-        all_anchors = heuristic_entities + [w for w in anchor_keywords if w not in heuristic_entities]
-
-        if self.schema == "BM25Dense_LocalCascade" and top_candidate_chunks is not None:
-            return self._extract_local_cascade(query, all_anchors, top_candidate_chunks)
-        elif self.schema == "BM25Dense_AspectFusion":
-            return self._extract_aspect_fusion(query, all_anchors)
-        elif self.schema == "BM25Dense_AspectWeighted":
-            return self._extract_aspect_weighted(query, all_anchors)
-        elif self.schema in ("BM25Dense_FixedRepDynamicCapacity", "pipeline_v2_v5a", "v5a"):
-            return self._extract_fixed_rep_dynamic_capacity(query, all_anchors, heuristic_entities)
-        elif self.schema in ("BM25Dense_DynamicAspectInject", "pipeline_v2_dynamic", "v5b"):
-            return self._extract_dynamic_aspect_inject(query, all_anchors, heuristic_entities)
-        else: # Default: BM25Dense_AspectInject
-            return self._extract_aspect_inject(query, all_anchors)
+        # Schema 7: 5-Phase Anchored Lexical-Semantic Retriever (V7)
+        if self.schema in ("BM25Dense_V7", "pipeline_v2_v7", "v7", "BM25Dense_5Phase"):
+            return self._v7_extractor.extract(query, top_candidate_chunks)
 
     def _compute_dual_sim(self, anchors: List[str], query: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """

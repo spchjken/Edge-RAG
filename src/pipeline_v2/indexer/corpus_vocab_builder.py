@@ -1,81 +1,138 @@
-import string
+import math
+import re
+import random
 from collections import Counter
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Tuple, Dict
 from .corpus_idf_registry import CorpusIDFRegistry
+from .analyzer import EdgeRAGAnalyzer, LUCENE_STOPWORDS
+from .tokenizer import EdgeRAGTokenizer
 
 
 class CorpusVocabBuilder:
     """
-    O(N) High-Speed Token Counter & Median IDF Pre-Filter (V5 Design).
-    Uses corpus sampling for bigram extraction (<0.05s) and reads unigrams from idf_registry.
+    O(N) High-Speed Analyzed Token & Salience Pool Builder (V7 Design).
+    
+    Features:
+    1. Analyzes corpus via EdgeRAGAnalyzer to ensure 1:1 stem parity.
+    2. Retains surface-form mapping (maps analyzed stem -> highest-frequency surface form in corpus)
+       to ensure BGE embedding is evaluated on natural words rather than truncated stem artifacts.
+    3. Operates across the full stem vocabulary without legacy pre-truncation.
+    4. Supports selection strategies: 'coverage' (FPS), 'salience' (IDF * ln(1+DF)), 'idf', 'random'.
     """
 
-    ENGLISH_STOPWORDS: Set[str] = {
-        "a", "an", "the", "and", "or", "but", "if", "because", "as", "what", "which",
-        "this", "that", "these", "those", "then", "just", "so", "than", "such", "both",
-        "through", "about", "against", "between", "into", "throughout", "during", "before",
-        "after", "above", "below", "to", "from", "up", "upon", "down", "in", "out", "on",
-        "off", "over", "under", "again", "further", "once", "here", "there", "when",
-        "where", "why", "how", "all", "any", "both", "each", "few", "more", "most",
-        "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
-        "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now",
-        "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "having",
-        "do", "does", "did", "doing", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"
-    }
+    CLEAN_PATTERN = re.compile(r'^[a-zA-Z0-9\-_]+$')
 
-    TRANS_TABLE = str.maketrans('', '', string.punctuation.replace('-', '').replace('_', ''))
-
-    def __init__(self, idf_registry: CorpusIDFRegistry, max_vocab_size: int = 1000):
+    def __init__(
+        self,
+        idf_registry: CorpusIDFRegistry,
+        max_vocab_size: int = 2500,
+        analyzer: Optional[EdgeRAGAnalyzer] = None
+    ):
         self.idf_registry = idf_registry
         self.max_vocab_size = max_vocab_size
+        self.analyzer = analyzer if analyzer is not None else EdgeRAGAnalyzer()
+        self.stem_to_surface: Dict[str, str] = {}
 
-    def build_clean_vocabulary(self, corpus: List[str]) -> List[str]:
+    def extract_candidates_with_surface_forms(
+        self,
+        corpus: List[str]
+    ) -> Tuple[List[str], List[str]]:
         """
-        Sub-second unigram & bigram extraction (<0.05s):
-        1. Pulls unigram doc_freqs directly from idf_registry.doc_freqs (0ms).
-        2. Filters out generic corpus stopwords (doc_freq > 15% of docs).
-        3. Samples up to 1,000 corpus chunks for fast bigram counting (<0.03s).
-        4. Applies Sublinear Salience Ranking: Score(t) = IDF(t) * ln(1 + doc_freq(t)).
+        Extracts all valid analyzed candidate stems along with their canonical surface forms.
+        
+        Returns:
+            Tuple of (candidate_stems, canonical_surface_forms).
         """
-        import math
-        import re
-        stopwords = self.ENGLISH_STOPWORDS
         num_docs = self.idf_registry.num_docs if self.idf_registry.num_docs > 0 else len(corpus)
         max_doc_freq = max(5, int(0.15 * num_docs))
 
-        clean_pattern = re.compile(r'^[a-zA-Z0-9\-_ ]+$')
+        # Track surface token frequencies per stem
+        stem_surface_counts: Dict[str, Counter] = {}
 
-        # 1. Top unigrams directly from idf_registry.doc_freqs
-        valid_unigrams = [
-            (term, count) for term, count in self.idf_registry.doc_freqs.items()
-            if 2 <= count <= max_doc_freq and term not in stopwords and not term.isdigit() and len(term) >= 3 and clean_pattern.match(term)
-        ]
-        valid_unigrams.sort(key=lambda x: x[1], reverse=True)
-        top_unigrams = [(term, count) for term, count in valid_unigrams[:2500]]
-
-        # 2. Fast bigram counter from sampled corpus subset (max 1000 chunks)
-        sample_corpus = corpus[:1000] if len(corpus) > 1000 else corpus
-        bigram_counter = Counter()
-
+        # Scan documents (sample up to 2000 chunks for fast surface form extraction)
+        sample_corpus = corpus[:2000] if len(corpus) > 2000 else corpus
         for doc in sample_corpus:
-            clean_doc = doc.lower().translate(self.TRANS_TABLE)
-            clean_tokens = [w for w in clean_doc.split() if len(w) >= 3 and w not in stopwords and not w.isdigit() and clean_pattern.match(w)]
-            if len(clean_tokens) > 1:
-                bigram_counter.update(zip(clean_tokens, clean_tokens[1:]))
+            raw_tokens = EdgeRAGTokenizer.tokenize(doc)
+            for raw_tok in raw_tokens:
+                if len(raw_tok) < 2 or raw_tok in LUCENE_STOPWORDS:
+                    continue
+                # Analyze single token
+                analyzed = self.analyzer.analyze(raw_tok)
+                if not analyzed:
+                    continue
+                stem = analyzed[0]
+                if stem not in stem_surface_counts:
+                    stem_surface_counts[stem] = Counter()
+                stem_surface_counts[stem][raw_tok] += 1
 
-        top_bigrams = [
-            (f"{t1} {t2}", count) for (t1, t2), count in bigram_counter.most_common(1000)
-            if 2 <= count <= max_doc_freq and clean_pattern.match(f"{t1} {t2}")
-        ]
-        candidate_terms = top_unigrams + top_bigrams
+        candidate_tuples = []
 
-        # 3. Apply Sublinear Salience Ranking
-        surviving_terms = []
-        for term, count in candidate_terms:
-            idf_val = self.idf_registry.get_idf(term)
-            if idf_val >= 1.5:  # Filter out true generic stopwords
-                salience = idf_val * math.log(1.0 + count)
-                surviving_terms.append((term, salience))
+        for stem, df in self.idf_registry.doc_freqs.items():
+            if df > max_doc_freq or df < 1:
+                continue
+            if len(stem) < 2 or stem.isdigit() or stem in LUCENE_STOPWORDS:
+                continue
+            if not self.CLEAN_PATTERN.match(stem):
+                continue
 
-        surviving_terms.sort(key=lambda x: x[1], reverse=True)
-        return [term for term, _ in surviving_terms[:self.max_vocab_size]]
+            # Pick highest-frequency surface form if available, else fallback to stem
+            if stem in stem_surface_counts and stem_surface_counts[stem]:
+                best_surface = stem_surface_counts[stem].most_common(1)[0][0]
+            else:
+                best_surface = stem
+
+            self.stem_to_surface[stem] = best_surface
+            idf_val = self.idf_registry.get_idf(stem)
+            salience = idf_val * math.log(1.0 + df)
+            candidate_tuples.append((stem, best_surface, salience))
+
+        # Sort by salience descending and cap candidate pool to 2x target pool size (max 5000) for sub-second BGE encoding
+        max_candidates = max(self.max_vocab_size * 2, 5000)
+        candidate_tuples.sort(key=lambda x: x[2], reverse=True)
+        top_candidates = candidate_tuples[:max_candidates]
+
+        candidate_stems = [c[0] for c in top_candidates]
+        canonical_surfaces = [c[1] for c in top_candidates]
+
+        return candidate_stems, canonical_surfaces
+
+    def build_clean_vocabulary(
+        self,
+        corpus: List[str],
+        strategy: str = "salience",
+        seed: int = 42
+    ) -> List[str]:
+        """
+        Builds candidate vocabulary pool using the requested strategy.
+        
+        Strategies:
+        - 'salience': Score(t) = IDF(t) * ln(1 + DF(t))
+        - 'idf': Pure IDF descending
+        - 'random': Uniform random sample
+        """
+        candidate_stems, _ = self.extract_candidates_with_surface_forms(corpus)
+        if not candidate_stems:
+            return []
+
+        if len(candidate_stems) <= self.max_vocab_size:
+            return candidate_stems
+
+        if strategy == "idf":
+            scored = [(s, self.idf_registry.get_idf(s)) for s in candidate_stems]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [s for s, _ in scored[:self.max_vocab_size]]
+
+        elif strategy == "random":
+            rng = random.Random(seed)
+            return rng.sample(candidate_stems, min(self.max_vocab_size, len(candidate_stems)))
+
+        else: # Default: 'salience'
+            scored = []
+            for s in candidate_stems:
+                idf_val = self.idf_registry.get_idf(s)
+                df = self.idf_registry.doc_freqs.get(s, 1)
+                salience = idf_val * math.log(1.0 + df)
+                scored.append((s, salience))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [s for s, _ in scored[:self.max_vocab_size]]
+

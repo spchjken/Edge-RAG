@@ -1,17 +1,27 @@
-# Hyperparameters for Pipeline V2 (BM25 + Dense Vocabulary Query Expansion)
+# Hyperparameters for Pipeline V2 / V7 (5-Phase Anchored Lexical-Semantic Retriever)
 
 pipeline_v2:
-  schema: "BM25Dense_AspectInject"  # Options: BM25Dense_AspectInject, BM25Dense_AspectWeighted, BM25Dense_AspectFusion, BM25Dense_DynamicAspectInject
+  schema: "BM25Dense_V7"  # Primary V7 Schema (Options: BM25Dense_V7, BM25Dense_AspectInject, BM25Dense_DynamicAspectInject)
   
+  indexer:
+    stemmer: "kstem"                 # IR stemmer: kstem (recommended) | snowball | porter | none
+    use_wordnet_override: true       # WordNet suppletion override (went -> go, better -> good, children -> child)
+    mode: "parity"                   # Inverted posting list mode: parity | legacy
+    vocab_selection: "coverage"      # Pool selection: coverage (FPS) | salience | idf | random
+    max_vocab_pool_size: 2500        # Candidate vocabulary pool size extracted from corpus
+
   expansion:
-    p: 0.50                          # Keyword percentage ratio for aspect anchors (20% - 100%)
-    C_exp: 2                         # Maximum expansion terms allowed per aspect group
-    tau_sim: 0.55                    # Minimum Dual BGE Similarity score cutoff (calibrated for BGE cosine space)
-    beta: 0.65                       # Weight of Aspect Anchor vs Full Query similarity (0.65 = 65% Anchor, 35% Sentence)
-    c: -1                            # Anchor-coupled synonym capacity offset (C_exp = R + c)
-    r_min: 2                         # Minimum anchor repetition count
-    r_max: 5                         # Maximum anchor repetition count (Heuristic entities & high-IDF)
-    max_vocab_pool_size: 1000        # Candidate vocabulary pool size extracted from corpus
+    pos_ratios:
+      noun: 1.0                      # Noun / Technical Entity POS Prior
+      verb: 0.75                     # Verb POS Prior
+      modifier: 0.60                 # Modifier / Other POS Prior
+    tau_base: 0.55                   # Base Dual/Anchor Similarity cutoff
+    delta_tau: 0.0                   # Signed adaptive similarity gate slope (default: 0.0)
+    beta: 1.0                        # Pure anchor-candidate similarity (1.0 = anchor-only, <1.0 = Dual-Sim)
+    mu_ceil: 0.50                    # Query-level IT-MPE expansion budget ceiling (default: 0.50)
+    eta: 0.0                         # IT-MPE budget direction (default: 0.0)
+    bailout_tau_idf: 3.0             # Anchor IDF threshold for triggering not-in-pool candidate bailout
+    min_len_rescue: 3                # Minimum anchor length for bailout candidate generation
     bge_model_name: "BAAI/bge-small-en-v1.5"
 
   routing:
@@ -20,3 +30,4 @@ pipeline_v2:
 
   vram:
     N_max: 10                        # Maximum target chunks passed to late expansion / LLM generation
+

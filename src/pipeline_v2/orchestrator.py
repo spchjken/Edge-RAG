@@ -38,24 +38,47 @@ class PipelineV2Orchestrator:
         model_name = cfg.get("model_name", "qwen3.5-2b")
         self.llm_client = llm_client if llm_client is not None else LLMClient(model_name=model_name)
 
-        schema = cfg.get("schema", "BM25Dense_AspectInject")
+        schema = cfg.get("schema", "BM25Dense_V7")
+        idx_cfg = cfg.get("indexer", {})
         exp_cfg = cfg.get("expansion", {})
         route_cfg = cfg.get("routing", {})
         vram_cfg = cfg.get("vram", {})
 
-        # Phase 1: High-Speed Indexing & Shared IDF Matrix Build
+        # Phase 1: High-Speed Indexing & Shared IDF Matrix Build (V7 Parity & Coverage Pool)
         t0 = time.time()
-        self.indexer = BM25LuceneIndexer(corpus, chunk_ids=self.chunk_ids)
+        from .indexer.analyzer import EdgeRAGAnalyzer
+        self.analyzer = EdgeRAGAnalyzer(
+            stemmer=idx_cfg.get("stemmer", "kstem"),
+            use_wordnet_override=idx_cfg.get("use_wordnet_override", True)
+        )
+        self.indexer = BM25LuceneIndexer(
+            corpus,
+            chunk_ids=self.chunk_ids,
+            mode=idx_cfg.get("mode", "parity"),
+            analyzer=self.analyzer
+        )
         self.idf_registry = self.indexer.idf_registry
 
-        vocab_builder = CorpusVocabBuilder(self.idf_registry, max_vocab_size=exp_cfg.get("max_vocab_pool_size", 1000))
-        clean_vocab = vocab_builder.build_clean_vocabulary(corpus)
+        pool_size = idx_cfg.get("max_vocab_pool_size", 2500)
+        vocab_builder = CorpusVocabBuilder(
+            self.idf_registry,
+            max_vocab_size=pool_size,
+            analyzer=self.analyzer
+        )
+        vocab_selection = idx_cfg.get("vocab_selection", "coverage")
 
         self.vocab_matrix = DenseVocabMatrix(model_name=exp_cfg.get("bge_model_name", "BAAI/bge-small-en-v1.5"))
-        self.vocab_matrix.build_matrix(clean_vocab)
+
+        if vocab_selection == "coverage":
+            candidate_stems, surface_forms = vocab_builder.extract_candidates_with_surface_forms(corpus)
+            self.vocab_matrix.build_with_fps(candidate_stems, surface_forms=surface_forms, target_pool_size=pool_size)
+        else:
+            clean_vocab = vocab_builder.build_clean_vocabulary(corpus, strategy=vocab_selection)
+            self.vocab_matrix.build_matrix(clean_vocab)
+
         self.tti_seconds = time.time() - t0
 
-        # Phase 2: Query Expansion
+        # Phase 2: Query Expansion & Dense Aspect Extractor
         self.extractor = BM25DenseAspectExtractor(
             idf_registry=self.idf_registry,
             vocab_matrix=self.vocab_matrix,
@@ -63,7 +86,15 @@ class PipelineV2Orchestrator:
             p=exp_cfg.get("p", 0.50),
             C_exp=exp_cfg.get("C_exp", 2),
             tau_sim=exp_cfg.get("tau_sim", 0.55),
-            beta=exp_cfg.get("beta", 0.65)
+            beta=exp_cfg.get("beta", 1.0),
+            tau_base=exp_cfg.get("tau_base", 0.55),
+            delta_tau=exp_cfg.get("delta_tau", 0.0),
+            mu_ceil=exp_cfg.get("mu_ceil", 0.50),
+            eta=exp_cfg.get("eta", 0.0),
+            pos_ratios=exp_cfg.get("pos_ratios"),
+            bailout_tau_idf=exp_cfg.get("bailout_tau_idf", 3.0),
+            min_len_rescue=exp_cfg.get("min_len_rescue", 3),
+            analyzer=self.analyzer
         )
 
         # Phase 3: Cascade Router

@@ -15,17 +15,18 @@ trigger: always_on
 `src/pipeline_v2/` is the primary, production-grade Edge-RAG pipeline. It implements an Anchored Lexical-Semantic Retriever with downstream extension modules:
 
 ### 2.1 Indexing & Shared IDF (`src/pipeline_v2/indexer/`)
-- `corpus_idf_registry.py` — `CorpusIDFRegistry`: Unified non-negative Lucene IDF table ($\ln(1.0 + \frac{N - n + 0.5}{n + 0.5})$) shared across all modules for zero-lag initialization.
-- `corpus_vocab_builder.py` — `CorpusVocabBuilder`: Fast sublinear salience vocabulary extractor ($\text{IDF} \times \ln(1 + \text{DF})$) sampling up to 1,000 document chunks for bigrams.
-- `dense_vocab_matrix.py` — `DenseVocabMatrix`: Batched GPU embedding matrix using `BAAI/bge-small-en-v1.5` on CUDA FP16 ($<0.3\text{s}$ TTI).
-- `bm25_lucene_indexer.py` — `BM25LuceneIndexer`: Inverted posting list retrieval engine wrapping `LuceneBM25Baseline` ($k_1=1.2, b=0.75$).
+- `analyzer.py` — `EdgeRAGAnalyzer`: Krovetz stemmer with WordNet irregular suppletion overrides (*went $\to$ go*, *children $\to$ child*) and technical compound protection (*e.g.* `qwen2.5-7b`, `fp16`, `nav2_bringup`).
+- `corpus_idf_registry.py` — `CorpusIDFRegistry`: Unified non-negative Lucene IDF table ($\ln(1.0 + \frac{N - n + 0.5}{n + 0.5})$) and pre-indexed compound `boundary_prefix_map` for $O(1)$ query-time bailout lookups.
+- `corpus_vocab_builder.py` — `CorpusVocabBuilder`: Fast sublinear salience vocabulary extractor ($\text{IDF} \times \ln(1 + \text{DF})$) with canonical surface-form mapping (*e.g.*, stem `robot` $\to$ surface `robotics`).
+- `dense_vocab_matrix.py` — `DenseVocabMatrix`: Batched GPU embedding matrix using `BAAI/bge-small-en-v1.5` on CUDA FP16 with Farthest-Point Sampling (FPS) for 2,500 semantic coverage hubs ($<0.3\text{s}$ TTI).
+- `bm25_lucene_indexer.py` — `BM25LuceneIndexer`: Inverted posting list retrieval engine wrapping `LuceneBM25Baseline` (legacy mode) or `InvertedPostingIndex` (parity mode, $k_1=1.2, b=0.75$).
+- `posting_index.py` — `InvertedPostingIndex`: In-memory inverted posting index with exact Lucene BM25 score identity.
 
 ### 2.2 Query Expansion (`src/pipeline_v2/expansion/`)
-- `bm25_dense_aspect_extractor.py` — `BM25DenseAspectExtractor`: Maps natural language queries to grounded aspect groups with weighted keywords and compiles the sparse term weight dictionary $\vec{w}_Q$ for direct vectorized BM25 retrieval.
-  - **Regex Heuristic Extraction:** Acronyms (`\b[A-Z]{2,}\b`), hyphenated terms, and exact quotes with entity validation gate ($\text{IDF} \ge 1.0$).
-  - **Anchor Selection & Centrality:** Non-entity words ranked by IDF or Query Centrality with stem/semantic deduplication.
-  - **Dual BGE Probing:** $\text{Dual\_Sim}(A_k, v) = \beta \cdot \text{CosSim}(A_k, v) + (1 - \beta) \cdot \text{CosSim}(Q_{\text{full}}, v)$ (threshold $\tau_{\text{sim}} = 0.55, \beta = 0.65$) with synonym weight capped at $1.0$.
-  - **Active Schemas:** `BM25Dense_AspectInject` (Schema 1), `BM25Dense_FixedRepDynamicCapacity` (Schema 5a), `BM25Dense_DynamicAspectInject` (Schema 5b), `BM25Dense_CentralityFixedRep` (Schema 6a), `BM25Dense_CentralityDynamicInject` (Schema 6b), `BM25Dense_AspectWeighted`, `BM25Dense_AspectFusion`.
+- `v7_aspect_extractor.py` — `V7AspectExtractor`: Standalone 5-phase V7 Retriever ($p=1.0$ content anchors, Penn Treebank POS priors, 1-pass GPU batch GEMM probing, adaptive similarity gating, and Information-Theoretic Mass-Preserving Expansion with score-space damping in CPU NumPy cache).
+- `pathway_v7_anchored_retriever.md` — Authoritative co-located Tier 2 specification for V7.
+- `bm25_dense_aspect_extractor.py` — `BM25DenseAspectExtractor`: Legacy schemas (1, 5a, 5b, 6a, 6b) and backward-compatible delegator for `BM25Dense_V7`.
+  - **Active Schemas:** `BM25Dense_V7` (Primary), `BM25Dense_AspectInject` (Schema 1), `BM25Dense_FixedRepDynamicCapacity` (Schema 5a), `BM25Dense_DynamicAspectInject` (Schema 5b), `BM25Dense_CentralityFixedRep` (Schema 6a), `BM25Dense_CentralityDynamicInject` (Schema 6b).
 
 ### 2.3 Downstream Extensions (Future Work)
 - **Cascade Routing (`src/pipeline_v2/routing/`):** `BM25CascadeRouter` — 3-way triage (Bypass / Rerank / Discard) based on normalized BM25 score and Aspect Coverage $\alpha$.
