@@ -143,18 +143,18 @@ graph TD
      - **$\Delta\tau < 0$ (rarer → looser):** rare anchors are where lexical matching is weakest, so they most need expansion; a strict gate starves them.
      $\Delta\tau = 0$ is the no-adaptivity baseline. The gate is **anchor-first** because synonymy is the *necessary* condition; topicality (if used) is a *refinement* applied after. (The legacy range $[0.80, 0.90]$ was too strict for BGE-small regardless of sign.)
   4. **Stem-Diversity Gate** *(removed):* No longer needed — the pool is built from analyzed (stemmed) tokens, so inflectional clones never enter; probing returns cross-root candidates by construction.
-  5. **Candidate Forwarding (no count cap):** forward **all** terms passing the gate to Phase 4 — no $C_{\text{exp}}$ truncation, no mass floor. $C_{\text{exp}}$ is a legacy count constraint orthogonal to IT-MPE (which bounds *mass*, not *count*); the Phase-3 gate is the sole filter, and Phase 4's normalized-cosine allocation keeps the tail naturally small.
+  5. **Candidate Forwarding (no count cap):** forward **all** terms passing the gate to Phase 4 — no $C_{\text{exp}}$ truncation. $C_{\text{exp}}$ is a legacy count constraint orthogonal to IT-MPE (which bounds *mass*, not *count*); sparsity is enforced downstream by Phase 4's mass floor $\varepsilon$ (drop $w(s \mid a) < \varepsilon \cdot w(a)$).
 
-> **Retired from Phase 3**: Dual-Sim query-context blend ($\beta = 0.65$) — query term removed from the gated score ($\beta = 1.0$; $\beta < 1$ kept as an ablation arm); the legacy gate range $\tau_{\text{sim}} \in [0.80, 0.90]$ — too strict for BGE-small, re-anchored to $\tau_{\text{base}} = 0.55$ with a **signed** $\Delta\tau$ (sign calibrated); $C_{\text{exp}}$ top-2 count cap — removed (gate-only, no count/mass cap); Stem-Diversity Gate — obsolete (stem-keyed pool).
+> **Retired from Phase 3**: Dual-Sim query-context blend ($\beta = 0.65$) — query term removed from the gated score ($\beta = 1.0$; $\beta < 1$ kept as an ablation arm); the legacy gate range $\tau_{\text{sim}} \in [0.80, 0.90]$ — too strict for BGE-small, re-anchored to $\tau_{\text{base}} = 0.55$ with a **signed** $\Delta\tau$ (sign calibrated); $C_{\text{exp}}$ top-2 count cap — removed (no count cap; sparsity via the Phase-4 mass floor $\varepsilon$); Stem-Diversity Gate — obsolete (stem-keyed pool).
 
 #### 2. Phase 3 Parameter Defaults & Calibration
 | Parameter | Default Value | Mathematical & Operational Rationale |
 | :--- | :---: | :--- |
 | **$\beta$ (query-context blend)** | **$1.0$** | Pure anchor-sim; query term retired from the gate ($\beta < 1$ is an ablation arm, not the default). |
 | **$\tau_{\text{sim}}(a)$ (Adaptive Similarity Gate)** | **$\tau_{\text{base}} = 0.55,\ \Delta\tau = 0$ (calibrate)** | $\Delta\tau = 0$ = no-adaptivity default (hold-fixed); the **sign** of $\Delta\tau$ (looser vs stricter for rare anchors) is the open question — sweep both signs jointly with $\beta$. |
-| **$C_{\text{exp}}$ (Synonym Count Cap)** | **removed** | Count cap → gate-only (IT-MPE bounds mass, not count; the Phase-3 gate is the sole filter). |
+| **$C_{\text{exp}}$ (Synonym Count Cap)** | **removed** | Count cap → Phase-4 mass floor $\varepsilon$ (IT-MPE bounds mass, not count). |
 
-> **Ablation axes (to be specified as a spec):** $\beta \in \{0, 0.5, 0.65, 1.0\}$; gate variant $\in \{\text{adaptive single gate},\ \text{two-gate (anchor then query)},\ \text{gate + soft reweight}\}$; signed adaptivity $\Delta\tau \in \{-0.25, -0.20, -0.15, -0.10, -0.05, 0, +0.05, +0.10, +0.15, +0.20, +0.25\}$ (step 0.05; sign $\Rightarrow$ looser/stricter for rare anchors, $\tau_{\text{base}} = 0.55$ fixed) — all jointly, reporting `starved_aspects` + Strict@10 + DocRec@10. *(The count cap is not an ablation axis: $C_{\text{exp}}$ is retired, with no count/mass floor — the Phase-3 gate is the sole filter, and sparsity is guarded by $\tau_{\text{sim}}$ + the Phase-5 latency budget.)*
+> **Ablation axes (to be specified as a spec):** $\beta \in \{0, 0.5, 0.65, 1.0\}$; gate variant $\in \{\text{adaptive single gate},\ \text{two-gate (anchor then query)},\ \text{gate + soft reweight}\}$; signed adaptivity $\Delta\tau \in \{-0.25, -0.20, -0.15, -0.10, -0.05, 0, +0.05, +0.10, +0.15, +0.20, +0.25\}$ (step 0.05; sign $\Rightarrow$ looser/stricter for rare anchors, $\tau_{\text{base}} = 0.55$ fixed) — all jointly, reporting `starved_aspects` + Strict@10 + DocRec@10. *(The count cap is not an ablation axis: $C_{\text{exp}}$ is retired; sparsity is guarded by the Phase-4 mass floor $\varepsilon$ + the Phase-5 latency budget.)*
 
 * **Output Artifacts:** Per-anchor candidate sets $\{v : \text{CosSim}(\mathbf{e}_a, \mathbf{e}_v) \ge \tau_{\text{sim}}(a)\}$ with their similarity scores, forwarded to Phase 4 untruncated (no $C_{\text{exp}}$ cap).
 
@@ -163,7 +163,7 @@ graph TD
 ### Phase 4: IT-MPE Mass Allocation & Vector Compilation (Expansion Weighting)
 * **Module Owner:** `src/pipeline_v2/expansion/` (`bm25_dense_aspect_extractor.py`)
 * **Role:** Assigns continuous float weights to **cross-root semantic synonyms** under the Information-Theoretic Mass-Preserving Expansion (IT-MPE) Theorem, strictly preventing rare-synonym score hijacking.
-* **Design decisions (this revision):** allocation is **normalized cosine** (linear, theory-§4.2-aligned) — the temperature-scaled softmax is retired; the **mass floor is removed** (the Phase-3 gate is the sole filter); the budget parameters $\mu_{\text{ceil}}$ (scale) and $\eta$ (direction) are **both calibrated** (free parameters, no privileged value — theory $\mu \in (0,1]$).
+* **Design decisions (this revision):** allocation is **normalized cosine** (linear, theory-§4.2-aligned) — the temperature-scaled softmax is retired; the **mass floor $\varepsilon$ is restored** (a theory-aligned sparsity control, calibrated); the budget parameters $\mu_{\text{ceil}}$ (scale) and $\eta$ (direction) are **both calibrated** (free parameters, no privileged value — theory $\mu \in (0,1]$).
 
 #### 1. Finalized Operations for Phase 4
   1. **Query-Level Expansion Budget:**
@@ -176,12 +176,12 @@ graph TD
      $$\text{Damping}(s_k, a) = \min\left(1.0, \ \frac{\text{IDF}(a)}{\text{IDF}(s_k)}\right)$$
   4. **Continuous Expansion Weight:**
      $$w(s_k \mid a) = \mu(Q) \cdot w(a) \cdot \min\left(1.0, \ \frac{\text{IDF}(a)}{\text{IDF}(s_k)}\right) \cdot p(s_k \mid a)$$
-  5. **Sparse Vector Synthesis:** Compiles primary anchors $w(a)$ and synonyms $w(s \mid a)$ into a unified sparse float vector $\vec{w}_Q \in \mathbb{R}^{|V|}$, summing weights when two entries collide on the same term (Lucene boost-summing semantics). No mass floor — the Phase-3 gate is the sole filter, and normalized cosine keeps the tail naturally small.
+  5. **Sparse Vector Synthesis (with mass floor):** Compiles primary anchors $w(a)$ and synonyms $w(s \mid a)$ with $w(s \mid a) \ge \varepsilon \cdot w(a)$ — the mass floor that bounds $|\vec{w}_Q|$ by dropping negligible-mass terms — into a unified sparse float vector $\vec{w}_Q \in \mathbb{R}^{|V|}$, summing weights when two entries collide on the same term (Lucene boost-summing semantics).
 * **Mathematical Invariant (single-tier):**
   $$\sum_{s \in S(a)} w(s \mid a) \le \mu(Q) \cdot w(a)$$
   In score space, each synonym inherits $\min(1, \text{IDF}_a/\text{IDF}_s)$ damping, so no single synonym hit can out-score a single anchor hit. (The bound is *mass-bounded*, not "preserving": damping ≤ 1 means emitted mass is `≤`, not `=`, $\mu \cdot w(a)$.)
 
-> **Retired from Phase 4**: temperature-scaled softmax allocation ($\tau = 0.10$) — replaced by normalized cosine (theory §4.2 implies linear; sharp softmax was an unexplained exponential that hid a top-1 allocation); mass floor $\varepsilon$ — removed (Phase-3 gate is the sole filter; normalized cosine bounds $|w_Q|$ naturally).
+> **Retired from Phase 4**: temperature-scaled softmax allocation ($\tau = 0.10$) — replaced by normalized cosine (theory §4.2 implies linear; sharp softmax was an unexplained exponential that hid a top-1 allocation). *(The count cap $C_{\text{exp}}$ stays retired; the mass floor $\varepsilon$ is a separate, theory-aligned sparsity control — restored, not a count cap.)*
 
 #### 2. Phase 4 Parameter Defaults & Calibration
 | Parameter | Default Value | Mathematical & Operational Rationale |
@@ -189,8 +189,9 @@ graph TD
 | **$\mu_{\text{ceil}}$ (budget ceiling / scale)** | **$0.5$ (calibrate)** | Default = half anchor mass (the hold-fixed value in the $\eta$ sweep); sweep $\mu_{\text{ceil}} \in \{0.25, 0.5, 0.75, 1.0\}$ — $\mu = 1.0$ is the RM3 toolkit-default equivalent ($\lambda = 0.5$). |
 | **$\eta$ (budget direction)** | **$0$ (calibrate, signed)** | Default = flat budget (no rarity modulation, hold-fixed); sweep $\eta \in \{-0.5, 0, +0.5\}$; $\eta < 0$ requires $\mu_{\text{ceil}}(1+|\eta|) \le 1$ (theory $\mu \in (0,1]$). |
 | **allocation** | **normalized cosine** | Theory §4.2 implies linear; softmax retired as default. |
+| **$\varepsilon$ (mass floor)** | **$0$ (calibrate)** | Drop synonyms with $w(s \mid a) < \varepsilon \cdot w(a)$; $\varepsilon = 0$ = pure gate-only (no floor). Sweep $\varepsilon \in \{0, 0.1\%, 0.5\%, 1\%, 2\%, 5\%\}$ of $w(a)$ — bounds $|\vec{w}_Q|$ and Phase-5 latency. |
 
-> **Ablation axes (to be specified as a spec):** allocation $\in \{\text{normalized cosine},\ \text{softmax}(\tau = 1.0),\ \text{softmax}(\tau = 0.1),\ \text{uniform}\}$; budget $\mu_{\text{ceil}} \in \{0.25, 0.5, 0.75, 1.0\}$ and $\eta \in \{-0.5, 0, +0.5\}$ — **staged**: sweep $\eta$ first at fixed $\mu_{\text{ceil}} = 0.5$ (answer the direction), then sweep $\mu_{\text{ceil}}$ at the winning $\eta$ (tune the scale), then a small joint confirmation ($2\text{--}3$ combos) to check for interaction. Respect $\mu_{\text{ceil}}(1+|\eta|) \le 1$. Jointly with Phase 3's $\beta$ / $\Delta\tau$ / gate-variant axes, reporting `starved_aspects` + Strict@10 + DocRec@10.
+> **Ablation axes (to be specified as a spec):** allocation $\in \{\text{normalized cosine},\ \text{softmax}(\tau = 1.0),\ \text{softmax}(\tau = 0.1),\ \text{uniform}\}$; budget $\mu_{\text{ceil}} \in \{0.25, 0.5, 0.75, 1.0\}$ and $\eta \in \{-0.5, 0, +0.5\}$; mass floor $\varepsilon \in \{0, 0.1\%, 0.5\%, 1\%, 2\%, 5\%\}$ of $w(a)$ — **staged**: sweep $\eta$ first at fixed $\mu_{\text{ceil}} = 0.5$ (answer the direction), then $\mu_{\text{ceil}}$ at the winning $\eta$ (tune the scale), then $\varepsilon$ (tune the latency/recall tradeoff), then a small joint confirmation ($2\text{--}3$ combos) to check for interaction. Respect $\mu_{\text{ceil}}(1+|\eta|) \le 1$. Jointly with Phase 3's $\beta$ / $\Delta\tau$ / gate-variant axes, reporting `starved_aspects` + Strict@10 + DocRec@10 + latency.
 
 * **Output Artifacts:** Continuous sparse term weight dictionary $\vec{w}_Q = \{t: w_Q(t)\}$.
 
@@ -200,7 +201,7 @@ graph TD
 * **Module Owner:** `src/pipeline_v2/indexer/` (`bm25_lucene_indexer.py`, `posting_index.py`)
 * **Role:** Evaluates the compiled sparse vector directly over inverted posting lists with sub-15ms CPU latency.
 * **Status:** *(largely implemented already — `InvertedPostingIndex` + `AnalyzedLuceneBM25.retrieve_weighted` exist from parity-plan Stage 2. Remaining work is routing the extractor's $\vec{w}_Q$ through it, not building the index.)*
-* **Design decisions (this revision):** Phase 5 is the **score-space enforcement point** — it consumes $\vec{w}_Q$ verbatim and applies the *same* `CorpusIDFRegistry` IDF as Phase 4's damping (the theorem-critical identity); it is also the **last line of defense** for the `<15ms` budget now that the mass floor is gone.
+* **Design decisions (this revision):** Phase 5 is the **score-space enforcement point** — it consumes $\vec{w}_Q$ verbatim and applies the *same* `CorpusIDFRegistry` IDF as Phase 4's damping (the theorem-critical identity); it is also the **latency backstop** for the `<15ms` budget (guarded by the Phase-4 mass floor $\varepsilon$).
 
 #### 1. Finalized Operations for Phase 5
   1. **Posting-List Traversal:** Traverse inverted posting lists only for active terms $t \in \vec{w}_Q$ — a true posting-list structure (compact `array`-typed doc-id/TF arrays) replaces the legacy O($|Q| \cdot N$) full scan. Cost $\propto \sum_{t \in \vec{w}_Q} |\text{posting}(t)|$.
@@ -220,7 +221,7 @@ graph TD
 | **IDF source** | **`CorpusIDFRegistry.get_idf`** | Must be *identical* to Phase 4's damping (single source of truth, Upgrade 1.7). |
 | **OOV anchor IDF** | **clamp** $\text{IDF}(a)/\text{IDF}_{\text{max\_corpus}} \le 1$ | `docFreq = 0` gives $\text{IDF}(0) = \text{IDF}_{\text{max\_corpus}} + \ln 3$ (above the corpus max); clamp in the $\tau_{\text{sim}}$ and $\mu(Q)$ normalizations to keep them in range. |
 
-> **Cross-phase dependency (latency):** with the mass floor removed (Phase 4), $|\vec{w}_Q|$ is bounded only by the Phase-3 gate. Validate the `<15ms` budget against the *loosest* gate in the $\tau_{\text{sim}}$ / $\Delta\tau$ sweep (e.g. $\tau_{\text{sim}} = 0.30$ at $\Delta\tau < 0$), not just the default.
+> **Cross-phase dependency (latency):** $|\vec{w}_Q|$ is bounded by the Phase-3 gate (quality) and the Phase-4 mass floor $\varepsilon$ (sparsity). Validate the `<15ms` budget against the *loosest* gate and *$\varepsilon = 0$* (pure gate-only), not just the defaults.
 
 * **Output Artifacts:** Ranked list of retrieved candidate chunks `List[Dict[str, Any]]`.
 
@@ -250,7 +251,7 @@ graph TD
 | **Float-Weighted Inverted Posting Accumulator** | **Phase 5** | `retrieve_weighted` consumes $\vec{w}_Q$ directly. *(done)* |
 | **IDF Identity Invariant (scoring ≡ damping IDF)** | **Phase 5** | Phase 5's $\text{IDF}(t)$ must be identical to Phase 4's damping IDF (single source of truth) — theorem-critical; plus OOV clamp $\text{IDF}(a)/\text{IDF}_{\text{max\_corpus}} \le 1$. |
 
-Removed: Stem-Diversified Vocabulary Pool (1.5), `MorphologicalStemRegistry` (1.6), Stem-Diversity Gate, Tier-1 Fold-In + Synonym Closure, Budget Tier-Split ($\eta_{\text{morph}}$) — obsolete under index-time stemming; **frequency salience vocabulary ranking ($\text{IDF} \times \ln(1+\text{DF})$ over $\text{DF}\ge 2$) and the $DF\ge 2$ pool floor** — retired in favor of FPS coverage selection (Upgrade 1.2); **Dual-Sim query-context blend ($\beta = 0.65$), the $[0.80, 0.90]$ gate range, $C_{\text{exp}}$ synonym count cap** — retired in favor of anchor-only gating ($\beta = 1.0$), the re-anchored adaptive gate with signed $\Delta\tau$, and gate-only allocation (no count/mass floor); **temperature-scaled softmax allocation ($\tau = 0.10$) and mass floor $\varepsilon$** — retired in favor of normalized-cosine allocation and gate-only filtering; **Anchor Selection (top-$p$), Query Centrality, extra-IDF anchor scaling, Anchor Dedup (semantic)** — retired (p-sweep + weighting ablation; the analyzer already conjoins variants).
+Removed: Stem-Diversified Vocabulary Pool (1.5), `MorphologicalStemRegistry` (1.6), Stem-Diversity Gate, Tier-1 Fold-In + Synonym Closure, Budget Tier-Split ($\eta_{\text{morph}}$) — obsolete under index-time stemming; **frequency salience vocabulary ranking ($\text{IDF} \times \ln(1+\text{DF})$ over $\text{DF}\ge 2$) and the $DF\ge 2$ pool floor** — retired in favor of FPS coverage selection (Upgrade 1.2); **Dual-Sim query-context blend ($\beta = 0.65$), the $[0.80, 0.90]$ gate range, $C_{\text{exp}}$ synonym count cap** — retired in favor of anchor-only gating ($\beta = 1.0$), the re-anchored adaptive gate with signed $\Delta\tau$, and gate-only allocation (mass floor $\varepsilon$ in Phase 4, no count cap); **temperature-scaled softmax allocation ($\tau = 0.10$)** — retired in favor of normalized-cosine allocation; **Anchor Selection (top-$p$), Query Centrality, extra-IDF anchor scaling, Anchor Dedup (semantic)** — retired (p-sweep + weighting ablation; the analyzer already conjoins variants).
 
 ---
 
@@ -300,12 +301,14 @@ Phases 1 & 3 at winning config. Sweep:
 | **η (budget direction, signed)** | `{-0.5, 0, +0.5}` |
 | **μ_ceil (budget scale)** | `{0.25, 0.5, 0.75, 1.0}` |
 | **allocation** | `{normalized cosine, softmax(τ=1.0), softmax(τ=0.1), uniform}` |
+| **ε (mass floor)** | `{0, 0.1%, 0.5%, 1%, 2%, 5%}` of `w(a)` |
 
 **Staged (separate, then a small joint check):**
 1. `η` at fixed `μ_ceil = 0.5` — answer the direction (rarer query → more / less / flat budget).
 2. `μ_ceil` at the winning `η` — tune the scale.
-3. `allocation` at the winning `(η, μ_ceil)` — confirm the theory-§4.2 normalized-cosine default.
-4. 2–3 joint `η` × `μ_ceil` combos — check for interaction.
+3. `ε` at the winning `(η, μ_ceil)` — tune the latency/recall tradeoff (`0` = pure gate-only).
+4. `allocation` at the winning `(η, μ_ceil, ε)` — confirm the theory-§4.2 normalized-cosine default.
+5. 2–3 joint combos — check for interaction.
 
 Respect `μ_ceil(1+|η|) ≤ 1` (theory `μ ∈ (0,1]`) — e.g. `η = -0.5 ⇒ μ_ceil ≤ 0.67`.
 
@@ -322,7 +325,7 @@ Respect `μ_ceil(1+|η|) ≤ 1` (theory `μ ∈ (0,1]`) — e.g. `η = -0.5 ⇒ 
 3. **[`src/pipeline_v2/indexer/posting_index.py`](src/pipeline_v2/indexer/posting_index.py)** *(already created):* compact posting lists + weighted top-K retrieval (Phase 5).
 4. **[`src/pipeline_v2/indexer/corpus_vocab_builder.py`](src/pipeline_v2/indexer/corpus_vocab_builder.py):** analyzer-parity wiring (build pool from analyzed tokens); FPS coverage selection over the full stem vocab; cache the full embedding matrix (pool + bailout assessment store).
 5. **[`src/pipeline_v2/indexer/dense_vocab_matrix.py`](src/pipeline_v2/indexer/dense_vocab_matrix.py):** Phase 1 & 3 batch tensor projection $\mathbf{E}_A \cdot \mathbf{V}^\top$; serve the runtime $N_{\text{vocab}}$ rows and expose the cached full matrix for bailout assessment lookups.
-6. **[`src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py`](src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py):** Phase 2 anchor weighting + stem dedup; Phase 3 adaptive $\tau_{\text{sim}}(a)$ anchor-first gating (no $C_{\text{exp}}$); Phase 4 single-tier IT-MPE compilation (normalized-cosine allocation, no mass floor).
+6. **[`src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py`](src/pipeline_v2/expansion/bm25_dense_aspect_extractor.py):** Phase 2 anchor weighting + stem dedup; Phase 3 adaptive $\tau_{\text{sim}}(a)$ anchor-first gating (no $C_{\text{exp}}$); Phase 4 single-tier IT-MPE compilation (normalized-cosine allocation + mass floor $\varepsilon$).
 7. **[`src/pipeline_v2/indexer/bm25_lucene_indexer.py`](src/pipeline_v2/indexer/bm25_lucene_indexer.py):** Phase 5 `retrieve_weighted` over the posting index; `mode: legacy | parity` switch.
 8. **[`src/pipeline_v2/indexer/corpus_idf_registry.py`](src/pipeline_v2/indexer/corpus_idf_registry.py):** consume analyzed DF tables (single source of truth).
 9. **[`configs/pipeline_v2.yaml`](configs/pipeline_v2.yaml):** authoritative single-source-of-truth configuration for 5-phase parameters (`stemmer: kstem`, `use_wordnet_override: true`, `indexer.mode`, `vocab_selection: coverage | idf | salience | random`, `vocab_size`, `vocab_frac`). **Drop** `eta_morph`, `k_morph`, `morph_fold_synonyms`.
