@@ -7,6 +7,7 @@ and Phase 4 (IT-MPE Mass Allocation & Sparse Vector Compilation).
 """
 
 import re
+import time
 from typing import List, Dict, Any, Optional, Set, Tuple
 import torch
 import numpy as np
@@ -94,7 +95,9 @@ class V7AspectExtractor:
         eta: float = 0.0,
         pos_ratios: Optional[Dict[str, float]] = None,
         bailout_tau_idf: float = 3.0,
-        min_len_rescue: int = 3
+        min_len_rescue: int = 3,
+        mass_floor: float = 0.0,
+        epsilon: Optional[float] = None
     ):
         self.idf_registry = idf_registry
         self.vocab_matrix = vocab_matrix
@@ -107,6 +110,7 @@ class V7AspectExtractor:
         self.pos_ratios = pos_ratios if pos_ratios is not None else {"noun": 1.0, "verb": 0.75, "modifier": 0.60}
         self.bailout_tau_idf = bailout_tau_idf
         self.min_len_rescue = min_len_rescue
+        self.mass_floor = float(epsilon) if epsilon is not None else float(mass_floor)
         self.pos_tagger = POSTaggerHelper()
         self.vocab_idfs_np = np.array(
             [self.idf_registry.get_idf(t) for t in self.vocab_matrix.vocab_terms],
@@ -139,6 +143,7 @@ class V7AspectExtractor:
             }
         """
         # --- PHASE 2: Anchored Aspect Groups & POS Prior Weighting ---
+        t_p2_0 = time.perf_counter()
         heuristic_entities = self.extract_heuristics(query)
         heur_set = set(h.lower() for h in heuristic_entities)
 
@@ -171,6 +176,7 @@ class V7AspectExtractor:
 
         # Batch encode all query anchors in a single FlagEmbedding call (1-Pass GEMM)
         anchor_vecs = self.vocab_matrix.encode_terms(distinct_anchors)  # [N_anchors, 384]
+        t_p2_anchor = time.perf_counter()
 
         # 5. Anchor Bailout (O(1) Pre-Indexed Candidate Lookup & Semantic Assessment)
         bailed_candidates_per_anchor: Dict[str, List[Dict[str, Any]]] = {a: [] for a in distinct_anchors}
@@ -210,6 +216,7 @@ class V7AspectExtractor:
                                 "weight": round(damped_w, 4)
                             })
                             total_bailed += 1
+        t_p2_bail = time.perf_counter()
 
         # --- PHASE 3: Dense Semantic Probing & Adaptive Gating ---
         if self.vocab_matrix.vocab_embeddings is not None and self.vocab_matrix.vocab_embeddings.numel() > 0 and anchor_vecs.numel() > 0:
@@ -221,6 +228,7 @@ class V7AspectExtractor:
             sim_matrix_np = sim_matrix.cpu().numpy()
         else:
             sim_matrix_np = np.empty((len(distinct_anchors), 0))
+        t_p3_prob = time.perf_counter()
 
         # --- PHASE 4: IT-MPE Mass Allocation & Sparse Vector Compilation ---
         anchor_idfs = [self.idf_registry.get_idf(a) for a in distinct_anchors]
@@ -285,6 +293,11 @@ class V7AspectExtractor:
                         # Score-space damping: min(1.0, IDF_a / IDF_s)
                         score_damping = min(1.0, anchor_idf / max(cand_idf, 1e-6))
                         w_syn = anchor_base_weights[a] * score_damping * (mu_q * p_cond)
+
+                        # Mass floor: drop synonyms with w(s | a) < epsilon * w(a)
+                        if self.mass_floor > 0.0 and w_syn < (self.mass_floor * anchor_base_weights[a]):
+                            continue
+
                         synonym_entries.append({
                             "term": cand,
                             "similarity": round(sim_val, 4),
@@ -305,6 +318,7 @@ class V7AspectExtractor:
             }
             aspects.append(aspect_data)
             aspect_traces.append(aspect_data)
+        t_p4_end = time.perf_counter()
 
         # Build augmented token list for logging/backwards compatibility
         aug_tokens = []
@@ -325,6 +339,13 @@ class V7AspectExtractor:
                 "starved_aspects_count": starved_aspects,
                 "expansion_budget_mu": float(mu_q),
                 "qaug_length": len(aug_tokens),
-                "aspect_traces": aspect_traces
-            }
+                "timings_ms": {
+                    "anchor_encoding": round((t_p2_anchor - t_p2_0) * 1000, 3),
+                    "boundary_bailout": round((t_p2_bail - t_p2_anchor) * 1000, 3),
+                    "batch_gemm_probing": round((t_p3_prob - t_p2_bail) * 1000, 3),
+                    "itmpe_allocation": round((t_p4_end - t_p3_prob) * 1000, 3),
+                    "total_expansion": round((t_p4_end - t_p2_0) * 1000, 3)
+                }
+            },
+            "aspect_traces": aspect_traces
         }

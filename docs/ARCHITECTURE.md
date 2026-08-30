@@ -142,21 +142,52 @@ src/pipeline_v2/
 
 ## 4. Empirical Performance Benchmarks (10 Document-Level Corpora)
 
-*Evaluation across 10 official document-level benchmark datasets with un-chunked full documents:*
+*Evaluation across 10 official document-level benchmark datasets with un-chunked full documents ($\varepsilon = 0.0$ pure gate-only):*
 
+### 4.1 Primary Retrieval & Accuracy Summary
 | Benchmark Dataset | Total Docs | TTI Setup (s) | Strict@10 | DocRec@10 | Mean Query Latency | Postings Retrieval |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `beir_nfcorpus_doc_level` | 3,633 | **2.75 s** | **0.6000** | 0.2250 | **16.73 ms** | 0.48 ms |
-| `beir_scifact_doc_level` | 5,183 | **3.12 s** | **0.8000** | 0.8000 | **18.14 ms** | 0.80 ms |
-| `financebench_doc_level` | 2,168 | **2.46 s** | **0.4000** | 0.2667 | **18.67 ms** | 1.00 ms |
-| `liverag_doc_level` | 970 | **4.02 s** | **1.0000** | 1.0000 | **18.95 ms** | 1.56 ms |
-| `beir_fiqa_doc_level` | 57,600 | **7.91 s** | **0.6000** | 0.3500 | **19.28 ms** | 2.23 ms |
-| `multihop_rag_doc_level` | 609 | **3.69 s** | **0.4000** | 0.3333 | **21.45 ms** | 2.04 ms |
-| `enterpriserag_doc_level` | 1,722 | **8.27 s** | **1.0000** | 1.0000 | **28.21 ms** | 1.82 ms |
-| `bright_stackoverflow_doc_level` | 107,081 | **16.67 s** | **0.2000** | 0.1000 | **30.36 ms** | 5.66 ms |
-| `bright_robotics_doc_level` | 61,961 | **4.36 s** | **0.2000** | 0.0500 | **56.67 ms** | 6.48 ms |
-| `bright_economics_doc_level` | 50,220 | **4.82 s** | **0.0000** | 0.0000 | **63.43 ms** | 4.20 ms |
-| **Global Macro Average** | — | **`5.81 s`** | **`0.5200`** | **`0.4125`** | **`29.19 ms`** | **`2.64 ms`** |
+| `enterpriserag_doc_level` | 1,722 | **13.12 s** | **0.8000** | **0.8000** | **75.67 ms** | 13.26 ms |
+| `liverag_doc_level` | 970 | **8.18 s** | **1.0000** | **1.0000** | **34.95 ms** | 8.59 ms |
+| `beir_scifact_doc_level` | 5,183 | **8.05 s** | **0.8000** | **0.8000** | **36.67 ms** | 10.56 ms |
+| `beir_nfcorpus_doc_level` | 3,633 | **5.60 s** | **0.6000** | **0.2283** | **26.08 ms** | 5.93 ms |
+| `beir_fiqa_doc_level` | 57,600 | **23.76 s** | **0.8000** | **0.4167** | **30.81 ms** | 8.26 ms |
+| `multihop_rag_doc_level` | 609 | **6.77 s** | **0.4000** | **0.3333** | **54.81 ms** | 11.05 ms |
+| `financebench_doc_level` | 2,168 | **3.36 s** | **0.4000** | **0.2667** | **57.97 ms** | 12.82 ms |
+| `bright_economics_doc_level` | 50,220 | **19.11 s** | **0.0000** | **0.0000** | **71.72 ms** | 19.91 ms |
+| `bright_stackoverflow_doc_level` | 107,081 | **40.08 s** | **0.2000** | **0.1000** | **102.27 ms** | 25.52 ms |
+| `bright_robotics_doc_level` | 61,961 | **17.30 s** | **0.4000** | **0.2500** | **241.30 ms** | 38.89 ms |
+| **Global Macro Average** | — | **`14.54 s`** | **`0.5400`** | **`0.4195`** | **`73.22 ms`** | **`15.48 ms`** |
+
+### 4.2 Detailed Index-Time (TTI) Breakdown
+| Benchmark Dataset | BM25 Index Build | Surface-Form Scan | BGE FPS Hub Embedding | Total TTI Setup |
+| :--- | :---: | :---: | :---: | :---: |
+| `enterpriserag_doc_level` | 2.195 s | 2.952 s | 7.971 s | **13.119 s** |
+| `liverag_doc_level` | 1.784 s | 2.226 s | 4.168 s | **8.179 s** |
+| `beir_scifact_doc_level` | 1.901 s | 2.270 s | 3.885 s | **8.055 s** |
+| `beir_nfcorpus_doc_level` | 1.455 s | 1.734 s | 2.415 s | **5.604 s** |
+| `beir_fiqa_doc_level` | 11.603 s | 1.278 s | 10.880 s | **23.762 s** |
+| `multihop_rag_doc_level` | 1.683 s | 2.087 s | 3.004 s | **6.774 s** |
+| `financebench_doc_level` | 0.949 s | 1.294 s | 1.116 s | **3.359 s** |
+| `bright_economics_doc_level` | 4.580 s | 0.629 s | 13.903 s | **19.113 s** |
+| `bright_stackoverflow_doc_level` | 20.241 s | 1.435 s | 18.408 s | **40.084 s** |
+| `bright_robotics_doc_level` | 3.137 s | 0.419 s | 13.749 s | **17.305 s** |
+| **Macro Average** | **4.953 s** | **1.632 s** | **7.950 s** | **14.535 s** |
+
+### 4.3 Detailed Query-Time Latency Breakdown
+| Benchmark Dataset | Anchor Encoding | Boundary Bailout | Batch GEMM Probing | IT-MPE Mass Alloc | Postings Retrieval | Total Latency |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `enterpriserag_doc_level` | 29.57 ms | 0.82 ms | 1.55 ms | 29.15 ms | 13.26 ms | **75.67 ms** |
+| `liverag_doc_level` | 16.38 ms | 0.06 ms | 0.46 ms | 8.89 ms | 8.59 ms | **34.95 ms** |
+| `beir_scifact_doc_level` | 16.08 ms | 0.14 ms | 0.29 ms | 9.01 ms | 10.56 ms | **36.67 ms** |
+| `beir_nfcorpus_doc_level` | 16.59 ms | 0.09 ms | 0.29 ms | 2.81 ms | 5.93 ms | **26.08 ms** |
+| `beir_fiqa_doc_level` | 15.15 ms | 0.80 ms | 0.20 ms | 6.09 ms | 8.26 ms | **30.81 ms** |
+| `multihop_rag_doc_level` | 17.12 ms | 0.06 ms | 0.50 ms | 24.64 ms | 11.05 ms | **54.81 ms** |
+| `financebench_doc_level` | 16.81 ms | 0.08 ms | 0.33 ms | 26.24 ms | 12.82 ms | **57.97 ms** |
+| `bright_economics_doc_level` | 18.49 ms | 6.56 ms | 0.48 ms | 24.52 ms | 19.91 ms | **71.72 ms** |
+| `bright_stackoverflow_doc_level` | 20.43 ms | 7.39 ms | 0.49 ms | 45.22 ms | 25.52 ms | **102.27 ms** |
+| `bright_robotics_doc_level` | 35.24 ms | 19.98 ms | 0.95 ms | 131.99 ms | 38.89 ms | **241.30 ms** |
+| **Macro Average** | **20.19 ms** | **3.60 ms** | **0.55 ms** | **30.86 ms** | **15.48 ms** | **73.22 ms** |
 
 ---
 
@@ -173,6 +204,7 @@ pipeline_v2:
     beta: 1.00                       # Probing similarity mixture (1.0 = 100% Anchor)
     mu_ceil: 0.50                    # Maximum query expansion budget ceiling
     eta: 0.00                        # Query specificity damping parameter
+    mass_floor: 0.00                 # Mass floor epsilon fraction of w(a) (default: 0.0 = pure gate-only)
     pos_ratios:
       noun: 1.00                     # Noun & technical entity prior weight
       verb: 0.75                     # Action verb prior weight

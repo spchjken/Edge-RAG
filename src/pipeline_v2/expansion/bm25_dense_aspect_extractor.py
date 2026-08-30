@@ -40,6 +40,8 @@ class BM25DenseAspectExtractor:
         pos_ratios: Optional[Dict[str, float]] = None,
         bailout_tau_idf: float = 3.0,
         min_len_rescue: int = 3,
+        mass_floor: float = 0.0,
+        epsilon: Optional[float] = None,
         analyzer: Optional[EdgeRAGAnalyzer] = None
     ):
         self.idf_registry = idf_registry
@@ -60,6 +62,7 @@ class BM25DenseAspectExtractor:
         self.pos_ratios = pos_ratios if pos_ratios is not None else {"noun": 1.0, "verb": 0.75, "modifier": 0.60}
         self.bailout_tau_idf = bailout_tau_idf
         self.min_len_rescue = min_len_rescue
+        self.mass_floor = float(epsilon) if epsilon is not None else float(mass_floor)
         self.analyzer = analyzer if analyzer is not None else EdgeRAGAnalyzer()
         self.pos_tagger = POSTaggerHelper()
 
@@ -75,7 +78,8 @@ class BM25DenseAspectExtractor:
             eta=self.eta,
             pos_ratios=self.pos_ratios,
             bailout_tau_idf=self.bailout_tau_idf,
-            min_len_rescue=self.min_len_rescue
+            min_len_rescue=self.min_len_rescue,
+            mass_floor=self.mass_floor
         )
 
     @classmethod
@@ -104,7 +108,7 @@ class BM25DenseAspectExtractor:
         valid_keys = {
             "schema", "p", "C_exp", "tau_sim", "beta", "c", "r_min", "r_max", "n_reps",
             "tau_base", "delta_tau", "mu_ceil", "eta", "pos_ratios", "bailout_tau_idf",
-            "min_len_rescue"
+            "min_len_rescue", "mass_floor", "epsilon"
         }
         filtered_kwargs = {k: v for k, v in merged_kwargs.items() if k in valid_keys}
 

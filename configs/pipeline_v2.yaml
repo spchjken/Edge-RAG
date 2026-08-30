@@ -20,6 +20,7 @@ pipeline_v2:
     beta: 1.0                        # Pure anchor-candidate similarity (1.0 = anchor-only, <1.0 = Dual-Sim)
     mu_ceil: 0.50                    # Query-level IT-MPE expansion budget ceiling (default: 0.50)
     eta: 0.0                         # IT-MPE budget direction (default: 0.0)
+    mass_floor: 0.0                  # Mass floor epsilon (default: 0.0 = pure gate-only; drops w(s|a) < epsilon * w(a))
     bailout_tau_idf: 3.0             # Anchor IDF threshold for triggering not-in-pool candidate bailout
     min_len_rescue: 3                # Minimum anchor length for bailout candidate generation
     bge_model_name: "BAAI/bge-small-en-v1.5"
