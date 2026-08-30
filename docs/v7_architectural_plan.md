@@ -137,7 +137,7 @@ graph TD
      $$\mathbf{S} = \mathbf{E}_A \cdot \mathbf{V}^\top \in \mathbb{R}^{|A| \times N_{\text{vocab}}} \quad (\approx 1.2\text{ms};\ O(|A| \cdot N_{\text{vocab}} \cdot d))$$
   2. **Anchor-Candidate Similarity ($\beta = 1.0$):** the gated quantity is the **pure cosine** $\text{CosSim}(\mathbf{e}_a, \mathbf{e}_v)$. The query-context blend (Dual-Sim, $\beta < 1$) is **retired as the default** — the global-query term contaminates per-anchor synonymy, and $\beta = 0.65$ was never ablated. Query context survives only as an ablation arm: $\beta \in \{0, 0.5, 0.65, 1.0\}$, a second hard gate, or a post-gate soft reweight.
   3. **Adaptive Similarity Quality Gate (IDF-scaled, anchor-first):** keep $v$ iff $\text{CosSim}(\mathbf{e}_a, \mathbf{e}_v) \ge \tau_{\text{sim}}(a)$, where
-     $$\tau_{\text{sim}}(a) = \tau_{\text{base}} + \Delta\tau \cdot \left(\frac{\text{IDF}(a)}{\text{IDF}_{\text{max\_corpus}}}\right), \quad \tau_{\text{base}} = 0.55,\ \Delta\tau \text{ signed (calibrated)}$$
+     $$\tau_{\text{sim}}(a) = \tau_{\text{base}} + \Delta\tau \cdot \left(\frac{\text{IDF}(a)}{\text{IDF}_{\text{max\_corpus}}}\right), \quad \tau_{\text{base}} = 0.55,\ \Delta\tau = 0\ (\text{default; sign calibrated})$$
      **The sign of $\Delta\tau$ is an open empirical question — not a settled fact.** Two competing mechanisms, neither proven:
      - **$\Delta\tau > 0$ (rarer → stricter):** a rare specific anchor has a tight synonym space, so only near-identical terms qualify; a loose synonym on a specific term is precision poison.
      - **$\Delta\tau < 0$ (rarer → looser):** rare anchors are where lexical matching is weakest, so they most need expansion; a strict gate starves them.
@@ -151,7 +151,7 @@ graph TD
 | Parameter | Default Value | Mathematical & Operational Rationale |
 | :--- | :---: | :--- |
 | **$\beta$ (query-context blend)** | **$1.0$** | Pure anchor-sim; query term retired from the gate ($\beta < 1$ is an ablation arm, not the default). |
-| **$\tau_{\text{sim}}(a)$ (Adaptive Similarity Gate)** | **$\tau_{\text{base}} = 0.55,\ \Delta\tau$ signed (calibrate)** | Fixed base threshold; the **sign** of $\Delta\tau$ (looser vs stricter for rare anchors) is the open question — sweep both signs jointly with $\beta$. |
+| **$\tau_{\text{sim}}(a)$ (Adaptive Similarity Gate)** | **$\tau_{\text{base}} = 0.55,\ \Delta\tau = 0$ (calibrate)** | $\Delta\tau = 0$ = no-adaptivity default (hold-fixed); the **sign** of $\Delta\tau$ (looser vs stricter for rare anchors) is the open question — sweep both signs jointly with $\beta$. |
 | **$C_{\text{exp}}$ (Synonym Count Cap)** | **removed** | Count cap → gate-only (IT-MPE bounds mass, not count; the Phase-3 gate is the sole filter). |
 
 > **Ablation axes (to be specified as a spec):** $\beta \in \{0, 0.5, 0.65, 1.0\}$; gate variant $\in \{\text{adaptive single gate},\ \text{two-gate (anchor then query)},\ \text{gate + soft reweight}\}$; signed adaptivity $\Delta\tau \in \{-0.25, -0.20, -0.15, -0.10, -0.05, 0, +0.05, +0.10, +0.15, +0.20, +0.25\}$ (step 0.05; sign $\Rightarrow$ looser/stricter for rare anchors, $\tau_{\text{base}} = 0.55$ fixed) — all jointly, reporting `starved_aspects` + Strict@10 + DocRec@10. *(The count cap is not an ablation axis: $C_{\text{exp}}$ is retired, with no count/mass floor — the Phase-3 gate is the sole filter, and sparsity is guarded by $\tau_{\text{sim}}$ + the Phase-5 latency budget.)*
@@ -167,7 +167,7 @@ graph TD
 
 #### 1. Finalized Operations for Phase 4
   1. **Query-Level Expansion Budget:**
-     $$\mu(Q) = \mu_{\text{ceil}} \cdot \left(1 - \eta \cdot \frac{\max_{t \in Q} \text{IDF}(t)}{\text{IDF}_{\text{max\_corpus}}}\right), \quad \mu_{\text{ceil}} \in (0,1]\ (\text{calibrate}),\ \eta \in [-0.5, 0.5]\ (\text{calibrate, signed})$$
+     $$\mu(Q) = \mu_{\text{ceil}} \cdot \left(1 - \eta \cdot \frac{\max_{t \in Q} \text{IDF}(t)}{\text{IDF}_{\text{max\_corpus}}}\right), \quad \mu_{\text{ceil}} = 0.5\ (\text{default; calibrated}),\ \eta = 0\ (\text{default; signed, calibrated})$$
      Both parameters are **free** (theory $\mu \in (0,1]$; no privileged value). $\mu_{\text{ceil}}$ sets the budget *scale* at $\max\text{IDF} = 0$; $\eta$ sets the *direction/shape*: $\eta > 0$ = rarer query → smaller budget, $\eta < 0$ = rarer query → larger budget, $\eta = 0$ = flat. (Mirrors, but is distinct from, Phase 3's $\Delta\tau$ sign.) Constraint: $\mu(Q) \le 1$ requires $\mu_{\text{ceil}} \cdot (1 + |\eta|) \le 1$ — so $\eta < 0$ limits $\mu_{\text{ceil}}$ (e.g. $\eta = -0.5 \Rightarrow \mu_{\text{ceil}} \le 0.67$).
   2. **Allocation Distribution (normalized cosine):**
      $$p(s_k \mid a) = \frac{\text{CosSim}(\mathbf{e}_{s_k}, \mathbf{e}_a)}{\sum_{j=1}^{K} \text{CosSim}(\mathbf{e}_{s_j}, \mathbf{e}_a)}$$
@@ -186,8 +186,8 @@ graph TD
 #### 2. Phase 4 Parameter Defaults & Calibration
 | Parameter | Default Value | Mathematical & Operational Rationale |
 | :--- | :---: | :--- |
-| **$\mu_{\text{ceil}}$ (budget ceiling / scale)** | **calibrate** | Free parameter (no privileged value); sweep $\mu_{\text{ceil}} \in \{0.25, 0.5, 0.75, 1.0\}$ — $\mu = 1.0$ is the RM3 toolkit-default equivalent ($\lambda = 0.5$). |
-| **$\eta$ (budget direction)** | **calibrate (signed)** | Rarer query → smaller budget is unproven; sweep $\eta \in \{-0.5, 0, +0.5\}$; $\eta < 0$ requires $\mu_{\text{ceil}}(1+|\eta|) \le 1$ (theory $\mu \in (0,1]$). |
+| **$\mu_{\text{ceil}}$ (budget ceiling / scale)** | **$0.5$ (calibrate)** | Default = half anchor mass (the hold-fixed value in the $\eta$ sweep); sweep $\mu_{\text{ceil}} \in \{0.25, 0.5, 0.75, 1.0\}$ — $\mu = 1.0$ is the RM3 toolkit-default equivalent ($\lambda = 0.5$). |
+| **$\eta$ (budget direction)** | **$0$ (calibrate, signed)** | Default = flat budget (no rarity modulation, hold-fixed); sweep $\eta \in \{-0.5, 0, +0.5\}$; $\eta < 0$ requires $\mu_{\text{ceil}}(1+|\eta|) \le 1$ (theory $\mu \in (0,1]$). |
 | **allocation** | **normalized cosine** | Theory §4.2 implies linear; softmax retired as default. |
 
 > **Ablation axes (to be specified as a spec):** allocation $\in \{\text{normalized cosine},\ \text{softmax}(\tau = 1.0),\ \text{softmax}(\tau = 0.1),\ \text{uniform}\}$; budget $\mu_{\text{ceil}} \in \{0.25, 0.5, 0.75, 1.0\}$ and $\eta \in \{-0.5, 0, +0.5\}$ — **staged**: sweep $\eta$ first at fixed $\mu_{\text{ceil}} = 0.5$ (answer the direction), then sweep $\mu_{\text{ceil}}$ at the winning $\eta$ (tune the scale), then a small joint confirmation ($2\text{--}3$ combos) to check for interaction. Respect $\mu_{\text{ceil}}(1+|\eta|) \le 1$. Jointly with Phase 3's $\beta$ / $\Delta\tau$ / gate-variant axes, reporting `starved_aspects` + Strict@10 + DocRec@10.
