@@ -255,66 +255,16 @@ Removed: Stem-Diversified Vocabulary Pool (1.5), `MorphologicalStemRegistry` (1.
 
 ---
 
-## 4. Detailed Calibration Plan
+## 4. Calibration Plan (summary)
 
-The V7 architecture fixes the structure; the calibration plan fixes the free parameters. All calibration is staged **phase-by-phase** (Phase 1 → Phase 3 → Phase 4), holding earlier phases at their winning config. Phase 2 and Phase 5 carry no calibration burden (Phase 2's POS priors and bailout gate are already calibrated; Phase 5's BM25 is frozen).
+The full runbook — decision rules, success gates, harness contract, and the staged sweep grids — lives in [`v7_calibration_plan.md`](v7_calibration_plan.md). Summary:
 
-### 4.1 Measurement Harness (frozen controls + harness)
+- **Harness:** the p-sweep convention — 10 benchmarks, the p-sweep metric set, `trace_<dataset>_<model>.json` files; frozen control = `AnalyzedLuceneBM25`.
+- **Order:** Stage 0 stem census → Stage 1 pool (selection × `N`) → Stage 2 gate (`Δτ` sign → `β` → variant) → Stage 3 budget (`η` → `μ_ceil` → `ε` → allocation) → joint confirmation → freeze.
+- **Defaults (hold-fixed neutrals):** coverage/FPS, `N = 2500`, `Δτ = 0`, `β = 1.0`, `η = 0`, `μ_ceil = 0.5`, `ε = 0`, normalized cosine; fixed `τ_base = 0.55`, `k1 = 1.2`, `b = 0.75`.
+- **Success gates:** macro-avg `Strict@10` ≥ analyzed-parity on ≥ 8/10; `DocRec@10` > analyzed-parity on ≥ 7/10; p50 retrieval ≤ 15ms; no single-benchmark domination.
 
-- **Frozen controls (integrity rules):** `AnalyzedLuceneBM25` is the **primary control** — all V7 gains are measured against it, *never* the legacy baseline. `LuceneBM25Baseline`, `BM25Baseline`, `BM25_stemmed`, and v1/v5/v6 are measurement controls, **untouched — no backport**. Analyzed scores live in a separate avgdl/DF space and are never mixed with legacy numbers.
-- **Benchmarks, metrics & trace files:** follow the [`results/p_sweep_ablation/`](results/p_sweep_ablation/p_sweep_summary.md) convention — its **10 benchmarks** (`beir_fiqa_doc_level`, `beir_nfcorpus_doc_level`, `beir_scifact_doc_level`, `bright_economics_doc_level`, `bright_robotics_doc_level`, `bright_stackoverflow_doc_level`, `enterpriserag_doc_level`, `financebench_doc_level`, `liverag_doc_level`, `multihop_rag_doc_level`), its metric set and trace files reuse the same harness that produced the p-sweep.
-
-
-### 4.2 Stage 0 — Stem census (prerequisite, not an ablation)
-
-One line: `len(idf_registry.doc_freqs)` after the 1.7a analyzer wiring = `#distinct stems`. This bounds the "embed all" cost, the pool-size sweep, and the `%`-scaling range. Run once per benchmark before Stage 1.
-
-### 4.3 Stage 1 — Phase 1 pool: selection × size
-
-Hold Phases 2–4 at defaults. Sweep:
-
-| Axis | Values |
-| :--- | :--- |
-| **selection** | `{coverage/FPS, pure IDF, salience, random}` |
-| **pool size N** | `{500, 1000, 2500, 5000}` and `{5%, 10%}` of stems |
-
-Each selection runs **cleanly over the full stem vocab** (no `[:2500]`-by-DF pre-truncation). Fix the winning selection, then sweep `N`. *Prediction to falsify:* coverage > random > salience > pure IDF on recall, and coverage saturates at a **smaller** `N` than frequency selection.
-
-### 4.4 Stage 2 — Phase 3 gate: β × variant × Δτ
-
-Phase 1 at winning config, Phase 4 at defaults. Sweep:
-
-| Axis | Values |
-| :--- | :--- |
-| **β (query-context blend)** | `{0, 0.5, 0.65, 1.0}` |
-| **gate variant** | `{adaptive single, two-gate (anchor→query), gate + soft reweight}` |
-| **Δτ (signed adaptivity)** | `{-0.25 … +0.25}` step 0.05, `τ_base = 0.55` |
-
-**Staged:** answer the `Δτ` **sign** first (`{-0.25, 0, +0.25}` at `β = 1.0`, single gate) — the open question (`Δτ < 0` looser, `Δτ > 0` stricter for rare anchors) — then refine magnitude, then sweep `β` and the gate variant. Report `starved_aspects` + the p-sweep metric set (Strict@10 as the precision guardrail, DocRec@10 for recall).
-
-### 4.5 Stage 3 — Phase 4 budget/allocation: η → μ_ceil → allocation
-
-Phases 1 & 3 at winning config. Sweep:
-
-| Axis | Values |
-| :--- | :--- |
-| **η (budget direction, signed)** | `{-0.5, 0, +0.5}` |
-| **μ_ceil (budget scale)** | `{0.25, 0.5, 0.75, 1.0}` |
-| **allocation** | `{normalized cosine, softmax(τ=1.0), softmax(τ=0.1), uniform}` |
-| **ε (mass floor)** | `{0, 0.1%, 0.5%, 1%, 2%, 5%}` of `w(a)` |
-
-**Staged (separate, then a small joint check):**
-1. `η` at fixed `μ_ceil = 0.5` — answer the direction (rarer query → more / less / flat budget).
-2. `μ_ceil` at the winning `η` — tune the scale.
-3. `ε` at the winning `(η, μ_ceil)` — tune the latency/recall tradeoff (`0` = pure gate-only).
-4. `allocation` at the winning `(η, μ_ceil, ε)` — confirm the theory-§4.2 normalized-cosine default.
-5. 2–3 joint combos — check for interaction.
-
-Respect `μ_ceil(1+|η|) ≤ 1` (theory `μ ∈ (0,1]`) — e.g. `η = -0.5 ⇒ μ_ceil ≤ 0.67`.
-
-### 4.6 Phase 5 — frozen (no calibration)
-
-`k1 = 1.2`, `b = 0.75` frozen at Lucene defaults (baseline-consistency; the IT-MPE guarantee is invariant to them). `K` set by the metric. Phase 5 is the stable measurement substrate across all stages.
+Phases 2 and 5 carry no calibration burden (POS priors + bailout gate already calibrated; BM25 frozen).
 
 ---
 
