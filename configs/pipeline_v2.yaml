@@ -6,8 +6,7 @@ pipeline_v2:
   indexer:
     stemmer: "kstem"                 # IR stemmer: kstem (recommended) | snowball | porter | none
     use_wordnet_override: true       # WordNet suppletion override (went -> go, better -> good, children -> child)
-    mode: "parity"                   # Inverted posting list mode: parity | legacy
-    vocab_selection: "salience"      # Calibrated: salience (IDF * ln(1+DF)) beats pure coverage FPS
+    vocab_selection: "idf"           # Default: idf (fastest TTI & low latency)
     max_vocab_pool_size: 2500        # Candidate vocabulary pool size extracted from corpus
 
   expansion:

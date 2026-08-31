@@ -1,0 +1,4 @@
+threshold_setting,bypass_count,rerank_count,discard_count,original_length,compressed_length,compression_ratio
+Strict,0,1,4,1200,150,0.125
+Balanced,0,4,1,1200,225,0.1875
+Permissive,1,3,1,1200,225,0.1875

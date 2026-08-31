@@ -1,78 +1,83 @@
 # 📝 Edge-RAG Pipeline V7 Calibration Decision Log
 
-- **Generated:** 2026-08-31 06:20:26
+- **Generated:** 2026-08-31 15:28:48
 
 ## Stage 1 (Pool)
 
 | Config ID | Display Name | Strict@10 | DocRec@10 | Strict@50 | DocRec@50 | MRR@10 | Mean Latency | Starved Aspects |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `pool_strat_salience__N_2500` | Pool Strategy: salience (N=2500) | 62.77% | **49.68%** | 74.66% | 60.97% | 0.4814 | 142.60ms | 0.00 |
-| `pool_strat_idf__N_2500` | Pool Strategy: idf (N=2500) | 62.58% | **49.51%** | 74.63% | 61.07% | 0.4809 | 95.57ms | 0.00 |
-| `pool_strat_random__N_2500` | Pool Strategy: random (N=2500) | 62.54% | **49.45%** | 74.86% | 61.09% | 0.4817 | 108.80ms | 0.00 |
-| `pool_size_coverage__N_5000` | Pool Size: coverage (N=5000) | 59.65% | **47.89%** | 72.25% | 59.89% | 0.4493 | 135.59ms | 0.00 |
-| `pool_size_coverage__N_2500` | Pool Size: coverage (N=2500) | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 68.86ms | 0.00 |
-| `pool_strat_coverage__N_2500` | Pool Strategy: coverage (N=2500) | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 69.07ms | 0.00 |
-| `pool_size_coverage__N_500` | Pool Size: coverage (N=500) | 59.25% | **47.73%** | 71.94% | 59.61% | 0.4487 | 30.95ms | 0.00 |
-| `pool_size_coverage__N_1000` | Pool Size: coverage (N=1000) | 59.25% | **47.66%** | 72.02% | 59.70% | 0.4484 | 38.60ms | 0.00 |
-
----
-
-## Stage 2 (Gate)
-
-| Config ID | Display Name | Strict@10 | DocRec@10 | Strict@50 | DocRec@50 | MRR@10 | Mean Latency | Starved Aspects |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `gate_dtau_+0.25__beta_1.0__single` | Gate d_tau=+0.25 (beta=1.0, single) | 60.25% | **48.20%** | 72.68% | 60.27% | 0.4529 | 31.43ms | 6.68 |
-| `gate_dtau_+0.20__beta_1.0__single` | Gate d_tau=+0.20 (beta=1.0, single) | 60.10% | **48.12%** | 72.49% | 60.19% | 0.4495 | 33.75ms | 3.81 |
-| `gate_dtau_+0.15__beta_1.0__single` | Gate d_tau=+0.15 (beta=1.0, single) | 59.77% | **47.94%** | 72.32% | 60.10% | 0.4487 | 37.07ms | 1.10 |
-| `gate_dtau_+0.10__beta_1.0__single` | Gate d_tau=+0.10 (beta=1.0, single) | 59.61% | **47.92%** | 72.11% | 59.88% | 0.4488 | 42.72ms | 0.04 |
-| `gate_dtau_+0.05__beta_1.0__single` | Gate d_tau=+0.05 (beta=1.0, single) | 59.55% | **47.89%** | 72.26% | 59.88% | 0.4491 | 52.19ms | 0.00 |
-| `gate_beta_0.65__dtau_0.0__single` | Gate beta=0.65 (d_tau=0.0, single) | 59.50% | **47.88%** | 72.08% | 59.80% | 0.4495 | 51.24ms | 0.00 |
-| `gate_beta_0.00__dtau_0.0__single` | Gate beta=0.00 (d_tau=0.0, single) | 59.52% | **47.85%** | 72.36% | 60.13% | 0.4452 | 42.41ms | 0.37 |
-| `gate_dtau_-0.15__beta_1.0__single` | Gate d_tau=-0.15 (beta=1.0, single) | 59.53% | **47.84%** | 72.16% | 59.73% | 0.4482 | 161.75ms | 0.00 |
-| `gate_dtau_-0.10__beta_1.0__single` | Gate d_tau=-0.10 (beta=1.0, single) | 59.53% | **47.84%** | 72.16% | 59.74% | 0.4480 | 138.31ms | 0.00 |
-| `gate_variant_soft_reweight__dtau_0.0__beta_1.0` | Gate Variant: soft_reweight | 59.48% | **47.83%** | 72.14% | 59.79% | 0.4485 | 86.61ms | 0.00 |
-| `gate_beta_0.50__dtau_0.0__single` | Gate beta=0.50 (d_tau=0.0, single) | 59.46% | **47.82%** | 72.14% | 59.84% | 0.4488 | 45.69ms | 0.13 |
-| `gate_dtau_+0.00__beta_1.0__single` | Gate d_tau=+0.00 (beta=1.0, single) | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 72.15ms | 0.00 |
-| `gate_beta_1.00__dtau_0.0__single` | Gate beta=1.00 (d_tau=0.0, single) | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 71.64ms | 0.00 |
-| `gate_variant_single__dtau_0.0__beta_1.0` | Gate Variant: single | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 72.24ms | 0.00 |
-| `gate_variant_two_gate__dtau_0.0__beta_1.0` | Gate Variant: two_gate | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4484 | 76.02ms | 0.00 |
-| `gate_dtau_-0.05__beta_1.0__single` | Gate d_tau=-0.05 (beta=1.0, single) | 59.41% | **47.79%** | 72.16% | 59.76% | 0.4477 | 104.72ms | 0.00 |
-| `gate_dtau_-0.25__beta_1.0__single` | Gate d_tau=-0.25 (beta=1.0, single) | 59.45% | **47.76%** | 72.16% | 59.73% | 0.4479 | 184.24ms | 0.00 |
-| `gate_dtau_-0.20__beta_1.0__single` | Gate d_tau=-0.20 (beta=1.0, single) | 59.45% | **47.75%** | 72.16% | 59.73% | 0.4477 | 176.30ms | 0.00 |
-
----
-
-## Stage 3 (Budget & Sparsity)
-
-| Config ID | Display Name | Strict@10 | DocRec@10 | Strict@50 | DocRec@50 | MRR@10 | Mean Latency | Starved Aspects |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `alloc_softmax_1.0` | Allocation: softmax_1.0 | 59.48% | **47.83%** | 72.14% | 59.79% | 0.4484 | 72.86ms | 0.00 |
-| `alloc_softmax_0.1` | Allocation: softmax_0.1 | 59.45% | **47.83%** | 72.24% | 59.84% | 0.4481 | 72.79ms | 0.00 |
-| `budget_eta_-0.5__mu_0.50` | Budget eta=-0.5 (mu=0.50) | 59.48% | **47.83%** | 72.14% | 59.80% | 0.4480 | 71.38ms | 0.00 |
-| `budget_mu_0.75__eta_0.0` | Budget mu_ceil=0.75 | 59.48% | **47.83%** | 72.14% | 59.80% | 0.4481 | 71.99ms | 0.00 |
-| `budget_mu_1.00__eta_0.0` | Budget mu_ceil=1.00 | 59.48% | **47.82%** | 72.16% | 59.81% | 0.4482 | 71.72ms | 0.00 |
-| `budget_mu_0.25__eta_0.0` | Budget mu_ceil=0.25 | 59.48% | **47.81%** | 72.20% | 59.80% | 0.4485 | 71.59ms | 0.00 |
-| `budget_eta_+0.5__mu_0.50` | Budget eta=+0.5 (mu=0.50) | 59.48% | **47.81%** | 72.16% | 59.80% | 0.4485 | 71.06ms | 0.00 |
-| `alloc_uniform` | Allocation: uniform | 59.45% | **47.80%** | 72.14% | 59.79% | 0.4482 | 71.15ms | 0.00 |
-| `alloc_normalized_cosine` | Allocation: normalized_cosine | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 71.60ms | 0.00 |
-| `budget_mu_0.50__eta_0.0` | Budget mu_ceil=0.50 | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 71.60ms | 0.00 |
-| `budget_eta_+0.0__mu_0.50` | Budget eta=+0.0 (mu=0.50) | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 71.35ms | 0.00 |
-| `sparsity_eps_0.000` | Mass Floor eps=0.000 | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 71.56ms | 0.00 |
-| `sparsity_eps_0.005` | Mass Floor eps=0.005 | 59.36% | **47.78%** | 71.97% | 59.77% | 0.4476 | 41.07ms | 0.00 |
-| `sparsity_eps_0.020` | Mass Floor eps=0.020 | 59.36% | **47.78%** | 71.97% | 59.77% | 0.4477 | 41.16ms | 0.00 |
-| `sparsity_eps_0.010` | Mass Floor eps=0.010 | 59.36% | **47.78%** | 71.97% | 59.77% | 0.4477 | 41.12ms | 0.00 |
-| `sparsity_eps_0.050` | Mass Floor eps=0.050 | 59.36% | **47.78%** | 71.97% | 59.77% | 0.4477 | 41.04ms | 0.00 |
-| `sparsity_eps_0.001` | Mass Floor eps=0.001 | 59.35% | **47.77%** | 72.09% | 59.79% | 0.4480 | 46.80ms | 0.00 |
-
----
-
-## Stage 4 (Joint Freeze)
-
-| Config ID | Display Name | Strict@10 | DocRec@10 | Strict@50 | DocRec@50 | MRR@10 | Mean Latency | Starved Aspects |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `v7_frozen_candidate_B` | V7 Candidate B (dtau=+0.10, mu=0.50, eps=0.010) | 59.60% | **47.90%** | 72.21% | 59.91% | 0.4491 | 31.22ms | 0.04 |
-| `v7_frozen_candidate_A` | V7 Candidate A (dtau=+0.05, mu=0.50, eps=0.005) | 59.57% | **47.89%** | 72.12% | 59.87% | 0.4487 | 35.06ms | 0.00 |
-| `v7_frozen_candidate_C` | V7 Candidate C (dtau=0.00, mu=0.50, eps=0.005) | 59.36% | **47.78%** | 71.97% | 59.77% | 0.4476 | 41.14ms | 0.00 |
+| `pool__coverage__N_10pct_4376` | Pool coverage (N=10pct_4376) | 97.88% | **97.49%** | 98.88% | 98.77% | 0.9314 | 52.13ms | 0.00 |
+| `pool__coverage__N_5pct_2188` | Pool coverage (N=5pct_2188) | 97.88% | **97.43%** | 98.88% | 98.77% | 0.9303 | 31.24ms | 0.00 |
+| `pool__salience__N_10pct_4376` | Pool salience (N=10pct_4376) | 97.77% | **97.32%** | 98.99% | 98.83% | 0.9377 | 108.32ms | 0.00 |
+| `pool__salience__N_5pct_2188` | Pool salience (N=5pct_2188) | 97.77% | **97.32%** | 98.99% | 98.83% | 0.9375 | 61.61ms | 0.00 |
+| `pool__idf__N_10pct_4376` | Pool idf (N=10pct_4376) | 97.65% | **97.26%** | 98.88% | 98.72% | 0.9380 | 68.38ms | 0.00 |
+| `pool__idf__N_5pct_2188` | Pool idf (N=5pct_2188) | 97.65% | **97.26%** | 98.88% | 98.72% | 0.9374 | 42.00ms | 0.00 |
+| `pool__coverage__N_5pct_1897` | Pool coverage (N=5pct_1897) | 94.47% | **92.47%** | 98.30% | 97.61% | 0.8303 | 55.35ms | 0.00 |
+| `pool__coverage__N_10pct_3794` | Pool coverage (N=10pct_3794) | 94.26% | **92.30%** | 98.30% | 97.61% | 0.8306 | 106.45ms | 0.00 |
+| `pool__idf__N_5pct_1897` | Pool idf (N=5pct_1897) | 93.83% | **92.05%** | 98.94% | 98.32% | 0.8700 | 66.48ms | 0.00 |
+| `pool__idf__N_10pct_3794` | Pool idf (N=10pct_3794) | 93.83% | **92.05%** | 98.94% | 98.32% | 0.8701 | 119.64ms | 0.00 |
+| `pool__salience__N_10pct_3794` | Pool salience (N=10pct_3794) | 93.62% | **91.81%** | 98.72% | 98.11% | 0.8638 | 148.84ms | 0.00 |
+| `pool__salience__N_5pct_1897` | Pool salience (N=5pct_1897) | 93.62% | **91.77%** | 98.72% | 98.11% | 0.8648 | 81.46ms | 0.00 |
+| `pool__idf__N_5pct_1690` | Pool idf (N=5pct_1690) | 98.92% | **85.30%** | 100.00% | 98.43% | 0.8430 | 59.03ms | 0.00 |
+| `pool__salience__N_10pct_3380` | Pool salience (N=10pct_3380) | 98.92% | **85.08%** | 100.00% | 98.16% | 0.8345 | 156.80ms | 0.00 |
+| `pool__salience__N_5pct_1690` | Pool salience (N=5pct_1690) | 98.92% | **85.08%** | 99.46% | 97.98% | 0.8377 | 85.32ms | 0.00 |
+| `pool__idf__N_10pct_3380` | Pool idf (N=10pct_3380) | 98.92% | **85.04%** | 100.00% | 98.43% | 0.8390 | 102.00ms | 0.00 |
+| `pool__coverage__N_10pct_3380` | Pool coverage (N=10pct_3380) | 98.92% | **84.68%** | 100.00% | 98.43% | 0.8295 | 72.03ms | 0.00 |
+| `pool__coverage__N_5pct_1690` | Pool coverage (N=5pct_1690) | 98.92% | **84.50%** | 100.00% | 98.43% | 0.8277 | 39.78ms | 0.00 |
+| `pool__salience__N_5pct_1870` | Pool salience (N=5pct_1870) | 81.00% | **79.29%** | 87.00% | 86.36% | 0.6266 | 49.88ms | 0.00 |
+| `pool__salience__N_10pct_3740` | Pool salience (N=10pct_3740) | 80.67% | **78.96%** | 87.00% | 86.36% | 0.6263 | 83.21ms | 0.00 |
+| `pool__idf__N_10pct_3740` | Pool idf (N=10pct_3740) | 80.67% | **78.96%** | 87.00% | 86.42% | 0.6264 | 62.81ms | 0.00 |
+| `pool__idf__N_5pct_1870` | Pool idf (N=5pct_1870) | 80.67% | **78.96%** | 87.00% | 86.42% | 0.6264 | 39.87ms | 0.00 |
+| `pool__coverage__N_10pct_3740` | Pool coverage (N=10pct_3740) | 79.67% | **77.69%** | 88.00% | 87.66% | 0.6024 | 53.99ms | 0.00 |
+| `pool__coverage__N_5pct_1870` | Pool coverage (N=5pct_1870) | 79.67% | **77.69%** | 88.00% | 87.66% | 0.6018 | 32.27ms | 0.00 |
+| `pool__idf__N_10pct_1177` | Pool idf (N=10pct_1177) | 54.67% | **52.44%** | 74.67% | 71.67% | 0.3298 | 41.79ms | 0.00 |
+| `pool__salience__N_10pct_1177` | Pool salience (N=10pct_1177) | 54.67% | **52.11%** | 72.67% | 69.67% | 0.3312 | 50.17ms | 0.00 |
+| `pool__idf__N_5pct_588` | Pool idf (N=5pct_588) | 54.00% | **51.78%** | 74.67% | 71.67% | 0.3292 | 30.08ms | 0.00 |
+| `pool__salience__N_5pct_588` | Pool salience (N=5pct_588) | 54.00% | **51.44%** | 72.67% | 69.67% | 0.3244 | 33.07ms | 0.00 |
+| `pool__coverage__N_5pct_588` | Pool coverage (N=5pct_588) | 53.33% | **50.78%** | 74.67% | 71.00% | 0.3187 | 24.21ms | 0.00 |
+| `pool__coverage__N_10pct_1177` | Pool coverage (N=10pct_1177) | 53.33% | **50.78%** | 74.67% | 71.00% | 0.3129 | 34.24ms | 0.00 |
+| `pool__salience__N_1000` | Pool salience (N=1000) | 63.01% | **49.77%** | 74.34% | 60.79% | 0.4824 | 67.67ms | 0.00 |
+| `pool__salience__N_1500` | Pool salience (N=1500) | 62.71% | **49.70%** | 74.43% | 60.85% | 0.4818 | 91.77ms | 0.00 |
+| `pool__salience__N_2500` | Pool salience (N=2500) | 62.77% | **49.68%** | 74.66% | 60.97% | 0.4814 | 141.73ms | 0.00 |
+| `pool__salience__N_2000` | Pool salience (N=2000) | 62.66% | **49.61%** | 74.54% | 60.90% | 0.4818 | 116.98ms | 0.00 |
+| `pool__idf__N_2500` | Pool idf (N=2500) | 62.58% | **49.51%** | 74.63% | 61.07% | 0.4809 | 96.06ms | 0.00 |
+| `pool__idf__N_1000` | Pool idf (N=1000) | 62.54% | **49.49%** | 74.66% | 61.08% | 0.4809 | 48.40ms | 0.00 |
+| `pool__idf__N_1500` | Pool idf (N=1500) | 62.54% | **49.49%** | 74.66% | 61.08% | 0.4812 | 63.76ms | 0.00 |
+| `pool__idf__N_2000` | Pool idf (N=2000) | 62.54% | **49.49%** | 74.63% | 61.06% | 0.4814 | 80.34ms | 0.00 |
+| `pool__coverage__N_2000` | Pool coverage (N=2000) | 59.47% | **47.81%** | 71.98% | 59.76% | 0.4479 | 58.84ms | 0.00 |
+| `pool__coverage__N_2500` | Pool coverage (N=2500) | 59.41% | **47.80%** | 72.14% | 59.79% | 0.4481 | 69.61ms | 0.00 |
+| `pool__coverage__N_1500` | Pool coverage (N=1500) | 59.31% | **47.70%** | 71.97% | 59.72% | 0.4478 | 48.41ms | 0.00 |
+| `pool__coverage__N_1000` | Pool coverage (N=1000) | 59.25% | **47.66%** | 72.02% | 59.70% | 0.4484 | 39.42ms | 0.00 |
+| `pool__idf__N_5pct_3332` | Pool idf (N=5pct_3332) | 45.60% | **28.89%** | 66.20% | 46.87% | 0.2782 | 50.97ms | 0.00 |
+| `pool__idf__N_10pct_6664` | Pool idf (N=10pct_6664) | 45.60% | **28.89%** | 66.20% | 46.87% | 0.2782 | 82.29ms | 0.00 |
+| `pool__salience__N_5pct_3332` | Pool salience (N=5pct_3332) | 45.60% | **28.89%** | 66.00% | 46.87% | 0.2794 | 79.86ms | 0.00 |
+| `pool__salience__N_10pct_6664` | Pool salience (N=10pct_6664) | 45.60% | **28.89%** | 66.00% | 46.87% | 0.2795 | 132.64ms | 0.00 |
+| `pool__coverage__N_5pct_3332` | Pool coverage (N=5pct_3332) | 45.20% | **28.46%** | 66.80% | 46.70% | 0.2550 | 32.92ms | 0.00 |
+| `pool__coverage__N_10pct_6664` | Pool coverage (N=10pct_6664) | 44.60% | **28.16%** | 66.60% | 46.65% | 0.2562 | 59.72ms | 0.00 |
+| `pool__salience__N_5pct_6395` | Pool salience (N=5pct_6395) | 40.17% | **22.39%** | 51.28% | 36.48% | 0.2009 | 663.85ms | 0.00 |
+| `pool__salience__N_10pct_12791` | Pool salience (N=10pct_12791) | 40.17% | **22.39%** | 51.28% | 36.48% | 0.2019 | 1167.04ms | 0.00 |
+| `pool__idf__N_10pct_12791` | Pool idf (N=10pct_12791) | 39.32% | **21.20%** | 51.28% | 36.48% | 0.2001 | 932.99ms | 0.00 |
+| `pool__idf__N_5pct_6395` | Pool idf (N=5pct_6395) | 39.32% | **21.20%** | 51.28% | 36.48% | 0.2011 | 480.44ms | 0.00 |
+| `pool__coverage__N_10pct_2453` | Pool coverage (N=10pct_2453) | 70.59% | **15.45%** | 78.33% | 22.37% | 0.5426 | 23.86ms | 0.00 |
+| `pool__coverage__N_5pct_1226` | Pool coverage (N=5pct_1226) | 69.04% | **14.94%** | 78.64% | 21.90% | 0.5308 | 17.95ms | 0.00 |
+| `pool__idf__N_5pct_1226` | Pool idf (N=5pct_1226) | 68.73% | **14.14%** | 76.47% | 21.03% | 0.5192 | 20.23ms | 0.00 |
+| `pool__idf__N_10pct_2453` | Pool idf (N=10pct_2453) | 68.73% | **14.11%** | 76.16% | 20.86% | 0.5192 | 26.87ms | 0.00 |
+| `pool__salience__N_10pct_2453` | Pool salience (N=10pct_2453) | 68.11% | **14.06%** | 77.09% | 21.05% | 0.5188 | 32.74ms | 0.00 |
+| `pool__salience__N_5pct_1226` | Pool salience (N=5pct_1226) | 68.11% | **14.05%** | 76.16% | 20.70% | 0.5173 | 23.38ms | 0.00 |
+| `pool__salience__N_5pct_4117` | Pool salience (N=5pct_4117) | 26.21% | **13.22%** | 46.60% | 25.71% | 0.1251 | 372.90ms | 0.00 |
+| `pool__salience__N_10pct_8234` | Pool salience (N=10pct_8234) | 25.24% | **12.98%** | 46.60% | 25.70% | 0.1241 | 656.06ms | 0.00 |
+| `pool__idf__N_10pct_8234` | Pool idf (N=10pct_8234) | 24.27% | **12.58%** | 46.60% | 25.45% | 0.1176 | 394.65ms | 0.00 |
+| `pool__idf__N_5pct_4117` | Pool idf (N=5pct_4117) | 24.27% | **12.58%** | 46.60% | 25.45% | 0.1176 | 206.45ms | 0.00 |
+| `pool__salience__N_5pct_4173` | Pool salience (N=5pct_4173) | 22.77% | **12.35%** | 46.53% | 27.16% | 0.0987 | 538.15ms | 0.00 |
+| `pool__salience__N_10pct_8347` | Pool salience (N=10pct_8347) | 22.77% | **12.35%** | 47.52% | 27.53% | 0.0987 | 963.02ms | 0.00 |
+| `pool__idf__N_5pct_4173` | Pool idf (N=5pct_4173) | 21.78% | **12.10%** | 46.53% | 27.45% | 0.0960 | 345.04ms | 0.00 |
+| `pool__idf__N_10pct_8347` | Pool idf (N=10pct_8347) | 21.78% | **12.10%** | 46.53% | 27.45% | 0.0960 | 654.58ms | 0.00 |
+| `pool__coverage__N_5pct_4117` | Pool coverage (N=5pct_4117) | 21.36% | **11.85%** | 40.78% | 24.10% | 0.0613 | 120.88ms | 0.00 |
+| `pool__coverage__N_10pct_8234` | Pool coverage (N=10pct_8234) | 20.39% | **11.83%** | 39.81% | 24.08% | 0.0599 | 267.18ms | 0.00 |
+| `pool__coverage__N_10pct_12791` | Pool coverage (N=10pct_12791) | 20.51% | **11.00%** | 37.61% | 27.56% | 0.0893 | 742.08ms | 0.00 |
+| `pool__coverage__N_5pct_6395` | Pool coverage (N=5pct_6395) | 20.51% | **10.54%** | 38.46% | 27.99% | 0.0871 | 340.41ms | 0.00 |
+| `pool__coverage__N_10pct_8347` | Pool coverage (N=10pct_8347) | 15.84% | **9.84%** | 36.63% | 23.82% | 0.0442 | 583.40ms | 0.00 |
+| `pool__coverage__N_5pct_4173` | Pool coverage (N=5pct_4173) | 15.84% | **9.84%** | 37.62% | 23.76% | 0.0438 | 285.37ms | 0.00 |
 
 ---
 

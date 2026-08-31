@@ -52,6 +52,7 @@ results/**
 !results/**/
 !results/**/*.md
 !results/**/*.txt
+!results/**/*.csv
 
 # Ignore custom-built vendor tools as mandated by architecture rules
 vendor/
