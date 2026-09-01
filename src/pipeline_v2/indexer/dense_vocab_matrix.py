@@ -36,6 +36,10 @@ def get_cached_bge_model(model_name: str, use_gpu: bool) -> FlagModel:
     return _BGE_MODEL_CACHE[key]
 
 
+CUDA_GRAPH_BUCKETS = [8, 16, 32, 64, 128, 256, 512]
+MAX_ANCHOR_SEQ_LEN = 16
+
+
 class DenseVocabMatrix:
     """
     Batched BGE Embedding Matrix for Corpus Vocabulary (V7 Design).
@@ -46,6 +50,7 @@ class DenseVocabMatrix:
     3. Caches full stem embedding matrix for 0ms query-time bailout candidate assessment.
     4. Evaluates 1-pass batch GEMM anchor-vocab projection.
     5. Direct zero-overhead PyTorch FP16 forward + in-pool GPU tensor slicing for query anchors.
+    6. Static-shape CUDA Graph bucketing ({8, 16, 32, 64, 128, 256, 512}) for sub-millisecond anchor execution.
     """
 
     def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", use_gpu: bool = True):
@@ -64,6 +69,45 @@ class DenseVocabMatrix:
         self.full_stem_map: Dict[str, torch.Tensor] = {}
         self.full_stem_tensor: Optional[torch.Tensor] = None
         self.stem_to_idx: Dict[str, int] = {}
+
+        self.cuda_graphs: Dict[int, Any] = {}
+        self.static_input_ids: Dict[int, torch.Tensor] = {}
+        self.static_attention_mask: Dict[int, torch.Tensor] = {}
+        self.static_norm_outputs: Dict[int, torch.Tensor] = {}
+
+        if self.device == "cuda":
+            self._init_cuda_graphs()
+
+    def _init_cuda_graphs(self):
+        """Pre-captures static-shape CUDA Graphs for buckets {8, 16, 32, 64, 128, 256, 512}."""
+        with torch.no_grad():
+            for b in CUDA_GRAPH_BUCKETS:
+                try:
+                    s_in = torch.zeros((b, MAX_ANCHOR_SEQ_LEN), dtype=torch.long, device="cuda")
+                    s_mask = torch.zeros((b, MAX_ANCHOR_SEQ_LEN), dtype=torch.long, device="cuda")
+                    s_mask[:, 0] = 1
+
+                    # Warmup stream
+                    s = torch.cuda.Stream()
+                    s.wait_stream(torch.cuda.current_stream())
+                    with torch.cuda.stream(s):
+                        for _ in range(3):
+                            _ = self.hf_model(input_ids=s_in, attention_mask=s_mask)
+                    torch.cuda.current_stream().wait_stream(s)
+
+                    # Capture Graph
+                    g = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(g):
+                        out = self.hf_model(input_ids=s_in, attention_mask=s_mask)
+                        cls_t = out[0][:, 0]
+                        norm_t = torch.nn.functional.normalize(cls_t, p=2, dim=1)
+
+                    self.cuda_graphs[b] = g
+                    self.static_input_ids[b] = s_in
+                    self.static_attention_mask[b] = s_mask
+                    self.static_norm_outputs[b] = norm_t
+                except Exception:
+                    pass
 
     def build(self, vocab_stems: List[str], surface_forms: Optional[List[str]] = None, batch_size: int = 512) -> torch.Tensor:
         """
@@ -219,9 +263,9 @@ class DenseVocabMatrix:
 
     def encode_terms(self, terms: List[str]) -> torch.Tensor:
         """
-        Direct zero-overhead PyTorch FP16 encoding with in-pool GPU tensor slicing:
+        Direct zero-overhead PyTorch FP16 encoding with CUDA Graph bucketing and in-pool slicing:
         1. Slices cached rows directly from full_stem_tensor / vocab_embeddings for in-pool terms.
-        2. Direct raw PyTorch forward pass for unseen terms (bypassing FlagModel wrapper).
+        2. Routes unseen terms through static-shape CUDA Graph bucket runners ({8, 16, 32, 64, 128, 256, 512}).
         3. Returns L2 normalized PyTorch Tensor on self.device [N_terms, 384].
         """
         if not terms:
@@ -251,20 +295,49 @@ class DenseVocabMatrix:
             sliced_embs = self.full_stem_tensor[src_indices].to(self.device, dtype=out_dtype)
             out_tensor[target_positions] = sliced_embs
 
-        # Forward pass unseen terms (if any)
+        # Forward pass unseen terms via CUDA Graph Bucketing (if any)
         if unseen_terms:
-            with torch.no_grad():
-                inputs = self.hf_tokenizer(
+            K = len(unseen_terms)
+            target_bucket = None
+            if self.device == "cuda":
+                for b in CUDA_GRAPH_BUCKETS:
+                    if b >= K and b in self.cuda_graphs:
+                        target_bucket = b
+                        break
+
+            if target_bucket is not None:
+                # Fast Static CUDA Graph Replay
+                enc = self.hf_tokenizer(
                     unseen_terms,
-                    padding=True,
+                    padding="max_length",
+                    max_length=MAX_ANCHOR_SEQ_LEN,
                     truncation=True,
-                    max_length=64,
                     return_tensors="pt"
-                ).to(self.device)
-                outputs = self.hf_model(**inputs)
-                cls_emb = outputs[0][:, 0]
-                unseen_norm = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
+                )
+                s_in = self.static_input_ids[target_bucket]
+                s_mask = self.static_attention_mask[target_bucket]
+                s_in.zero_()
+                s_mask.zero_()
+                s_in[:K].copy_(enc["input_ids"])
+                s_mask[:K].copy_(enc["attention_mask"])
+
+                self.cuda_graphs[target_bucket].replay()
+                unseen_norm = self.static_norm_outputs[target_bucket][:K]
                 out_tensor[unseen_positions] = unseen_norm
+            else:
+                # Fallback for K > 512 or CPU
+                with torch.no_grad():
+                    inputs = self.hf_tokenizer(
+                        unseen_terms,
+                        padding=True,
+                        truncation=True,
+                        max_length=MAX_ANCHOR_SEQ_LEN,
+                        return_tensors="pt"
+                    ).to(self.device)
+                    outputs = self.hf_model(**inputs)
+                    cls_emb = outputs[0][:, 0]
+                    unseen_norm = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
+                    out_tensor[unseen_positions] = unseen_norm
 
         return out_tensor
 
