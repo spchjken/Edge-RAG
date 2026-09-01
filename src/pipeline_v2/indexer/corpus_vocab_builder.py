@@ -92,6 +92,37 @@ class CorpusVocabBuilder:
 
         return candidate_stems, canonical_surfaces
 
+    def extract_candidates_from_indexer(
+        self,
+        indexer: Any
+    ) -> Tuple[List[str], List[str]]:
+        """
+        Extracts all valid analyzed candidate stems along with their canonical surface forms
+        in O(V) time using the 1-pass surface map already collected by BM25LuceneIndexer.
+        """
+        num_docs = self.idf_registry.num_docs if self.idf_registry.num_docs > 0 else 100
+        max_doc_freq = max(5, int(0.15 * num_docs))
+        stem_to_surface = getattr(indexer, "stem_to_surface", {})
+
+        candidate_tuples = []
+        for stem, df in self.idf_registry.doc_freqs.items():
+            if df > max_doc_freq or df < 1:
+                continue
+            if len(stem) < 2 or stem.isdigit() or stem in LUCENE_STOPWORDS:
+                continue
+            if not self.CLEAN_PATTERN.match(stem):
+                continue
+
+            best_surface = stem_to_surface.get(stem, stem)
+            self.stem_to_surface[stem] = best_surface
+            idf_val = self.idf_registry.get_idf(stem)
+            salience = idf_val * math.log(1.0 + df)
+            candidate_tuples.append((stem, best_surface, salience))
+
+        candidate_stems = [c[0] for c in candidate_tuples]
+        canonical_surfaces = [c[1] for c in candidate_tuples]
+        return candidate_stems, canonical_surfaces
+
     def build_clean_vocabulary(
         self,
         corpus: List[str],

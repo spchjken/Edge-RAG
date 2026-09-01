@@ -355,6 +355,12 @@ class V7AspectExtractor:
             for s in a["synonyms"]:
                 aug_tokens.append(s["term"])
 
+        # Calculate unique synonyms
+        unique_syns_set = set()
+        for a in aspects:
+            for s in a["synonyms"]:
+                unique_syns_set.add(s["term"])
+
         return {
             "aspects": aspects,
             "augmented_token_list": aug_tokens,
@@ -363,6 +369,9 @@ class V7AspectExtractor:
                 "num_anchors": len(distinct_anchors),
                 "total_candidates_above_tau": total_cands_above_tau,
                 "total_synonyms_injected": total_synonyms_injected,
+                "total_synonym_links": total_synonyms_injected,
+                "unique_synonyms": len(unique_syns_set),
+                "final_qvec_len": len(final_term_weights),
                 "total_bailed_candidates": total_bailed,
                 "starved_aspects_count": starved_aspects,
                 "expansion_budget_mu": float(mu_q),

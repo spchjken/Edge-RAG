@@ -195,3 +195,40 @@ class EdgeRAGAnalyzer:
 
         return analyzed_tokens
 
+    def analyze_with_surface(self, text: str) -> List[Tuple[str, str]]:
+        """
+        Runs the full analysis pipeline while preserving the raw surface form for each token.
+        
+        Returns:
+            List of (analyzed_stem, raw_surface_token) tuples.
+        """
+        if not text or not isinstance(text, str):
+            return []
+
+        raw_tokens = EdgeRAGTokenizer.tokenize(text)
+        analyzed_pairs: List[Tuple[str, str]] = []
+
+        for token in raw_tokens:
+            surface = token
+            if token.endswith("'s") and len(token) > 2:
+                token = token[:-2]
+
+            if self.use_stopwords and token in self.stopwords:
+                if not ("-" in token or "." in token or "_" in token or any(c.isdigit() for c in token)):
+                    continue
+
+            if self.use_wordnet_override and token in self.overrides:
+                analyzed_pairs.append((self.overrides[token], surface))
+                continue
+
+            if self.is_stem_exempt(token):
+                if token:
+                    analyzed_pairs.append((token, surface))
+                continue
+
+            stem = self.stem_fn(token)
+            if stem:
+                analyzed_pairs.append((stem, surface))
+
+        return analyzed_pairs
+

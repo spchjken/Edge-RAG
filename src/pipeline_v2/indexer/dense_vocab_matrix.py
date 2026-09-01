@@ -56,9 +56,9 @@ class DenseVocabMatrix:
         self.vocab_embeddings: Optional[torch.Tensor] = None
         self.full_stem_map: Dict[str, torch.Tensor] = {}
 
-    def build(self, vocab_stems: List[str], surface_forms: Optional[List[str]] = None) -> torch.Tensor:
+    def build(self, vocab_stems: List[str], surface_forms: Optional[List[str]] = None, batch_size: int = 512) -> torch.Tensor:
         """
-        Embeds vocab_stems (optionally via their canonical surface forms).
+        Embeds vocab_stems (optionally via their canonical surface forms) in GPU batches.
         Returns normalized PyTorch Tensor matrix [N_vocab, hidden_dim].
         """
         self.vocab_terms = vocab_stems
@@ -67,9 +67,19 @@ class DenseVocabMatrix:
             return self.vocab_embeddings
 
         texts = surface_forms if (surface_forms and len(surface_forms) == len(vocab_stems)) else vocab_stems
+        all_embs_list = []
         with suppress_progress_bars():
-            embeddings_np = self.model.encode(texts, batch_size=len(texts))
-        tensor_emb = torch.from_numpy(embeddings_np).float()
+            for i in range(0, len(texts), batch_size):
+                chunk = texts[i:i + batch_size]
+                emb_chunk = self.model.encode(chunk, batch_size=len(chunk))
+                all_embs_list.append(emb_chunk)
+
+        if len(all_embs_list) == 1:
+            all_embs_np = all_embs_list[0]
+        else:
+            all_embs_np = np.vstack(all_embs_list)
+
+        tensor_emb = torch.from_numpy(all_embs_np).float()
         self.vocab_embeddings = torch.nn.functional.normalize(tensor_emb, p=2, dim=1)
         self.full_stem_map.clear()
         self.full_stem_tensor = self.vocab_embeddings

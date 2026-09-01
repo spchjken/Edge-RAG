@@ -32,11 +32,29 @@ class BM25LuceneIndexer:
         self.k1 = k1
         self.b = b
 
+        self.stem_to_surface: Dict[str, str] = {}
+
         if self.mode == "parity":
             self.analyzer = analyzer if analyzer is not None else EdgeRAGAnalyzer()
             self.index = InvertedPostingIndex(k1=k1, b=b)
-            analyzed_corpus = [self.analyzer.analyze(doc) for doc in self.corpus]
+            analyzed_corpus = []
+            stem_surface_counts: Dict[str, Counter] = {}
+
+            for doc in self.corpus:
+                pairs = self.analyzer.analyze_with_surface(doc)
+                doc_stems = []
+                for stem, surface in pairs:
+                    doc_stems.append(stem)
+                    if stem not in stem_surface_counts:
+                        stem_surface_counts[stem] = Counter()
+                    stem_surface_counts[stem][surface] += 1
+                analyzed_corpus.append(doc_stems)
+
             self.index.build_from_analyzed_corpus(analyzed_corpus, doc_ids=self.chunk_ids)
+
+            # Build canonical stem -> surface map
+            for stem, c in stem_surface_counts.items():
+                self.stem_to_surface[stem] = c.most_common(1)[0][0]
 
             if idf_registry is not None:
                 self.idf_registry = idf_registry
