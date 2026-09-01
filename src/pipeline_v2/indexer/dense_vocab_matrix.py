@@ -1,7 +1,7 @@
 import os
 import sys
 import contextlib
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Any
 import torch
 import numpy as np
 from FlagEmbedding import FlagModel
@@ -68,6 +68,7 @@ class DenseVocabMatrix:
         self.vocab_embeddings: Optional[torch.Tensor] = None
         self.full_stem_map: Dict[str, torch.Tensor] = {}
         self.full_stem_tensor: Optional[torch.Tensor] = None
+        self.full_stem_terms: List[str] = []
         self.stem_to_idx: Dict[str, int] = {}
 
         self.cuda_graphs: Dict[int, Any] = {}
@@ -106,49 +107,83 @@ class DenseVocabMatrix:
                     self.static_input_ids[b] = s_in
                     self.static_attention_mask[b] = s_mask
                     self.static_norm_outputs[b] = norm_t
-                except Exception:
-                    pass
+                except Exception as e:  # log, don't silently disable the fast path
+                    print(f"[warn] DenseVocabMatrix: CUDA graph capture failed for bucket {b}: {e}")
 
-    def build(self, vocab_stems: List[str], surface_forms: Optional[List[str]] = None, batch_size: int = 512) -> torch.Tensor:
+    def build(
+        self,
+        vocab_stems: List[str],
+        surface_forms: Optional[List[str]] = None,
+        batch_size: int = 512,
+        full_stems: Optional[List[str]] = None,
+        full_surfaces: Optional[List[str]] = None
+    ) -> torch.Tensor:
         """
-        Embeds vocab_stems (optionally via their canonical surface forms) in GPU batches.
-        Returns normalized PyTorch Tensor matrix [N_vocab, hidden_dim].
+        Embeds the salience/IDF pool (vocab_stems) and, optionally, the full corpus
+        (full_stems) in one batched pass.
+
+        Storage split:
+          - vocab_embeddings : the pool only [N_pool, 384]   -> Phase 3 GEMM probing.
+          - full_stem_tensor : pool + full corpus [N_total, 384] -> in-pool slicing + bailout lookup.
+          - stem_to_idx / full_stem_terms : ordered map over the full combined set.
         """
         self.vocab_terms = vocab_stems
         if not vocab_stems:
             self.vocab_embeddings = torch.empty((0, 384), device=self.device)
+            self.full_stem_tensor = self.vocab_embeddings
+            self.full_stem_terms = []
+            self.stem_to_idx = {}
+            self.full_stem_map.clear()
             return self.vocab_embeddings
 
-        texts = surface_forms if (surface_forms and len(surface_forms) == len(vocab_stems)) else vocab_stems
-        all_embs_list = []
+        # Combined list: pool first (fixed order), then non-pool corpus stems.
+        vocab_set = set(vocab_stems)
+        extra_stems = [s for s in full_stems if s not in vocab_set] if full_stems else []
+        all_stems = list(vocab_stems) + extra_stems
 
+        # Surface forms aligned to all_stems (prefer full stem->surface map).
+        if full_stems is not None and full_surfaces is not None and len(full_surfaces) == len(full_stems):
+            stem2surface = dict(zip(full_stems, full_surfaces))
+            texts = [stem2surface.get(s, s) for s in all_stems]
+        elif surface_forms and len(surface_forms) == len(vocab_stems):
+            texts = list(surface_forms) + [s for s in extra_stems]
+        else:
+            texts = all_stems
+
+        all_embs_list = []
         with torch.no_grad():
             for i in range(0, len(texts), batch_size):
                 chunk = texts[i:i + batch_size]
-                inputs = self.hf_tokenizer(chunk, padding=True, truncation=True, max_length=64, return_tensors="pt").to(self.device)
+                inputs = self.hf_tokenizer(
+                    chunk, padding=True, truncation=True,
+                    max_length=MAX_ANCHOR_SEQ_LEN, return_tensors="pt"
+                ).to(self.device)
                 outputs = self.hf_model(**inputs)
                 cls_emb = outputs[0][:, 0]
                 norm_chunk = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
                 all_embs_list.append(norm_chunk)
 
-        if len(all_embs_list) == 1:
-            self.vocab_embeddings = all_embs_list[0]
-        else:
-            self.vocab_embeddings = torch.cat(all_embs_list, dim=0)
+        all_embs = all_embs_list[0] if len(all_embs_list) == 1 else torch.cat(all_embs_list, dim=0)
 
+        self.vocab_embeddings = all_embs[:len(vocab_stems)]
+        self.full_stem_tensor = all_embs
+        self.stem_to_idx = {stem: idx for idx, stem in enumerate(all_stems)}
+        self.full_stem_terms = list(all_stems)
         self.full_stem_map.clear()
-        self.full_stem_tensor = self.vocab_embeddings
-        self.stem_to_idx = {stem: idx for idx, stem in enumerate(vocab_stems)}
-        for i, term in enumerate(vocab_stems):
-            self.full_stem_map[term] = self.vocab_embeddings[i:i+1]
+        for i, term in enumerate(all_stems):
+            self.full_stem_map[term] = all_embs[i:i+1]
         return self.vocab_embeddings
 
-    def build_matrix(self, vocab_terms: List[str]) -> torch.Tensor:
+    def build_matrix(
+        self,
+        vocab_terms: List[str],
+        full_stems: Optional[List[str]] = None,
+        full_surfaces: Optional[List[str]] = None
+    ) -> torch.Tensor:
         """
-        Embeds vocab_terms directly in a single batch call.
-        Returns normalized PyTorch Tensor matrix [N_vocab, hidden_dim].
+        Embeds vocab_terms (pool) and optionally the full corpus (full_stems) in one pass.
         """
-        return self.build(vocab_terms)
+        return self.build(vocab_terms, full_stems=full_stems, full_surfaces=full_surfaces)
 
     def build_with_fps(
         self,
@@ -173,7 +208,7 @@ class DenseVocabMatrix:
         with torch.no_grad():
             for i in range(0, len(texts_to_embed), batch_size):
                 chunk = texts_to_embed[i:i + batch_size]
-                inputs = self.hf_tokenizer(chunk, padding=True, truncation=True, max_length=64, return_tensors="pt").to(self.device)
+                inputs = self.hf_tokenizer(chunk, padding=True, truncation=True, max_length=MAX_ANCHOR_SEQ_LEN, return_tensors="pt").to(self.device)
                 outputs = self.hf_model(**inputs)
                 cls_emb = outputs[0][:, 0]
                 norm_chunk = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
@@ -188,6 +223,7 @@ class DenseVocabMatrix:
         self.full_stem_map.clear()
         self.full_stem_tensor = all_embs
         self.stem_to_idx = {stem: idx for idx, stem in enumerate(all_stems)}
+        self.full_stem_terms = list(all_stems)
         for idx, stem in enumerate(all_stems):
             self.full_stem_map[stem] = all_embs[idx:idx+1]
 

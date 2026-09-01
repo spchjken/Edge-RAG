@@ -96,6 +96,8 @@ class V7AspectExtractor:
         pos_ratios: Optional[Dict[str, float]] = None,
         bailout_tau_idf: float = 999.0,
         min_len_rescue: int = 3,
+        bailout_tau_sim: float = 0.85,
+        bailout_out_of_pool_only: bool = True,
         mass_floor: float = 0.0,
         epsilon: Optional[float] = None,
         allocation: str = "normalized_cosine",
@@ -113,6 +115,8 @@ class V7AspectExtractor:
         self.pos_ratios = pos_ratios if pos_ratios is not None else {"noun": 1.0, "verb": 0.75, "modifier": 0.60}
         self.bailout_tau_idf = bailout_tau_idf
         self.min_len_rescue = min_len_rescue
+        self.bailout_tau_sim = bailout_tau_sim
+        self.bailout_out_of_pool_only = bailout_out_of_pool_only
         self.mass_floor = float(epsilon) if epsilon is not None else float(mass_floor)
         self.allocation = allocation
         self.gate_variant = gate_variant
@@ -181,44 +185,62 @@ class V7AspectExtractor:
         anchor_vecs = self.vocab_matrix.encode_terms(distinct_anchors)  # [N_anchors, 384]
         t_p2_anchor = time.perf_counter()
 
-        # 5. Anchor Bailout (O(1) Pre-Indexed Candidate Lookup & Semantic Assessment)
+        # Precompute anchor IDF / base weights / query budget (shared by bailout and IT-MPE)
+        anchor_idfs_np = np.array([self.idf_registry.get_idf(a) for a in distinct_anchors], dtype=np.float32)
+        anchor_base_weights_np = np.array([anchor_base_weights[a] for a in distinct_anchors], dtype=np.float32)
+        max_query_idf = float(np.max(anchor_idfs_np)) if len(anchor_idfs_np) > 0 else max_corpus_idf
+        mu_q = self.mu_ceil * (1.0 - self.eta * min(1.0, max_query_idf / max_corpus_idf))
+        mu_q = max(0.0, min(1.0, mu_q))
+
+        # 5. Conservative Bailout: very-high-similarity NON-POOL stems for important anchors.
+        #    (No prefix fan-out; cosine against the FULL corpus; subject to mu budget + epsilon floor.)
         bailed_candidates_per_anchor: Dict[str, List[Dict[str, Any]]] = {a: [] for a in distinct_anchors}
         total_bailed = 0
 
-        for i, a in enumerate(distinct_anchors):
-            anchor_idf = self.idf_registry.get_idf(a)
-            # Bailout Gate: rare anchor (IDF >= bailout_tau_idf, len >= min_len_rescue)
-            if anchor_idf >= self.bailout_tau_idf and len(a) >= self.min_len_rescue:
-                anchor_emb = anchor_vecs[i:i+1] if anchor_vecs.numel() > 0 else None
-                if anchor_emb is None:
-                    continue
+        if self.bailout_tau_idf < 900.0:
+            full_tensor = self.vocab_matrix.full_stem_tensor
+            full_terms = self.vocab_matrix.full_stem_terms
+            if (full_tensor is not None and full_tensor.numel() > 0
+                    and anchor_vecs.numel() > 0 and len(full_terms) == full_tensor.shape[0]):
+                for i, a in enumerate(distinct_anchors):
+                    # IMPORTANT anchor gate: out-of-pool only (in-pool anchors are already served by IT-MPE)
+                    if self.bailout_out_of_pool_only and a in vocab_terms_set:
+                        continue
+                    anchor_idf = float(anchor_idfs_np[i])
+                    # RARE anchor gate
+                    if anchor_idf < self.bailout_tau_idf or len(a) < self.min_len_rescue:
+                        continue
 
-                tau_sim_a = self.tau_base + self.delta_tau * min(1.0, anchor_idf / max_corpus_idf)
+                    # Cosine of this anchor against the FULL corpus (not the boundary prefix map)
+                    cossims = torch.mv(full_tensor, anchor_vecs[i])  # [N_full]
+                    above = (cossims >= self.bailout_tau_sim).nonzero(as_tuple=False).flatten()
 
-                # O(1) Pre-indexed Boundary Candidates Lookup from Registry
-                matching_terms = [
-                    t for t in self.idf_registry.get_boundary_candidates(a)
-                    if t not in vocab_terms_set and t != a and len(t) >= 2
-                ]
+                    cands = []
+                    for idx in above.tolist():
+                        t = full_terms[idx]
+                        if t == a or t in vocab_terms_set:
+                            continue
+                        cands.append((t, float(cossims[idx]), float(self.idf_registry.get_idf(t))))
 
-                if matching_terms:
-                    valid_stems, cand_mat = self.vocab_matrix.get_stem_embeddings_batch(matching_terms)
-                    if cand_mat.numel() > 0:
-                        cossims = torch.mv(cand_mat, anchor_emb.squeeze(0)).cpu().numpy()
-                        above_indices = np.where(cossims >= tau_sim_a)[0]
+                    if not cands:
+                        continue
 
-                        for idx in above_indices:
-                            cand_term = valid_stems[idx]
-                            cossim = float(cossims[idx])
-                            cand_idf = self.idf_registry.get_idf(cand_term)
-                            damped_w = anchor_base_weights[a] * min(1.0, anchor_idf / max(cand_idf, 1e-6))
-                            bailed_candidates_per_anchor[a].append({
-                                "term": cand_term,
-                                "similarity": round(cossim, 4),
-                                "idf": round(cand_idf, 4),
-                                "weight": round(damped_w, 4)
-                            })
-                            total_bailed += 1
+                    # Normalized-cosine allocation over bailout candidates (same discipline as IT-MPE)
+                    sum_sims = sum(c for _, c, _ in cands)
+                    denom = max(sum_sims, 1e-9)
+                    for t, c, cand_idf in cands:
+                        damped = min(1.0, anchor_idf / max(cand_idf, 1e-6))
+                        w_bail = anchor_base_weights_np[i] * damped * mu_q * (c / denom)
+                        # epsilon mass floor pruning
+                        if self.mass_floor > 0.0 and w_bail < self.mass_floor * anchor_base_weights_np[i]:
+                            continue
+                        bailed_candidates_per_anchor[a].append({
+                            "term": t,
+                            "similarity": round(c, 4),
+                            "idf": round(cand_idf, 4),
+                            "weight": round(w_bail, 4)
+                        })
+                        total_bailed += 1
         t_p2_bail = time.perf_counter()
 
         # --- PHASE 3: Dense Semantic Probing & Adaptive Gating ---
@@ -237,21 +259,14 @@ class V7AspectExtractor:
         t_p3_prob = time.perf_counter()
 
         # --- PHASE 4: Vectorized SIMD IT-MPE Mass Allocation & Sparse Vector Compilation ---
-        anchor_idfs_np = np.array([self.idf_registry.get_idf(a) for a in distinct_anchors], dtype=np.float32)
-        anchor_base_weights_np = np.array([anchor_base_weights[a] for a in distinct_anchors], dtype=np.float32)
-        max_query_idf = float(np.max(anchor_idfs_np)) if len(anchor_idfs_np) > 0 else max_corpus_idf
-
-        # Query Expansion Budget mu(Q)
-        mu_q = self.mu_ceil * (1.0 - self.eta * min(1.0, max_query_idf / max_corpus_idf))
-        mu_q = max(0.0, min(1.0, mu_q))
-
+        # (anchor_idfs_np, anchor_base_weights_np, max_query_idf, mu_q computed once in Phase 2)
         tau_sim_vec = self.tau_base + self.delta_tau * np.minimum(1.0, anchor_idfs_np / max_corpus_idf)
         vocab_terms = self.vocab_matrix.vocab_terms
 
         # Step 4: Fast Vectorized Anchor Base-Weight Init
         final_term_weights: Dict[str, float] = dict(zip(distinct_anchors, anchor_base_weights_np.tolist()))
 
-        # Apply Bailout Candidates Directly (Outside mu budget)
+        # Apply bailout candidates (weights already mu/epsilon-disciplined in Phase 2)
         for a in distinct_anchors:
             for b in bailed_candidates_per_anchor.get(a, []):
                 final_term_weights[b["term"]] = final_term_weights.get(b["term"], 0.0) + b["weight"]

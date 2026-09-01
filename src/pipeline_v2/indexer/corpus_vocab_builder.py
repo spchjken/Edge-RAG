@@ -170,3 +170,45 @@ class CorpusVocabBuilder:
             ]
             scored.sort(key=lambda x: x[1], reverse=True)
             return [s for s, _ in scored[:self.max_vocab_size]]
+
+    def _select_pool(self, candidate_stems: List[str], strategy: str, seed: int) -> List[str]:
+        """Selects the top-N pool from candidate_stems by strategy (salience/idf/random)."""
+        if strategy == "idf":
+            scored = [(s, self.idf_registry.get_idf(s)) for s in candidate_stems]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [s for s, _ in scored[:self.max_vocab_size]]
+        elif strategy == "random":
+            rng = random.Random(seed)
+            return rng.sample(candidate_stems, self.max_vocab_size)
+        else:  # salience
+            scored = [
+                (s, self.idf_registry.get_idf(s) * math.log(1.0 + self.idf_registry.doc_freqs.get(s, 1)))
+                for s in candidate_stems
+            ]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [s for s, _ in scored[:self.max_vocab_size]]
+
+    def build_pool_with_full(
+        self,
+        corpus: List[str],
+        strategy: str = "salience",
+        seed: int = 42
+    ) -> Tuple[List[str], List[str], List[str]]:
+        """
+        Builds the N-selected pool AND returns the full filtered corpus vocabulary.
+
+        Returns:
+            (pool_stems, full_stems, full_surfaces):
+              - pool_stems: top-N selection by strategy (salience/idf/random).
+              - full_stems / full_surfaces: the complete filtered candidate vocabulary
+                (aligned) for full-corpus storage in DenseVocabMatrix.
+        """
+        candidate_stems, canonical_surfaces = self.extract_candidates_with_surface_forms(corpus)
+        if not candidate_stems:
+            return [], [], []
+
+        if len(candidate_stems) <= self.max_vocab_size:
+            pool_stems = list(candidate_stems)
+        else:
+            pool_stems = self._select_pool(candidate_stems, strategy, seed)
+        return pool_stems, candidate_stems, canonical_surfaces
