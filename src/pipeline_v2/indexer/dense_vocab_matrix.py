@@ -28,12 +28,11 @@ def suppress_progress_bars():
 def get_cached_bge_model(model_name: str, use_gpu: bool) -> FlagModel:
     key = f"{model_name}_{use_gpu}"
     if key not in _BGE_MODEL_CACHE:
-        with suppress_progress_bars():
-            _BGE_MODEL_CACHE[key] = FlagModel(
-                model_name,
-                query_instruction_for_retrieval="Represent this sentence for searching relevant passages:",
-                use_fp16=use_gpu
-            )
+        _BGE_MODEL_CACHE[key] = FlagModel(
+            model_name,
+            query_instruction_for_retrieval="Represent this sentence for searching relevant passages:",
+            use_fp16=use_gpu
+        )
     return _BGE_MODEL_CACHE[key]
 
 
@@ -46,15 +45,25 @@ class DenseVocabMatrix:
     2. Supports Farthest-Point Sampling (FPS) for coverage/hub pool selection.
     3. Caches full stem embedding matrix for 0ms query-time bailout candidate assessment.
     4. Evaluates 1-pass batch GEMM anchor-vocab projection.
+    5. Direct zero-overhead PyTorch FP16 forward + in-pool GPU tensor slicing for query anchors.
     """
 
     def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", use_gpu: bool = True):
         self.model_name = model_name
         self.use_gpu = use_gpu and torch.cuda.is_available()
+        self.device = "cuda" if self.use_gpu else "cpu"
         self.model = get_cached_bge_model(model_name, self.use_gpu)
+        self.hf_model = self.model.model
+        self.hf_tokenizer = self.model.tokenizer
+        self.hf_model.eval()
+        if self.device == "cuda":
+            self.hf_model = self.hf_model.half().to(self.device)
+
         self.vocab_terms: List[str] = []
         self.vocab_embeddings: Optional[torch.Tensor] = None
         self.full_stem_map: Dict[str, torch.Tensor] = {}
+        self.full_stem_tensor: Optional[torch.Tensor] = None
+        self.stem_to_idx: Dict[str, int] = {}
 
     def build(self, vocab_stems: List[str], surface_forms: Optional[List[str]] = None, batch_size: int = 512) -> torch.Tensor:
         """
@@ -63,24 +72,26 @@ class DenseVocabMatrix:
         """
         self.vocab_terms = vocab_stems
         if not vocab_stems:
-            self.vocab_embeddings = torch.empty((0, 384))
+            self.vocab_embeddings = torch.empty((0, 384), device=self.device)
             return self.vocab_embeddings
 
         texts = surface_forms if (surface_forms and len(surface_forms) == len(vocab_stems)) else vocab_stems
         all_embs_list = []
-        with suppress_progress_bars():
+
+        with torch.no_grad():
             for i in range(0, len(texts), batch_size):
                 chunk = texts[i:i + batch_size]
-                emb_chunk = self.model.encode(chunk, batch_size=len(chunk))
-                all_embs_list.append(emb_chunk)
+                inputs = self.hf_tokenizer(chunk, padding=True, truncation=True, max_length=64, return_tensors="pt").to(self.device)
+                outputs = self.hf_model(**inputs)
+                cls_emb = outputs[0][:, 0]
+                norm_chunk = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
+                all_embs_list.append(norm_chunk)
 
         if len(all_embs_list) == 1:
-            all_embs_np = all_embs_list[0]
+            self.vocab_embeddings = all_embs_list[0]
         else:
-            all_embs_np = np.vstack(all_embs_list)
+            self.vocab_embeddings = torch.cat(all_embs_list, dim=0)
 
-        tensor_emb = torch.from_numpy(all_embs_np).float()
-        self.vocab_embeddings = torch.nn.functional.normalize(tensor_emb, p=2, dim=1)
         self.full_stem_map.clear()
         self.full_stem_tensor = self.vocab_embeddings
         self.stem_to_idx = {stem: idx for idx, stem in enumerate(vocab_stems)}
@@ -109,26 +120,25 @@ class DenseVocabMatrix:
         """
         if not all_stems:
             self.vocab_terms = []
-            self.vocab_embeddings = torch.empty((0, 384))
+            self.vocab_embeddings = torch.empty((0, 384), device=self.device)
             return self.vocab_embeddings
 
         texts_to_embed = surface_forms if (surface_forms and len(surface_forms) == len(all_stems)) else all_stems
 
-        # Batched embedding encoding
         all_embs_list = []
-        with suppress_progress_bars():
+        with torch.no_grad():
             for i in range(0, len(texts_to_embed), batch_size):
                 chunk = texts_to_embed[i:i + batch_size]
-                emb_chunk = self.model.encode(chunk, batch_size=len(chunk))
-                all_embs_list.append(emb_chunk)
+                inputs = self.hf_tokenizer(chunk, padding=True, truncation=True, max_length=64, return_tensors="pt").to(self.device)
+                outputs = self.hf_model(**inputs)
+                cls_emb = outputs[0][:, 0]
+                norm_chunk = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
+                all_embs_list.append(norm_chunk)
 
         if len(all_embs_list) == 1:
-            all_embs_np = all_embs_list[0]
+            all_embs = all_embs_list[0]
         else:
-            all_embs_np = np.vstack(all_embs_list)
-
-        all_embs = torch.from_numpy(all_embs_np).float()
-        all_embs = torch.nn.functional.normalize(all_embs, p=2, dim=1)
+            all_embs = torch.cat(all_embs_list, dim=0)
 
         # Cache all embeddings into full_stem_map and full_stem_tensor for fast bailout lookup
         self.full_stem_map.clear()
@@ -144,11 +154,9 @@ class DenseVocabMatrix:
             return self.vocab_embeddings
 
         # Greedy Farthest-Point Sampling (FPS) on PyTorch tensors without V x V pairwise matrix
-        device = torch.device("cuda" if (self.use_gpu and torch.cuda.is_available()) else "cpu")
-        embs_dev = all_embs.to(device)
+        embs_dev = all_embs
 
         selected_indices = [0]
-        # min_dists is initialized to distance (1 - cosine) from point 0
         min_dists = 1.0 - torch.mv(embs_dev, embs_dev[0])
 
         for _ in range(1, N_target):
@@ -166,8 +174,8 @@ class DenseVocabMatrix:
         Retrieves batched tensor [K, 384] for cached stems via tensor index slicing.
         Returns (valid_stems, tensor_matrix).
         """
-        if not stems or not hasattr(self, "full_stem_tensor") or self.full_stem_tensor is None:
-            return [], torch.empty((0, 384))
+        if not stems or self.full_stem_tensor is None or self.full_stem_tensor.numel() == 0:
+            return [], torch.empty((0, 384), device=self.device)
 
         valid_stems = []
         valid_indices = []
@@ -177,7 +185,7 @@ class DenseVocabMatrix:
                 valid_indices.append(self.stem_to_idx[s])
 
         if not valid_indices:
-            return [], torch.empty((0, 384))
+            return [], torch.empty((0, 384), device=self.device)
 
         return valid_stems, self.full_stem_tensor[valid_indices]
 
@@ -196,17 +204,67 @@ class DenseVocabMatrix:
 
     def encode_query(self, query: str) -> torch.Tensor:
         """Encodes query string into L2 normalized PyTorch Tensor [1, hidden_dim]."""
-        with suppress_progress_bars():
-            emb_np = self.model.encode_queries([query])
-        tensor_emb = torch.from_numpy(emb_np).float()
-        return torch.nn.functional.normalize(tensor_emb, p=2, dim=1)
+        prompt = f"Represent this sentence for searching relevant passages: {query}"
+        with torch.no_grad():
+            inputs = self.hf_tokenizer(
+                [prompt],
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt"
+            ).to(self.device)
+            outputs = self.hf_model(**inputs)
+            cls_emb = outputs[0][:, 0]
+            return torch.nn.functional.normalize(cls_emb, p=2, dim=1)
 
     def encode_terms(self, terms: List[str]) -> torch.Tensor:
-        """Encodes list of short terms/anchors into L2 normalized PyTorch Tensor [N_terms, hidden_dim]."""
+        """
+        Direct zero-overhead PyTorch FP16 encoding with in-pool GPU tensor slicing:
+        1. Slices cached rows directly from full_stem_tensor / vocab_embeddings for in-pool terms.
+        2. Direct raw PyTorch forward pass for unseen terms (bypassing FlagModel wrapper).
+        3. Returns L2 normalized PyTorch Tensor on self.device [N_terms, 384].
+        """
         if not terms:
-            return torch.empty((0, 384))
-        with suppress_progress_bars():
-            emb_np = self.model.encode(terms, batch_size=len(terms))
-        tensor_emb = torch.from_numpy(emb_np).float()
-        return torch.nn.functional.normalize(tensor_emb, p=2, dim=1)
+            return torch.empty((0, 384), device=self.device)
+
+        cached_indices = {}
+        unseen_terms = []
+        unseen_positions = []
+
+        has_stem_tensor = self.full_stem_tensor is not None and self.full_stem_tensor.numel() > 0
+        stem_dict = self.stem_to_idx
+
+        for pos, t in enumerate(terms):
+            if has_stem_tensor and t in stem_dict:
+                cached_indices[pos] = stem_dict[t]
+            else:
+                unseen_positions.append(pos)
+                unseen_terms.append(t)
+
+        out_dtype = torch.float16 if self.device == "cuda" else torch.float32
+        out_tensor = torch.empty((len(terms), 384), device=self.device, dtype=out_dtype)
+
+        # Fill in-pool sliced rows
+        if cached_indices:
+            src_indices = [cached_indices[pos] for pos in sorted(cached_indices.keys())]
+            target_positions = sorted(cached_indices.keys())
+            sliced_embs = self.full_stem_tensor[src_indices].to(self.device, dtype=out_dtype)
+            out_tensor[target_positions] = sliced_embs
+
+        # Forward pass unseen terms (if any)
+        if unseen_terms:
+            with torch.no_grad():
+                inputs = self.hf_tokenizer(
+                    unseen_terms,
+                    padding=True,
+                    truncation=True,
+                    max_length=64,
+                    return_tensors="pt"
+                ).to(self.device)
+                outputs = self.hf_model(**inputs)
+                cls_emb = outputs[0][:, 0]
+                unseen_norm = torch.nn.functional.normalize(cls_emb, p=2, dim=1)
+                out_tensor[unseen_positions] = unseen_norm
+
+        return out_tensor
 

@@ -162,6 +162,7 @@ class V7AspectExtractor:
             if a in self.idf_registry.doc_freqs or a in heur_set or len(a) >= 2:
                 distinct_anchors.append(a)
         distinct_anchors = list(dict.fromkeys(distinct_anchors))
+        t_p2_analyze = time.perf_counter()
 
         # 3. Penn Treebank POS Prior Mapping
         pos_map = self.pos_tagger.tag_query(query, heur_set)
@@ -171,6 +172,7 @@ class V7AspectExtractor:
         for a in distinct_anchors:
             cat = pos_map.get(a, "noun" if (a in heur_set or len(a) > 3) else "modifier")
             anchor_base_weights[a] = float(self.pos_ratios.get(cat, 1.0))
+        t_p2_pos = time.perf_counter()
 
         max_corpus_idf = max(self.idf_registry.max_idf, 1.0)
         vocab_terms_set = set(self.vocab_matrix.vocab_terms)
@@ -384,6 +386,9 @@ class V7AspectExtractor:
                 "expansion_budget_mu": float(mu_q),
                 "qaug_length": len(aug_tokens),
                 "timings_ms": {
+                    "anchor_analyze": round((t_p2_analyze - t_p2_0) * 1000, 3),
+                    "anchor_pos": round((t_p2_pos - t_p2_analyze) * 1000, 3),
+                    "anchor_bge": round((t_p2_anchor - t_p2_pos) * 1000, 3),
                     "anchor_encoding": round((t_p2_anchor - t_p2_0) * 1000, 3),
                     "boundary_bailout": round((t_p2_bail - t_p2_anchor) * 1000, 3),
                     "batch_gemm_probing": round((t_p3_prob - t_p2_bail) * 1000, 3),
