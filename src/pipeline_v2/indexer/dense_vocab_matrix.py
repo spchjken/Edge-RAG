@@ -215,23 +215,47 @@ class DenseVocabMatrix:
 
     def get_stem_embeddings_batch(self, stems: List[str]) -> Tuple[List[str], torch.Tensor]:
         """
-        Retrieves batched tensor [K, 384] for cached stems via tensor index slicing.
-        Returns (valid_stems, tensor_matrix).
+        Retrieves batched tensor [K, 384] for stems.
+        Looks up cached stems in full_stem_map/full_stem_tensor, and encodes any unseen
+        stems on-the-fly via encode_terms() (using CUDA Graph bucketing) and caches them.
+        Returns (valid_stems, tensor_matrix) in exact 1:1 input order.
         """
-        if not stems or self.full_stem_tensor is None or self.full_stem_tensor.numel() == 0:
+        if not stems:
             return [], torch.empty((0, 384), device=self.device)
 
-        valid_stems = []
-        valid_indices = []
+        out_dtype = torch.float16 if self.device == "cuda" else torch.float32
+
+        # 1. Identify missing stems that need on-the-fly encoding
+        missing_stems = []
         for s in stems:
-            if s in self.stem_to_idx:
-                valid_stems.append(s)
-                valid_indices.append(self.stem_to_idx[s])
+            if s not in self.full_stem_map and (self.stem_to_idx is None or s not in self.stem_to_idx):
+                if s not in missing_stems:
+                    missing_stems.append(s)
 
-        if not valid_indices:
+        # 2. Encode missing stems on-the-fly via CUDA Graph and store in full_stem_map
+        if missing_stems:
+            encoded_missing = self.encode_terms(missing_stems)
+            for i, s in enumerate(missing_stems):
+                self.full_stem_map[s] = encoded_missing[i:i+1]
+
+        # 3. Assemble aligned tensor in exact input order
+        valid_stems = []
+        embs_list = []
+        for s in stems:
+            if s in self.full_stem_map:
+                valid_stems.append(s)
+                embs_list.append(self.full_stem_map[s])
+            elif self.full_stem_tensor is not None and s in self.stem_to_idx:
+                idx = self.stem_to_idx[s]
+                valid_stems.append(s)
+                emb = self.full_stem_tensor[idx:idx+1].to(self.device, dtype=out_dtype)
+                self.full_stem_map[s] = emb
+                embs_list.append(emb)
+
+        if not embs_list:
             return [], torch.empty((0, 384), device=self.device)
 
-        return valid_stems, self.full_stem_tensor[valid_indices]
+        return valid_stems, torch.cat(embs_list, dim=0)
 
     def get_stem_embedding(self, stem: str) -> Optional[torch.Tensor]:
         """

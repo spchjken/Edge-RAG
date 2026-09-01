@@ -94,7 +94,7 @@ class V7AspectExtractor:
         mu_ceil: float = 0.50,
         eta: float = 0.0,
         pos_ratios: Optional[Dict[str, float]] = None,
-        bailout_tau_idf: float = 3.0,
+        bailout_tau_idf: float = 999.0,
         min_len_rescue: int = 3,
         mass_floor: float = 0.0,
         epsilon: Optional[float] = None,
@@ -187,8 +187,8 @@ class V7AspectExtractor:
 
         for i, a in enumerate(distinct_anchors):
             anchor_idf = self.idf_registry.get_idf(a)
-            # Bailout Gate: rare anchor (IDF >= bailout_tau_idf, len >= min_len_rescue) OR technical entity
-            if (anchor_idf >= self.bailout_tau_idf and len(a) >= self.min_len_rescue) or (a in heur_set):
+            # Bailout Gate: rare anchor (IDF >= bailout_tau_idf, len >= min_len_rescue)
+            if anchor_idf >= self.bailout_tau_idf and len(a) >= self.min_len_rescue:
                 anchor_emb = anchor_vecs[i:i+1] if anchor_vecs.numel() > 0 else None
                 if anchor_emb is None:
                     continue
