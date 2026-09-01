@@ -237,16 +237,17 @@ class V7AspectExtractor:
             sim_matrix_np = np.empty((len(distinct_anchors), 0))
         t_p3_prob = time.perf_counter()
 
-        # --- PHASE 4: IT-MPE Mass Allocation & Sparse Vector Compilation ---
-        anchor_idfs = [self.idf_registry.get_idf(a) for a in distinct_anchors]
-        max_query_idf = max(anchor_idfs) if anchor_idfs else max_corpus_idf
+        # --- PHASE 4: Vectorized SIMD IT-MPE Mass Allocation & Sparse Vector Compilation ---
+        anchor_idfs_np = np.array([self.idf_registry.get_idf(a) for a in distinct_anchors], dtype=np.float32)
+        anchor_base_weights_np = np.array([anchor_base_weights[a] for a in distinct_anchors], dtype=np.float32)
+        max_query_idf = float(np.max(anchor_idfs_np)) if len(anchor_idfs_np) > 0 else max_corpus_idf
 
         # Query Expansion Budget mu(Q)
         mu_q = self.mu_ceil * (1.0 - self.eta * min(1.0, max_query_idf / max_corpus_idf))
         mu_q = max(0.0, min(1.0, mu_q))
 
-        aspects = []
-        aspect_traces = []
+        tau_sim_vec = self.tau_base + self.delta_tau * np.minimum(1.0, anchor_idfs_np / max_corpus_idf)
+
         vocab_terms = self.vocab_matrix.vocab_terms
         final_term_weights: Dict[str, float] = {}
 
@@ -254,98 +255,114 @@ class V7AspectExtractor:
         for a in distinct_anchors:
             final_term_weights[a] = anchor_base_weights[a]
 
+        # Apply Bailout Candidates Directly (Outside mu budget)
+        total_bailed = 0
+        for a in distinct_anchors:
+            for b in bailed_candidates_per_anchor.get(a, []):
+                final_term_weights[b["term"]] = final_term_weights.get(b["term"], 0.0) + b["weight"]
+                total_bailed += 1
+
         total_cands_above_tau = 0
         total_synonyms_injected = 0
         starved_aspects = 0
+        aspects = []
+        aspect_traces = []
 
-        for i, a in enumerate(distinct_anchors):
-            anchor_idf = self.idf_registry.get_idf(a)
-            tau_sim_a = self.tau_base + self.delta_tau * min(1.0, anchor_idf / max_corpus_idf)
+        if len(distinct_anchors) > 0 and sim_matrix_np.shape[1] > 0 and mu_q > 0:
+            effective_sims = sim_matrix_np.copy()
 
-            # 1. Apply Bailout Candidates Directly (Outside mu budget)
-            bailed_list = bailed_candidates_per_anchor.get(a, [])
-            for b in bailed_list:
-                final_term_weights[b["term"]] = final_term_weights.get(b["term"], 0.0) + b["weight"]
+            # Handle Gate Variants
+            if self.gate_variant == "two_gate" and query_sim_np is not None:
+                effective_sims = np.where(query_sim_np[None, :] >= 0.40, effective_sims, 0.0)
+            elif self.gate_variant == "soft_reweight" and query_sim_np is not None:
+                effective_sims = effective_sims * np.maximum(0.0, query_sim_np[None, :])
 
-            # 2. Extract In-Pool Candidates Passing Gate (for IT-MPE Simplex Distribution)
-            passed_cands: List[Tuple[str, float, float]] = []  # (term, sim, idf)
-            if sim_matrix_np.shape[1] > 0:
-                sims_a = sim_matrix_np[i]
-                above_indices = np.where(sims_a >= tau_sim_a)[0]
-                total_cands_above_tau += len(above_indices)
+            # 1. Vectorized Boolean Mask
+            mask = (effective_sims >= tau_sim_vec[:, None])
 
-                for idx in above_indices:
-                    cand = vocab_terms[idx]
-                    if cand == a:
-                        continue
-                    sim_val = float(sims_a[idx])
+            # Mask exact self-anchor matches in vocab
+            vocab_term_to_idx = {t: idx for idx, t in enumerate(vocab_terms)}
+            for i, a in enumerate(distinct_anchors):
+                if a in vocab_term_to_idx:
+                    mask[i, vocab_term_to_idx[a]] = False
 
-                    # Handle Gate Variants
-                    if self.gate_variant == "two_gate" and query_sim_np is not None:
-                        if query_sim_np[idx] < 0.40:
-                            continue
-                    elif self.gate_variant == "soft_reweight" and query_sim_np is not None:
-                        sim_val = sim_val * max(0.0, float(query_sim_np[idx]))
+            total_cands_above_tau = int(np.sum(mask))
+            masked_sims = np.where(mask, effective_sims, 0.0)
 
-                    cand_idf = float(self.vocab_idfs_np[idx]) if len(self.vocab_idfs_np) > idx else self.idf_registry.get_idf(cand)
-                    passed_cands.append((cand, sim_val, cand_idf))
+            # 2. Probability Allocation Matrix p(s | a)
+            if self.allocation == "uniform":
+                counts = np.sum(mask, axis=1, keepdims=True)
+                p_cond_mat = np.where(mask, 1.0 / np.where(counts == 0, 1.0, counts), 0.0)
+            elif "softmax" in self.allocation:
+                tau = 0.1 if "0.1" in self.allocation else 1.0
+                exp_sims = np.exp(np.where(mask, (effective_sims - np.max(effective_sims, axis=1, keepdims=True)) / tau, -100.0))
+                exp_sims = np.where(mask, exp_sims, 0.0)
+                sum_exp = np.sum(exp_sims, axis=1, keepdims=True)
+                p_cond_mat = exp_sims / np.where(sum_exp == 0, 1.0, sum_exp)
+            else:
+                # Default: normalized_cosine
+                sum_sims = np.sum(masked_sims, axis=1, keepdims=True)
+                p_cond_mat = masked_sims / np.where(sum_sims == 0, 1.0, sum_sims)
 
-            # 3. Distribute IT-MPE Mass across in-pool semantic candidates
-            synonym_entries = []
-            if not passed_cands:
-                starved_aspects += 1
-            elif mu_q > 0:
-                # Deduplicate by term keeping highest similarity
-                best_cands: Dict[str, Tuple[float, float]] = {}
-                for cand, sim_val, cand_idf in passed_cands:
-                    if cand not in best_cands or sim_val > best_cands[cand][0]:
-                        best_cands[cand] = (sim_val, cand_idf)
+            # 3. Vectorized Score-Space Damping: min(1.0, IDF_a / IDF_s)
+            vocab_idfs = self.vocab_idfs_np[None, :] if len(self.vocab_idfs_np) > 0 else np.ones((1, len(vocab_terms)), dtype=np.float32)
+            damping_mat = np.minimum(1.0, anchor_idfs_np[:, None] / np.maximum(vocab_idfs, 1e-6))
 
-                # Allocation Distribution Probability p(s | a)
-                if self.allocation == "uniform":
-                    k_total = len(best_cands)
-                    p_cond_map = {c: 1.0 / k_total for c in best_cands}
-                elif "softmax" in self.allocation:
-                    tau = 0.1 if "0.1" in self.allocation else 1.0
-                    sim_arr = np.array([v[0] for v in best_cands.values()], dtype=np.float64)
-                    exp_sim = np.exp((sim_arr - np.max(sim_arr)) / tau)
-                    p_arr = exp_sim / np.sum(exp_sim)
-                    p_cond_map = {c: float(p) for c, p in zip(best_cands.keys(), p_arr)}
-                else:
-                    # Default: normalized_cosine
-                    sum_cos = sum(v[0] for v in best_cands.values())
-                    p_cond_map = {c: (v[0] / sum_cos) if sum_cos > 0 else (1.0 / len(best_cands)) for c, v in best_cands.items()}
+            # 4. Injected Weights Matrix: W[i, j] = w_a * damping * mu_q * p(s | a)
+            w_syn_mat = anchor_base_weights_np[:, None] * damping_mat * (mu_q * p_cond_mat)
 
-                for cand, (sim_val, cand_idf) in best_cands.items():
-                    p_cond = p_cond_map.get(cand, 0.0)
-                    # Score-space damping: min(1.0, IDF_a / IDF_s)
-                    score_damping = min(1.0, anchor_idf / max(cand_idf, 1e-6))
-                    w_syn = anchor_base_weights[a] * score_damping * (mu_q * p_cond)
+            # 5. Mass Floor Pruning: drop w(s | a) < epsilon * w(a)
+            if self.mass_floor > 0.0:
+                floor_thresh = self.mass_floor * anchor_base_weights_np[:, None]
+                w_syn_mat = np.where(w_syn_mat >= floor_thresh, w_syn_mat, 0.0)
 
-                    # Mass floor: drop synonyms with w(s | a) < epsilon * w(a)
-                    if self.mass_floor > 0.0 and w_syn < (self.mass_floor * anchor_base_weights[a]):
-                        continue
+            # 6. Column-wise Collision Sum into Sparse Dictionary
+            syn_weights_per_term = np.sum(w_syn_mat, axis=0)
+            non_zero_vocab_indices = np.where(syn_weights_per_term > 0)[0]
+            for v_idx in non_zero_vocab_indices:
+                cand = vocab_terms[v_idx]
+                w_val = float(syn_weights_per_term[v_idx])
+                final_term_weights[cand] = final_term_weights.get(cand, 0.0) + round(w_val, 4)
 
-                    synonym_entries.append({
-                        "term": cand,
-                        "similarity": round(sim_val, 4),
-                        "weight": round(w_syn, 4)
+            # 7. Compile Aspects Data for Tracing
+            for i, a in enumerate(distinct_anchors):
+                active_cand_indices = np.where(w_syn_mat[i] > 0)[0]
+                if len(active_cand_indices) == 0:
+                    starved_aspects += 1
+                syn_entries = []
+                for v_idx in active_cand_indices:
+                    syn_entries.append({
+                        "term": vocab_terms[v_idx],
+                        "similarity": round(float(effective_sims[i, v_idx]), 4),
+                        "weight": round(float(w_syn_mat[i, v_idx]), 4)
                     })
-                    # Sum weights on collision (Lucene boost-summing per Theory Corollary 2)
-                    final_term_weights[cand] = final_term_weights.get(cand, 0.0) + round(w_syn, 4)
                     total_synonyms_injected += 1
 
-            aspect_data = {
-                "anchor": a,
-                "anchor_reps": 1,
-                "anchor_base_weight": anchor_base_weights[a],
-                "anchor_idf": round(anchor_idf, 3),
-                "tau_sim_a": round(tau_sim_a, 4),
-                "synonyms": synonym_entries,
-                "bailed_candidates": bailed_list
-            }
-            aspects.append(aspect_data)
-            aspect_traces.append(aspect_data)
+                aspect_data = {
+                    "anchor": a,
+                    "anchor_reps": 1,
+                    "anchor_base_weight": float(anchor_base_weights_np[i]),
+                    "anchor_idf": round(float(anchor_idfs_np[i]), 3),
+                    "tau_sim_a": round(float(tau_sim_vec[i]), 4),
+                    "synonyms": syn_entries,
+                    "bailed_candidates": bailed_candidates_per_anchor.get(a, [])
+                }
+                aspects.append(aspect_data)
+                aspect_traces.append(aspect_data)
+        else:
+            for i, a in enumerate(distinct_anchors):
+                aspect_data = {
+                    "anchor": a,
+                    "anchor_reps": 1,
+                    "anchor_base_weight": float(anchor_base_weights_np[i]),
+                    "anchor_idf": round(float(anchor_idfs_np[i]), 3),
+                    "tau_sim_a": round(float(tau_sim_vec[i]), 4),
+                    "synonyms": [],
+                    "bailed_candidates": bailed_candidates_per_anchor.get(a, [])
+                }
+                aspects.append(aspect_data)
+                aspect_traces.append(aspect_data)
+
         t_p4_end = time.perf_counter()
 
         # Build augmented token list for logging/backwards compatibility
