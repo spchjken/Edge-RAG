@@ -99,7 +99,8 @@ class V7AspectExtractor:
         mass_floor: float = 0.0,
         epsilon: Optional[float] = None,
         allocation: str = "normalized_cosine",
-        gate_variant: str = "single"
+        gate_variant: str = "single",
+        trace: bool = False
     ):
         self.idf_registry = idf_registry
         self.vocab_matrix = vocab_matrix
@@ -115,7 +116,9 @@ class V7AspectExtractor:
         self.mass_floor = float(epsilon) if epsilon is not None else float(mass_floor)
         self.allocation = allocation
         self.gate_variant = gate_variant
+        self.trace = trace
         self.pos_tagger = POSTaggerHelper()
+        self.vocab_term_to_idx = {t: i for i, t in enumerate(self.vocab_matrix.vocab_terms)}
         self.vocab_idfs_np = np.array(
             [self.idf_registry.get_idf(t) for t in self.vocab_matrix.vocab_terms],
             dtype=np.float32
@@ -135,17 +138,12 @@ class V7AspectExtractor:
         entities.extend(quoted)
         return list(dict.fromkeys(entities))
 
-    def extract(self, query: str, top_candidate_chunks: Optional[List[str]] = None) -> Dict[str, Any]:
+    def extract(self, query: str, top_candidate_chunks: Optional[List[str]] = None, trace: Optional[bool] = None) -> Dict[str, Any]:
         """
         Executes V7 Phase 2 -> Phase 3 -> Phase 4.
-        Returns:
-            {
-                "aspects": [...],
-                "augmented_token_list": [...],
-                "term_weights": {...},
-                "telemetry": {...}
-            }
         """
+        do_trace = self.trace if trace is None else trace
+
         # --- PHASE 2: Anchored Aspect Groups & POS Prior Weighting ---
         t_p2_0 = time.perf_counter()
         heuristic_entities = self.extract_heuristics(query)
@@ -153,7 +151,6 @@ class V7AspectExtractor:
 
         # 1. Analyzed stems as anchors (p = 1.0)
         analyzed_anchors = self.analyzer.analyze(query)
-        heuristic_entities = self.extract_heuristics(query)
         analyzed_heuristics = []
         for h in heuristic_entities:
             analyzed_heuristics.extend(self.analyzer.analyze(h))
@@ -247,20 +244,15 @@ class V7AspectExtractor:
         mu_q = max(0.0, min(1.0, mu_q))
 
         tau_sim_vec = self.tau_base + self.delta_tau * np.minimum(1.0, anchor_idfs_np / max_corpus_idf)
-
         vocab_terms = self.vocab_matrix.vocab_terms
-        final_term_weights: Dict[str, float] = {}
 
-        # Initialize base anchor weights in sparse vector
-        for a in distinct_anchors:
-            final_term_weights[a] = anchor_base_weights[a]
+        # Step 4: Fast Vectorized Anchor Base-Weight Init
+        final_term_weights: Dict[str, float] = dict(zip(distinct_anchors, anchor_base_weights_np.tolist()))
 
         # Apply Bailout Candidates Directly (Outside mu budget)
-        total_bailed = 0
         for a in distinct_anchors:
             for b in bailed_candidates_per_anchor.get(a, []):
                 final_term_weights[b["term"]] = final_term_weights.get(b["term"], 0.0) + b["weight"]
-                total_bailed += 1
 
         total_cands_above_tau = 0
         total_synonyms_injected = 0
@@ -280,11 +272,11 @@ class V7AspectExtractor:
             # 1. Vectorized Boolean Mask
             mask = (effective_sims >= tau_sim_vec[:, None])
 
-            # Mask exact self-anchor matches in vocab
-            vocab_term_to_idx = {t: idx for idx, t in enumerate(vocab_terms)}
-            for i, a in enumerate(distinct_anchors):
-                if a in vocab_term_to_idx:
-                    mask[i, vocab_term_to_idx[a]] = False
+            # Step 3: Fast Vectorized Self-Anchor Mask
+            anchor_cols = [self.vocab_term_to_idx[a] for a in distinct_anchors if a in self.vocab_term_to_idx]
+            if anchor_cols:
+                rows = [i for i, a in enumerate(distinct_anchors) if a in self.vocab_term_to_idx]
+                mask[rows, anchor_cols] = False
 
             total_cands_above_tau = int(np.sum(mask))
             masked_sims = np.where(mask, effective_sims, 0.0)
@@ -316,67 +308,65 @@ class V7AspectExtractor:
                 floor_thresh = self.mass_floor * anchor_base_weights_np[:, None]
                 w_syn_mat = np.where(w_syn_mat >= floor_thresh, w_syn_mat, 0.0)
 
-            # 6. Column-wise Collision Sum into Sparse Dictionary
+            # Step 5: Vectorized Column-wise Collision Sum into Sparse Dictionary
             syn_weights_per_term = np.sum(w_syn_mat, axis=0)
             non_zero_vocab_indices = np.where(syn_weights_per_term > 0)[0]
-            for v_idx in non_zero_vocab_indices:
+            rounded_weights = np.round(syn_weights_per_term[non_zero_vocab_indices], 4)
+            for v_idx, w_val in zip(non_zero_vocab_indices, rounded_weights):
                 cand = vocab_terms[v_idx]
-                w_val = float(syn_weights_per_term[v_idx])
-                final_term_weights[cand] = final_term_weights.get(cand, 0.0) + round(w_val, 4)
+                final_term_weights[cand] = final_term_weights.get(cand, 0.0) + float(w_val)
 
-            # 7. Compile Aspects Data for Tracing
-            for i, a in enumerate(distinct_anchors):
-                active_cand_indices = np.where(w_syn_mat[i] > 0)[0]
-                if len(active_cand_indices) == 0:
-                    starved_aspects += 1
-                syn_entries = []
-                for v_idx in active_cand_indices:
-                    syn_entries.append({
-                        "term": vocab_terms[v_idx],
-                        "similarity": round(float(effective_sims[i, v_idx]), 4),
-                        "weight": round(float(w_syn_mat[i, v_idx]), 4)
-                    })
-                    total_synonyms_injected += 1
+            # Step 1: Optional/Lazy Trace Compilation
+            if do_trace:
+                for i, a in enumerate(distinct_anchors):
+                    active_cand_indices = np.where(w_syn_mat[i] > 0)[0]
+                    if len(active_cand_indices) == 0:
+                        starved_aspects += 1
+                    syn_entries = []
+                    for v_idx in active_cand_indices:
+                        syn_entries.append({
+                            "term": vocab_terms[v_idx],
+                            "similarity": round(float(effective_sims[i, v_idx]), 4),
+                            "weight": round(float(w_syn_mat[i, v_idx]), 4)
+                        })
+                        total_synonyms_injected += 1
 
-                aspect_data = {
-                    "anchor": a,
-                    "anchor_reps": 1,
-                    "anchor_base_weight": float(anchor_base_weights_np[i]),
-                    "anchor_idf": round(float(anchor_idfs_np[i]), 3),
-                    "tau_sim_a": round(float(tau_sim_vec[i]), 4),
-                    "synonyms": syn_entries,
-                    "bailed_candidates": bailed_candidates_per_anchor.get(a, [])
-                }
-                aspects.append(aspect_data)
-                aspect_traces.append(aspect_data)
+                    aspect_data = {
+                        "anchor": a,
+                        "anchor_reps": 1,
+                        "anchor_base_weight": float(anchor_base_weights_np[i]),
+                        "anchor_idf": round(float(anchor_idfs_np[i]), 3),
+                        "tau_sim_a": round(float(tau_sim_vec[i]), 4),
+                        "synonyms": syn_entries,
+                        "bailed_candidates": bailed_candidates_per_anchor.get(a, [])
+                    }
+                    aspects.append(aspect_data)
+                    aspect_traces.append(aspect_data)
+                unique_syns_count = len({s["term"] for a in aspects for s in a["synonyms"]})
+                aug_tokens = [a["anchor"] for a in aspects] + [s["term"] for a in aspects for s in a["synonyms"]]
+            else:
+                total_synonyms_injected = int(np.count_nonzero(w_syn_mat))
+                starved_aspects = int(np.sum(np.count_nonzero(w_syn_mat, axis=1) == 0))
+                unique_syns_count = len(non_zero_vocab_indices)
+                aug_tokens = list(final_term_weights.keys())
         else:
-            for i, a in enumerate(distinct_anchors):
-                aspect_data = {
-                    "anchor": a,
-                    "anchor_reps": 1,
-                    "anchor_base_weight": float(anchor_base_weights_np[i]),
-                    "anchor_idf": round(float(anchor_idfs_np[i]), 3),
-                    "tau_sim_a": round(float(tau_sim_vec[i]), 4),
-                    "synonyms": [],
-                    "bailed_candidates": bailed_candidates_per_anchor.get(a, [])
-                }
-                aspects.append(aspect_data)
-                aspect_traces.append(aspect_data)
+            if do_trace:
+                for i, a in enumerate(distinct_anchors):
+                    aspect_data = {
+                        "anchor": a,
+                        "anchor_reps": 1,
+                        "anchor_base_weight": float(anchor_base_weights_np[i]),
+                        "anchor_idf": round(float(anchor_idfs_np[i]), 3),
+                        "tau_sim_a": round(float(tau_sim_vec[i]), 4),
+                        "synonyms": [],
+                        "bailed_candidates": bailed_candidates_per_anchor.get(a, [])
+                    }
+                    aspects.append(aspect_data)
+                    aspect_traces.append(aspect_data)
+            unique_syns_count = 0
+            aug_tokens = list(distinct_anchors)
 
         t_p4_end = time.perf_counter()
-
-        # Build augmented token list for logging/backwards compatibility
-        aug_tokens = []
-        for a in aspects:
-            aug_tokens.append(a["anchor"])
-            for s in a["synonyms"]:
-                aug_tokens.append(s["term"])
-
-        # Calculate unique synonyms
-        unique_syns_set = set()
-        for a in aspects:
-            for s in a["synonyms"]:
-                unique_syns_set.add(s["term"])
 
         return {
             "aspects": aspects,
@@ -387,7 +377,7 @@ class V7AspectExtractor:
                 "total_candidates_above_tau": total_cands_above_tau,
                 "total_synonyms_injected": total_synonyms_injected,
                 "total_synonym_links": total_synonyms_injected,
-                "unique_synonyms": len(unique_syns_set),
+                "unique_synonyms": unique_syns_count,
                 "final_qvec_len": len(final_term_weights),
                 "total_bailed_candidates": total_bailed,
                 "starved_aspects_count": starved_aspects,
