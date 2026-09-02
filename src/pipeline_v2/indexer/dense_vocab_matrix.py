@@ -36,7 +36,7 @@ def get_cached_bge_model(model_name: str, use_gpu: bool) -> FlagModel:
     return _BGE_MODEL_CACHE[key]
 
 
-CUDA_GRAPH_BUCKETS = [8, 16, 32, 64, 128, 256, 512]
+CUDA_GRAPH_BUCKETS = [8, 16, 32, 64, 128]
 MAX_ANCHOR_SEQ_LEN = 16
 
 
@@ -50,7 +50,7 @@ class DenseVocabMatrix:
     3. Caches full stem embedding matrix for 0ms query-time bailout candidate assessment.
     4. Evaluates 1-pass batch GEMM anchor-vocab projection.
     5. Direct zero-overhead PyTorch FP16 forward + in-pool GPU tensor slicing for query anchors.
-    6. Static-shape CUDA Graph bucketing ({8, 16, 32, 64, 128, 256, 512}) for sub-millisecond anchor execution.
+    6. Static-shape CUDA Graph bucketing ({8, 16, 32, 64, 128}) for sub-millisecond anchor execution.
     """
 
     def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", use_gpu: bool = True):
@@ -63,6 +63,8 @@ class DenseVocabMatrix:
         self.hf_model.eval()
         if self.device == "cuda":
             self.hf_model = self.hf_model.half().to(self.device)
+        for p in self.hf_model.parameters():
+            p.requires_grad = False
 
         self.vocab_terms: List[str] = []
         self.vocab_embeddings: Optional[torch.Tensor] = None

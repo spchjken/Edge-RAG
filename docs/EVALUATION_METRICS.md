@@ -66,6 +66,15 @@ Evaluated at standard retrieval cutoffs: $K \in \{10, 20, 30, 50\}$.
 
 ---
 
+### 2.7 `nDCG@K` (Normalized Discounted Cumulative Gain@K)
+- **Definition:** Measures ranking quality by penalizing relevant documents retrieved at lower rank positions, normalized against the Ideal Discounted Cumulative Gain (IDCG).
+- **Formula:**
+  $$\text{DCG@K} = \sum_{i=1}^{K} \frac{\mathbb{I}\left(d_i \in \text{Gold}(q)\right)}{\log_2(i + 1)}$$
+  $$\text{IDCG@K} = \sum_{j=1}^{\min\left(K, |\text{Gold}(q)|\right)} \frac{1}{\log_2(j + 1)}$$
+  $$\text{nDCG@K} = \frac{1}{|Q|} \sum_{q \in Q} \begin{cases} \frac{\text{DCG@K}(q)}{\text{IDCG@K}(q)} & \text{if } \text{IDCG@K}(q) > 0 \\ 0.0 & \text{otherwise} \end{cases}$$
+
+---
+
 ## 3. Query Level Expansion & Telemetry Metrics
 
 ### 3.1 Aggregate Query & Expansion Metrics (Corpus Sweep Level)
