@@ -25,7 +25,7 @@ class CorpusVocabBuilder:
     def __init__(
         self,
         idf_registry: CorpusIDFRegistry,
-        max_vocab_size: int = 2500,
+        max_vocab_size: int = 50000,
         analyzer: Optional[EdgeRAGAnalyzer] = None
     ):
         self.idf_registry = idf_registry
