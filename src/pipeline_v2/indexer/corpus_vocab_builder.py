@@ -87,6 +87,10 @@ class CorpusVocabBuilder:
             salience = idf_val * math.log(1.0 + df)
             candidate_tuples.append((stem, best_surface, salience))
 
+        if self.max_vocab_size is not None and len(candidate_tuples) > self.max_vocab_size:
+            candidate_tuples.sort(key=lambda c: -c[2])
+            candidate_tuples = candidate_tuples[:self.max_vocab_size]
+
         candidate_stems = [c[0] for c in candidate_tuples]
         canonical_surfaces = [c[1] for c in candidate_tuples]
 
@@ -118,6 +122,10 @@ class CorpusVocabBuilder:
             idf_val = self.idf_registry.get_idf(stem)
             salience = idf_val * math.log(1.0 + df)
             candidate_tuples.append((stem, best_surface, salience))
+
+        if self.max_vocab_size is not None and len(candidate_tuples) > self.max_vocab_size:
+            candidate_tuples.sort(key=lambda c: -c[2])
+            candidate_tuples = candidate_tuples[:self.max_vocab_size]
 
         candidate_stems = [c[0] for c in candidate_tuples]
         canonical_surfaces = [c[1] for c in candidate_tuples]
