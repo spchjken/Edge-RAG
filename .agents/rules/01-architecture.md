@@ -53,6 +53,7 @@ trigger: always_on
 ## 4. Evaluation & Testing (`src/evaluation/`, `scripts/`, `tests/`)
 - Orchestrates evaluations comparing Pipeline V2 against baselines (BM25, Dense BGE, SPLADE-v3).
 - Primary evaluation scripts:
+  - `scripts/results_scripts_mapping.md` — Authoritative two-column mapping of all result files to scripts/tests.
   - `scripts/run_v2_ablation_sweep.py` / `scripts/run_v7_ablation_sweep.py` — Automated multi-corpus evaluation sweeps.
   - `src/evaluation/benchmark_runner.py` — Baseline vs Edge-RAG orchestrator.
   - `src/evaluation/metrics.py` — Retrieval and generation metric evaluators.

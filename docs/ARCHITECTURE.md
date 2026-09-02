@@ -7,8 +7,8 @@ This document specifies the canonical system architecture for the **Edge-RAG Ret
 ## 1. System Overview & 5-Phase Retrieval Pipeline
 
 The Edge-RAG Retriever executes in two stages:
-1. **Index-Time Phase ($\le 5.8\text{s}$ TTI):** Builds the inverted posting lists with non-negative Lucene IDF, maps analyzed stems to canonical surface forms, selects 2,500 semantic coverage hubs via Farthest-Point Sampling (FPS) on GPU FP16, and pre-indexes compound boundary prefixes into an $O(1)$ hash map.
-2. **Query-Time Retrieval Phase ($\le 29\text{ms}$ on CPU/GPU):** Formulates all content tokens as anchors ($p=1.0$), weights by Penn Treebank POS priors, performs 1-pass batch GEMM semantic probing on GPU, executes Information-Theoretic Mass-Preserving Expansion (IT-MPE) with score-space damping in CPU NumPy cache, and scores inverted posting lists.
+1. **Index-Time Phase ($\le 14.5\text{s}$ TTI):** Builds the inverted posting lists with non-negative Lucene IDF, maps analyzed stems to canonical surface forms, extracts the decoupled $N=1,000$ semantic probing pool via sublinear salience ranking ($\text{IDF} \times \ln(1 + \text{DF})$), and pre-embeds the top $N_{\text{full}}=50,000$ candidate terms into GPU FP16 memory.
+2. **Query-Time Retrieval Phase ($\le 15.6\text{ms}$ on CPU/GPU):** Formulates all content tokens as anchors ($p=1.0$), weights by Penn Treebank POS priors, performs 1-pass GPU batch GEMM dense probing, executes GPU-Sparse Conservative Bailout for rare out-of-pool anchors ($\tau_{\text{sim}} \ge 0.80, \text{IDF} \ge 3.0$), executes Information-Theoretic Mass-Preserving Expansion (IT-MPE) with score-space damping in CPU NumPy cache, and scores inverted posting lists.
 
 ```mermaid
 graph TD
@@ -16,21 +16,21 @@ graph TD
     classDef storage fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000;
     classDef target fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000000;
 
-    subgraph Index_Time ["1. Index-Time Phase (TTI <= 5.8s)"]
+    subgraph Index_Time ["1. Index-Time Phase (TTI <= 14.5s)"]
         RawDocs[Raw Corpus Documents] --> ANALYZER_IDX[EdgeRAGAnalyzer: KStem + WordNet Overrides]:::compute
         ANALYZER_IDX --> POSTINGS[(InvertedPostingIndex: Lucene Parity Postings)]:::storage
-        ANALYZER_IDX --> IDF_REG[(CorpusIDFRegistry: Shared Lucene IDF + Boundary Map)]:::storage
-        RawDocs --> VOCAB_BUILD[CorpusVocabBuilder: Salience + Surface Mapping]:::compute
-        VOCAB_BUILD --> DENSE_MAT[DenseVocabMatrix: BGE-Small FPS Hub Selection]:::compute
+        ANALYZER_IDX --> IDF_REG[(CorpusIDFRegistry: Shared Lucene IDF Table)]:::storage
+        RawDocs --> VOCAB_BUILD[CorpusVocabBuilder: Salience Pool N=1000 + Full N=50000]:::compute
+        VOCAB_BUILD --> DENSE_MAT[DenseVocabMatrix: Dual GPU FP16 Tensors]:::compute
     end
 
-    subgraph Query_Time ["2. Query-Time Retrieval Phase (Mean Latency: 29.19 ms)"]
+    subgraph Query_Time ["2. Query-Time Retrieval Phase (Mean Latency: 15.61 ms)"]
         Q[User Query] --> V7_EXTRACTOR[V7AspectExtractor]:::compute
         IDF_REG --> V7_EXTRACTOR
         DENSE_MAT --> V7_EXTRACTOR
         
         subgraph V7_Phases ["V7 Expansion Phases"]
-            V7_EXTRACTOR --> P2[Phase 2: Anchors p=1.0 + POS Priors + O 1 Bailout]:::compute
+            V7_EXTRACTOR --> P2[Phase 2: Anchors p=1.0 + POS Priors + GPU-Sparse Bailout]:::compute
             P2 --> P3[Phase 3: 1-Pass Batch GEMM Probing + Adaptive Gating]:::compute
             P3 --> P4[Phase 4: IT-MPE Mass Allocation + CPU Cache Assembly]:::compute
         end
@@ -57,18 +57,17 @@ graph TD
 - **Non-Negative Lucene IDF Formula:**
   $$\text{IDF}(t) = \ln\left(1.0 + \frac{N - n(t) + 0.5}{n(t) + 0.5}\right)$$
   where $N$ is total documents and $n(t)$ is document frequency.
-- **Pre-Indexed Compound Boundary Map:**
-  Constructs `self.boundary_prefix_map: Dict[str, List[str]]` during index startup, mapping sub-tokens (delimited by `-`, `_`, `.`, or digit transitions) to their compound corpus stems for instant $O(1)$ query-time bailout lookups.
 
 #### 1.3 `CorpusVocabBuilder` (`src/pipeline_v2/indexer/corpus_vocab_builder.py`)
 - **Canonical Surface-Form Mapping:** Maps analyzed stems back to their highest-frequency surface form in the corpus (*e.g.*, stem `robot` $\to$ surface `robotics`), ensuring BGE embeddings are evaluated on natural words rather than truncated stem artifacts.
-- **Sublinear Salience Candidate Pool:**
+- **Decoupled Candidate Extraction:** Extracts the top $N_{\text{full}}=50,000$ candidate terms sorted by sublinear salience:
   $$\text{Salience}(t) = \text{IDF}(t) \times \ln(1 + \text{Doc\_Freq}(t))$$
-  Extracts the top 5,000 candidate stems by salience to bound BGE Transformer encoding to $<0.8\text{s}$.
+  Selects the top $N=1,000$ for the fast probing pool.
 
 #### 1.4 `DenseVocabMatrix` (`src/pipeline_v2/indexer/dense_vocab_matrix.py`)
-- **Farthest-Point Sampling (FPS):** Selects $K=2,500$ geometrically dispersed semantic coverage hubs from the candidate pool using greedy PyTorch tensor distance updates without $V \times V$ memory allocation.
-- **Matrix Representation:** Stores $L_2$-normalized tensor matrix $\mathbf{V} \in \mathbb{R}^{2500 \times 384}$ on CUDA FP16.
+- **Dual GPU Tensor Architecture:**
+  - `vocab_embeddings` $\in \mathbb{R}^{1000 \times 384}$ on CUDA FP16: Fast semantic probing pool ($<0.12\text{ ms}$).
+  - `full_stem_tensor` $\in \mathbb{R}^{50000 \times 384}$ on CUDA FP16: Pre-embedded vocabulary for GPU-sparse bailout.
 
 #### 1.5 `BM25LuceneIndexer` (`src/pipeline_v2/indexer/bm25_lucene_indexer.py`)
 - **Posting Index (`InvertedPostingIndex`):** High-speed in-memory inverted posting engine supporting vectorized sparse retrieval:
@@ -79,7 +78,7 @@ graph TD
 
 ### Phases 2–4: Dedicated V7 Aspect Extractor (`src/pipeline_v2/expansion/v7_aspect_extractor.py`)
 
-#### Phase 2: Anchor Selection, POS Priors & $O(1)$ Bailout
+#### Phase 2: Anchor Selection, POS Priors & GPU-Sparse Bailout
 1. **Complete Anchor Formulation ($p = 1.0$):**
    Every analyzed content word in the query is retained as an anchor $a \in \mathcal{A}_Q$.
 2. **Penn Treebank POS Prior Ratios ($W_0(a)$):**
@@ -87,13 +86,18 @@ graph TD
    - **Nouns & Technical Entities:** $W_0(a) = 1.00$
    - **Verbs:** $W_0(a) = 0.75$
    - **Modifiers (Adjectives / Adverbs):** $W_0(a) = 0.60$
-3. **$O(1)$ Compound Bailout:**
-   For high-IDF anchors ($\text{IDF}(a) \ge 3.0$) or explicit regex entities, queries `boundary_prefix_map.get(a)` in $O(1)$ time to rescue out-of-pool technical compounds (*e.g.*, `nav2-bringup` for anchor `nav2`).
+3. **GPU-Sparse Conservative Bailout:**
+   For rare qualifying anchors ($\text{IDF}(a) \ge 3.0$, out-of-pool, length $\ge 3$):
+   - 1-Pass CUDA GEMM against `full_stem_tensor`.
+   - In-place GPU `index_fill_` zeroing of in-pool columns and self-anchor diagonal entries.
+   - GPU-side row sum calculation for exact conditional probability denominator $p(c|a) = \frac{\text{Sim}(a, c)}{\sum_{c'} \text{Sim}(a, c')}$.
+   - Sparse non-zero coordinate transfer to CPU ($<0.02\text{ ms}$ transfer, eliminating dense CPU memory allocations).
+   - Damped score-space weight: $w(c \mid a) = W_0(a) \cdot \min(1.0, \frac{\text{IDF}(a)}{\text{IDF}(c)}) \cdot (\mu(Q) \cdot p(c \mid a))$.
 
 #### Phase 3: 1-Pass Batch GEMM Probing & Adaptive Gating
 1. **1-Pass PyTorch Batch GEMM:**
    Encodes all query anchors into batch tensor $\mathbf{E}_A \in \mathbb{R}^{|A| \times 384}$ in a single CUDA call and projects onto vocabulary hubs:
-   $$\mathbf{S} = \mathbf{E}_A \cdot \mathbf{V}^\top \in \mathbb{R}^{|A| \times 2500}$$
+   $$\mathbf{S} = \mathbf{E}_A \cdot \mathbf{V}^\top \in \mathbb{R}^{|A| \times 1000}$$
    *(When $\beta < 1.0$, interpolates full query embedding: $\mathbf{S} = \beta \mathbf{S}_A + (1-\beta)\mathbf{S}_Q$)*.
 2. **Adaptive Dynamic Gate:**
    $$\tau_{\text{sim}}(a) = \tau_{\text{base}} + \Delta\tau \cdot \left(\frac{\text{IDF}(a)}{\text{IDF}_{\text{max}}}\right)$$
@@ -104,13 +108,11 @@ graph TD
    $$\mu(Q) = \mu_{\text{ceil}} \cdot \left(1.0 - \eta \cdot \frac{\text{Max\_Query\_IDF}}{\text{Max\_Corpus\_IDF}}\right)$$
    *(Default: $\mu_{\text{ceil}} = 0.50, \eta = 0.0$)*.
 2. **Conditional Mass Allocation & Score-Space Damping:**
-   For the top $K \le 10$ qualifying synonyms of anchor $a$:
    $$P(s \mid a) = \frac{\text{CosSim}(a, s)}{\sum_{s' \in \text{Top10}} \text{CosSim}(a, s')}$$
    $$w(s) = W_0(a) \cdot \min\left(1.0, \frac{\text{IDF}(a)}{\text{IDF}(s)}\right) \cdot \left(\mu(Q) \cdot P(s \mid a)\right)$$
-   - *Mass Preservation:* $\sum_{s} w(s) \le \mu(Q) \cdot W_0(a)$ ensures the aspect mass is bounded by the query budget.
-   - *Score-Space Damping:* $\min(1.0, \frac{\text{IDF}(a)}{\text{IDF}(s)})$ prevents rare low-frequency synonyms from dominating the retrieval score.
-3. **1-Pass NumPy Transfer:**
-   Transfers similarity matrix $\mathbf{S}$ to CPU in a single batch operation (`sim_matrix.cpu().numpy()`), executing candidate pruning and vector compilation in CPU L1/L2 cache ($<2\text{ms}$).
+3. **Lucene Boost-Summing on Collision:**
+   When multiple distinct anchors expand to the same vocabulary term $t$:
+   $$w_{\text{final}}(t) = \sum_{a \in Q} w(t \mid a)$$
 
 ---
 
@@ -120,15 +122,15 @@ graph TD
 src/pipeline_v2/
 ├── indexer/
 │   ├── analyzer.py                 # EdgeRAGAnalyzer (WordNet overrides + KStem)
-│   ├── corpus_idf_registry.py      # CorpusIDFRegistry (Lucene IDF + boundary_prefix_map)
-│   ├── corpus_vocab_builder.py     # CorpusVocabBuilder (Salience + Surface-form mapping)
-│   ├── dense_vocab_matrix.py       # DenseVocabMatrix (BGE-small GPU FP16 FPS hubs)
+│   ├── corpus_idf_registry.py      # CorpusIDFRegistry (Lucene IDF table)
+│   ├── corpus_vocab_builder.py     # CorpusVocabBuilder (Salience Pool N=1k, Full N=50k)
+│   ├── dense_vocab_matrix.py       # DenseVocabMatrix (Dual BGE-small GPU FP16 Tensors)
 │   ├── bm25_lucene_indexer.py      # BM25LuceneIndexer (LuceneBM25 wrapper)
-│   ├── posting_index.py            # InvertedPostingIndex (Compact inverted posting engine)
+│   ├── posting_index.py            # InvertedPostingIndex (Vectorized inverted posting engine)
 │   └── tokenizer.py                # EdgeRAGTokenizer (Lucene-parity tokenizer)
 ├── expansion/
 │   ├── __init__.py                 # Exports V7AspectExtractor & legacy extractors
-│   ├── v7_aspect_extractor.py      # Standalone V7 Engine (Phases 2-4, ~240 LOC)
+│   ├── v7_aspect_extractor.py      # Standalone V7 Engine (Phases 2-4 with GPU-Sparse Bailout)
 │   ├── pathway_v7_anchored_retriever.md # Authoritative Tier 2 V7 Specification
 │   ├── bm25_dense_aspect_extractor.py # Legacy Schemas (1, 5a, 5b, 6a, 6b) & V7 Delegator
 │   └── pathway_*.md                # Tier 2 specifications per legacy pathway
@@ -140,54 +142,18 @@ src/pipeline_v2/
 
 ---
 
-## 4. Empirical Performance Benchmarks (10 Document-Level Corpora)
+## 4. Authoritative Empirical Benchmarks (10 Document-Level Corpora, 3,237 Queries)
 
-*Evaluation across 10 official document-level benchmark datasets with un-chunked full documents ($\varepsilon = 0.0$ pure gate-only):*
+*Evaluated across all 10 standard document-level benchmark datasets:*
 
-### 4.1 Primary Retrieval & Accuracy Summary
-| Benchmark Dataset | Total Docs | TTI Setup (s) | Strict@10 | DocRec@10 | Mean Query Latency | Postings Retrieval |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `enterpriserag_doc_level` | 1,722 | **13.12 s** | **0.8000** | **0.8000** | **75.67 ms** | 13.26 ms |
-| `liverag_doc_level` | 970 | **8.18 s** | **1.0000** | **1.0000** | **34.95 ms** | 8.59 ms |
-| `beir_scifact_doc_level` | 5,183 | **8.05 s** | **0.8000** | **0.8000** | **36.67 ms** | 10.56 ms |
-| `beir_nfcorpus_doc_level` | 3,633 | **5.60 s** | **0.6000** | **0.2283** | **26.08 ms** | 5.93 ms |
-| `beir_fiqa_doc_level` | 57,600 | **23.76 s** | **0.8000** | **0.4167** | **30.81 ms** | 8.26 ms |
-| `multihop_rag_doc_level` | 609 | **6.77 s** | **0.4000** | **0.3333** | **54.81 ms** | 11.05 ms |
-| `financebench_doc_level` | 2,168 | **3.36 s** | **0.4000** | **0.2667** | **57.97 ms** | 12.82 ms |
-| `bright_economics_doc_level` | 50,220 | **19.11 s** | **0.0000** | **0.0000** | **71.72 ms** | 19.91 ms |
-| `bright_stackoverflow_doc_level` | 107,081 | **40.08 s** | **0.2000** | **0.1000** | **102.27 ms** | 25.52 ms |
-| `bright_robotics_doc_level` | 61,961 | **17.30 s** | **0.4000** | **0.2500** | **241.30 ms** | 38.89 ms |
-| **Global Macro Average** | — | **`14.54 s`** | **`0.5400`** | **`0.4195`** | **`73.22 ms`** | **`15.48 ms`** |
-
-### 4.2 Detailed Index-Time (TTI) Breakdown
-| Benchmark Dataset | BM25 Index Build | Surface-Form Scan | BGE FPS Hub Embedding | Total TTI Setup |
-| :--- | :---: | :---: | :---: | :---: |
-| `enterpriserag_doc_level` | 2.195 s | 2.952 s | 7.971 s | **13.119 s** |
-| `liverag_doc_level` | 1.784 s | 2.226 s | 4.168 s | **8.179 s** |
-| `beir_scifact_doc_level` | 1.901 s | 2.270 s | 3.885 s | **8.055 s** |
-| `beir_nfcorpus_doc_level` | 1.455 s | 1.734 s | 2.415 s | **5.604 s** |
-| `beir_fiqa_doc_level` | 11.603 s | 1.278 s | 10.880 s | **23.762 s** |
-| `multihop_rag_doc_level` | 1.683 s | 2.087 s | 3.004 s | **6.774 s** |
-| `financebench_doc_level` | 0.949 s | 1.294 s | 1.116 s | **3.359 s** |
-| `bright_economics_doc_level` | 4.580 s | 0.629 s | 13.903 s | **19.113 s** |
-| `bright_stackoverflow_doc_level` | 20.241 s | 1.435 s | 18.408 s | **40.084 s** |
-| `bright_robotics_doc_level` | 3.137 s | 0.419 s | 13.749 s | **17.305 s** |
-| **Macro Average** | **4.953 s** | **1.632 s** | **7.950 s** | **14.535 s** |
-
-### 4.3 Detailed Query-Time Latency Breakdown
-| Benchmark Dataset | Anchor Encoding | Boundary Bailout | Batch GEMM Probing | IT-MPE Mass Alloc | Postings Retrieval | Total Latency |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `enterpriserag_doc_level` | 29.57 ms | 0.82 ms | 1.55 ms | 29.15 ms | 13.26 ms | **75.67 ms** |
-| `liverag_doc_level` | 16.38 ms | 0.06 ms | 0.46 ms | 8.89 ms | 8.59 ms | **34.95 ms** |
-| `beir_scifact_doc_level` | 16.08 ms | 0.14 ms | 0.29 ms | 9.01 ms | 10.56 ms | **36.67 ms** |
-| `beir_nfcorpus_doc_level` | 16.59 ms | 0.09 ms | 0.29 ms | 2.81 ms | 5.93 ms | **26.08 ms** |
-| `beir_fiqa_doc_level` | 15.15 ms | 0.80 ms | 0.20 ms | 6.09 ms | 8.26 ms | **30.81 ms** |
-| `multihop_rag_doc_level` | 17.12 ms | 0.06 ms | 0.50 ms | 24.64 ms | 11.05 ms | **54.81 ms** |
-| `financebench_doc_level` | 16.81 ms | 0.08 ms | 0.33 ms | 26.24 ms | 12.82 ms | **57.97 ms** |
-| `bright_economics_doc_level` | 18.49 ms | 6.56 ms | 0.48 ms | 24.52 ms | 19.91 ms | **71.72 ms** |
-| `bright_stackoverflow_doc_level` | 20.43 ms | 7.39 ms | 0.49 ms | 45.22 ms | 25.52 ms | **102.27 ms** |
-| `bright_robotics_doc_level` | 35.24 ms | 19.98 ms | 0.95 ms | 131.99 ms | 38.89 ms | **241.30 ms** |
-| **Macro Average** | **20.19 ms** | **3.60 ms** | **0.55 ms** | **30.86 ms** | **15.48 ms** | **73.22 ms** |
+### 4.1 Global Macro Comparison
+| Model / Architecture | Strict@10 | DocRec@10 | Strict@50 | DocRec@50 | MRR@10 | Latency (Mean) | Setup TTI | Peak VRAM |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **BM25 (Blank Baseline)** | 52.34% | 39.87% | 62.29% | 49.84% | 0.3888 | **1.64 ms** | **5.23 s** | **0.00 GB** |
+| **BM25 (Analyzed Baseline)** | 59.80% | 47.02% | 71.95% | 58.41% | 0.4620 | **1.22 ms** | **10.12 s** | **0.00 GB** |
+| **Dense (bge-small-en-v1.5)** | 64.62% | 48.92% | 76.59% | 62.19% | 0.4718 | 53.38 ms | 23.01 s | 2.07 GB |
+| **Edge-RAG V7 (GPU-Sparse Bailout)** | **62.82%** | **49.35%** | **74.18%** | **60.54%** | **0.4731** | **15.61 ms** | **14.56 s** | **1.06 GB** |
+| **SPLADE-v3 (DistilBERT)** | 66.40% | 50.68% | 77.47% | 63.04% | 0.4985 | 46.50 ms | 197.84 s | 5.00 GB |
 
 ---
 
@@ -197,6 +163,14 @@ src/pipeline_v2/
 pipeline_v2:
   schema: "BM25Dense_V7"
   
+  indexer:
+    stemmer: "kstem"
+    use_wordnet_override: true
+    mode: "parity"
+    vocab_selection: "salience"
+    max_vocab_pool_size: 1000        # Phase 3 probing pool size
+    full_vocab_size: 50000           # Phase 2 bailout full storage size
+
   v7_expansion:
     p: 1.00                          # Content token anchor coverage ratio (100% of analyzed tokens)
     tau_base: 0.55                   # Base semantic cosine threshold
@@ -204,12 +178,15 @@ pipeline_v2:
     beta: 1.00                       # Probing similarity mixture (1.0 = 100% Anchor)
     mu_ceil: 0.50                    # Maximum query expansion budget ceiling
     eta: 0.00                        # Query specificity damping parameter
-    mass_floor: 0.00                 # Mass floor epsilon fraction of w(a) (default: 0.0 = pure gate-only)
+    mass_floor: 0.00                 # Mass floor epsilon fraction of w(a) (default: 0.0)
     pos_ratios:
       noun: 1.00                     # Noun & technical entity prior weight
       verb: 0.75                     # Action verb prior weight
       modifier: 0.60                 # Adjective/adverb modifier prior weight
-    vocab_pool_size: 2500            # FPS semantic coverage hubs in VRAM
+    bailout_tau_sim: 0.80            # Conservative bailout similarity gate
+    bailout_tau_idf: 3.0             # Conservative bailout anchor IDF gate
+    bailout_out_of_pool_only: true
+    min_len_rescue: 3
     bge_model_name: "BAAI/bge-small-en-v1.5"
 
   routing:

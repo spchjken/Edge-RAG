@@ -23,6 +23,7 @@ trigger: always_on
 | Paper Draft | `draft.md` | The research paper (not always in sync with code) |
 | Benchmark Pipeline | `scripts/benchmark_creation/benchmark_generation_pipeline.md` | Synthetic dataset generation methodology |
 | Per-Module Specs | `src/pipeline_v2/expansion/pathway_*.md` | Authoritative design docs per sub-module |
+| Results-to-Scripts Mapping | `scripts/results_scripts_mapping.md` | Authoritative mapping from all result files to scripts/tests |
 
 ## 3. Pre-Task Actions
 Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
