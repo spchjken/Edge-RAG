@@ -202,7 +202,8 @@ class CorpusVocabBuilder:
 
     def build_pool_with_full(
         self,
-        corpus: List[str],
+        corpus: Optional[List[str]] = None,
+        indexer: Optional[Any] = None,
         strategy: str = "salience",
         seed: int = 42
     ) -> Tuple[List[str], List[str], List[str]]:
@@ -215,7 +216,13 @@ class CorpusVocabBuilder:
               - full_stems / full_surfaces: the complete filtered candidate vocabulary
                 (aligned, length <= self.full_vocab_size) for full-corpus storage in DenseVocabMatrix.
         """
-        candidate_stems, canonical_surfaces = self.extract_candidates_with_surface_forms(corpus)
+        if indexer is not None:
+            candidate_stems, canonical_surfaces = self.extract_candidates_from_indexer(indexer)
+        elif corpus is not None:
+            candidate_stems, canonical_surfaces = self.extract_candidates_with_surface_forms(corpus)
+        else:
+            return [], [], []
+
         if not candidate_stems:
             return [], [], []
 

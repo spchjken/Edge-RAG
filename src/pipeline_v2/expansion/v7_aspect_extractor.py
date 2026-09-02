@@ -134,6 +134,18 @@ class V7AspectExtractor:
             dtype=np.float32
         ) if self.full_terms else np.empty(0, dtype=np.float32)
 
+        # Precompute in-pool column indices for in-place GPU index_fill_
+        if (self.vocab_matrix.vocab_terms and self.full_term_to_idx and
+                self.vocab_matrix.full_stem_tensor is not None and self.vocab_matrix.full_stem_tensor.numel() > 0):
+            pool_cols = [self.full_term_to_idx[t] for t in self.vocab_matrix.vocab_terms if t in self.full_term_to_idx]
+            self.pool_indices_t = torch.tensor(
+                pool_cols,
+                device=self.vocab_matrix.full_stem_tensor.device,
+                dtype=torch.long
+            ) if pool_cols else None
+        else:
+            self.pool_indices_t = None
+
     def extract_heuristics(self, query: str) -> List[str]:
         """Extracts acronyms, hyphenated terms, and quoted phrases."""
         entities = []
@@ -189,6 +201,8 @@ class V7AspectExtractor:
 
         # Batch encode all query anchors in a single FlagEmbedding call (1-Pass GEMM)
         anchor_vecs = self.vocab_matrix.encode_terms(distinct_anchors)  # [N_anchors, 384]
+        if torch.cuda.is_available() and anchor_vecs.is_cuda:
+            torch.cuda.synchronize()
         t_p2_anchor = time.perf_counter()
 
         # Precompute anchor IDF / base weights / query budget (shared by bailout and IT-MPE)
@@ -198,7 +212,7 @@ class V7AspectExtractor:
         mu_q = self.mu_ceil * (1.0 - self.eta * min(1.0, max_query_idf / max_corpus_idf))
         mu_q = max(0.0, min(1.0, mu_q))
 
-        # 5. Conservative Bailout: Vectorized 1-pass GEMM + NumPy Mass Allocation (Zero CUDA scalar .item() syncs)
+        # 5. Conservative Bailout: GPU-Sparse Filtering + Normalized Cosine Mass Allocation (<0.5ms)
         bailed_candidates_per_anchor: Dict[str, List[Dict[str, Any]]] = {a: [] for a in distinct_anchors}
         total_bailed = 0
 
@@ -218,59 +232,54 @@ class V7AspectExtractor:
                     qualifying_indices.append(i)
 
                 if qualifying_indices:
-                    # 1. ONE GEMM for qualifying anchors vs full corpus, ONE transfer to CPU
+                    # 1. ONE GEMM for qualifying anchors vs full corpus on GPU
                     q_indices_t = torch.tensor(qualifying_indices, device=anchor_vecs.device, dtype=torch.long)
                     q_anchor_vecs = anchor_vecs[q_indices_t]  # [N_qual, 384]
-                    bail_sim_np = torch.mm(q_anchor_vecs, full_tensor.T).cpu().numpy()  # [N_qual, N_full]
+                    sims = torch.mm(q_anchor_vecs, full_tensor.T)  # [N_qual, N_full] on GPU
 
-                    # 2. Vectorized NumPy mask
-                    mask = (bail_sim_np >= self.bailout_tau_sim)
-
-                    # Zero out self-anchor columns
-                    for row_idx, orig_i in enumerate(qualifying_indices):
+                    # 2. Zero out self-anchor columns on GPU
+                    for r_idx, orig_i in enumerate(qualifying_indices):
                         a = distinct_anchors[orig_i]
                         if a in self.full_term_to_idx:
-                            mask[row_idx, self.full_term_to_idx[a]] = False
+                            sims[r_idx, self.full_term_to_idx[a]] = 0.0
 
-                    # Zero out all in-pool columns (IT-MPE handles pool)
-                    if self.vocab_matrix.vocab_terms:
-                        pool_cols = [self.full_term_to_idx[t] for t in self.vocab_matrix.vocab_terms if t in self.full_term_to_idx]
-                        if pool_cols:
-                            mask[:, pool_cols] = False
+                    # 3. In-place zero out all in-pool columns on GPU via index_fill_
+                    if self.pool_indices_t is not None and self.pool_indices_t.numel() > 0:
+                        sims.index_fill_(1, self.pool_indices_t, 0.0)
 
-                    masked_sims = np.where(mask, bail_sim_np, 0.0)
-                    sum_sims = np.sum(masked_sims, axis=1, keepdims=True)
-                    p_cond_mat = masked_sims / np.where(sum_sims == 0, 1.0, sum_sims)
+                    # 4. GPU-side thresholding & row sums for exact normalized cosine denominator
+                    masked_sims = torch.where(sims >= self.bailout_tau_sim, sims, torch.zeros_like(sims))
+                    sum_sims_t = masked_sims.sum(dim=1)  # [N_qual] on GPU
 
-                    # 3. Vectorized Damping: min(1.0, IDF_a / IDF_cand)
-                    q_anchor_idfs = anchor_idfs_np[qualifying_indices, None]
-                    q_anchor_weights = anchor_base_weights_np[qualifying_indices, None]
-                    full_idfs = self.full_idfs_np[None, :] if len(self.full_idfs_np) == len(full_terms) else np.array([self.idf_registry.get_idf(t) for t in full_terms], dtype=np.float32)[None, :]
-                    damping_mat = np.minimum(1.0, q_anchor_idfs / np.maximum(full_idfs, 1e-6))
+                    # 5. Extract sparse non-zero coordinates on GPU
+                    nz_rows_t, nz_cols_t = torch.where(masked_sims > 0.0)
 
-                    w_bail_mat = q_anchor_weights * damping_mat * (mu_q * p_cond_mat)
+                    if nz_rows_t.numel() > 0:
+                        # 6. Transfer ONLY surviving sparse coordinates to CPU (tiny: e.g. ~30 floats!)
+                        nz_rows = nz_rows_t.cpu().numpy()
+                        nz_cols = nz_cols_t.cpu().numpy()
+                        nz_sims = masked_sims[nz_rows_t, nz_cols_t].cpu().numpy()
+                        sum_sims_np = sum_sims_t.cpu().numpy()
 
-                    # 4. Mass Floor Pruning
-                    if self.mass_floor > 0.0:
-                        floor_thresh = self.mass_floor * q_anchor_weights
-                        w_bail_mat = np.where(w_bail_mat >= floor_thresh, w_bail_mat, 0.0)
+                        # 7. Fast scalar mass-preserving allocation on CPU for surviving terms only
+                        for r_idx, c_idx, c_sim in zip(nz_rows, nz_cols, nz_sims):
+                            orig_i = qualifying_indices[r_idx]
+                            a = distinct_anchors[orig_i]
+                            t = full_terms[c_idx]
+                            denom = float(sum_sims_np[r_idx])
+                            p_cond = float(c_sim) / denom if denom > 0.0 else 0.0
+                            c_idf = float(self.full_idfs_np[c_idx]) if c_idx < len(self.full_idfs_np) else float(self.idf_registry.get_idf(t))
+                            damping = min(1.0, float(anchor_idfs_np[orig_i]) / max(c_idf, 1e-6))
+                            w_val = float(anchor_base_weights_np[orig_i]) * damping * (mu_q * p_cond)
 
-                    # 5. Extract only surviving nonzero elements (pure NumPy coordinates, NO .item() syncs!)
-                    active_rows, active_cols = np.where(w_bail_mat > 0)
-                    for r_idx, c_idx in zip(active_rows, active_cols):
-                        orig_i = qualifying_indices[r_idx]
-                        a = distinct_anchors[orig_i]
-                        t = full_terms[c_idx]
-                        c_sim = float(masked_sims[r_idx, c_idx])
-                        c_idf = float(full_idfs[0, c_idx])
-                        w_val = float(w_bail_mat[r_idx, c_idx])
-                        bailed_candidates_per_anchor[a].append({
-                            "term": t,
-                            "similarity": round(c_sim, 4),
-                            "idf": round(c_idf, 4),
-                            "weight": round(w_val, 4)
-                        })
-                        total_bailed += 1
+                            if self.mass_floor <= 0.0 or w_val >= (self.mass_floor * float(anchor_base_weights_np[orig_i])):
+                                bailed_candidates_per_anchor[a].append({
+                                    "term": t,
+                                    "similarity": round(float(c_sim), 4),
+                                    "idf": round(c_idf, 4),
+                                    "weight": round(float(w_val), 4)
+                                })
+                                total_bailed += 1
         t_p2_bail = time.perf_counter()
 
         # --- PHASE 3: Dense Semantic Probing & Adaptive Gating ---

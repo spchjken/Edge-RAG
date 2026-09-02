@@ -75,7 +75,7 @@ class PipelineV2Orchestrator:
             candidate_stems, surface_forms = vocab_builder.extract_candidates_with_surface_forms(corpus)
             self.vocab_matrix.build_with_fps(candidate_stems, surface_forms=surface_forms, target_pool_size=pool_size)
         else:
-            pool_stems, full_stems, full_surfaces = vocab_builder.build_pool_with_full(corpus, strategy=vocab_selection)
+            pool_stems, full_stems, full_surfaces = vocab_builder.build_pool_with_full(indexer=self.indexer, strategy=vocab_selection)
             self.vocab_matrix.build(
                 vocab_stems=pool_stems,
                 surface_forms=[vocab_builder.stem_to_surface.get(s, s) for s in pool_stems],
