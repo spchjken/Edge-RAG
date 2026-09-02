@@ -59,13 +59,15 @@ class PipelineV2Orchestrator:
         )
         self.idf_registry = self.indexer.idf_registry
 
-        pool_size = idx_cfg.get("max_vocab_pool_size", 2500)
+        pool_size = idx_cfg.get("max_vocab_pool_size", 1000)
+        full_vocab_size = idx_cfg.get("full_vocab_size", 50000)
         vocab_builder = CorpusVocabBuilder(
             self.idf_registry,
-            max_vocab_size=pool_size,
+            pool_size=pool_size,
+            full_vocab_size=full_vocab_size,
             analyzer=self.analyzer
         )
-        vocab_selection = idx_cfg.get("vocab_selection", "coverage")
+        vocab_selection = idx_cfg.get("vocab_selection", "salience")
 
         self.vocab_matrix = DenseVocabMatrix(model_name=exp_cfg.get("bge_model_name", "BAAI/bge-small-en-v1.5"))
 
@@ -74,7 +76,12 @@ class PipelineV2Orchestrator:
             self.vocab_matrix.build_with_fps(candidate_stems, surface_forms=surface_forms, target_pool_size=pool_size)
         else:
             pool_stems, full_stems, full_surfaces = vocab_builder.build_pool_with_full(corpus, strategy=vocab_selection)
-            self.vocab_matrix.build_matrix(pool_stems, full_stems=full_stems, full_surfaces=full_surfaces)
+            self.vocab_matrix.build(
+                vocab_stems=pool_stems,
+                surface_forms=[vocab_builder.stem_to_surface.get(s, s) for s in pool_stems],
+                full_stems=full_stems,
+                full_surfaces=full_surfaces
+            )
 
         self.tti_seconds = time.time() - t0
 

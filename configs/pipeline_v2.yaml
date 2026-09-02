@@ -6,8 +6,9 @@ pipeline_v2:
   indexer:
     stemmer: "kstem"                 # IR stemmer: kstem (recommended) | snowball | porter | none
     use_wordnet_override: true       # WordNet suppletion override (went -> go, better -> good, children -> child)
-    vocab_selection: "salience"      # Default: salience (Salience N=1000 pool)
-    max_vocab_pool_size: 50000       # Candidate vocabulary pool size extracted from corpus (50k for 95%+ coverage)
+    vocab_selection: "salience"      # Default: salience (Salience N=1000 probe pool)
+    max_vocab_pool_size: 1000        # Phase-3 GEMM probe pool (N=1000)
+    full_vocab_size: 50000           # Full candidate vocabulary storage (50k for 95%+ coverage)
 
   expansion:
     pos_ratios:

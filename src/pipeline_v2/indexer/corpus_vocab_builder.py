@@ -25,11 +25,15 @@ class CorpusVocabBuilder:
     def __init__(
         self,
         idf_registry: CorpusIDFRegistry,
-        max_vocab_size: int = 50000,
+        pool_size: int = 1000,
+        full_vocab_size: int = 50000,
+        max_vocab_size: Optional[int] = None,
         analyzer: Optional[EdgeRAGAnalyzer] = None
     ):
         self.idf_registry = idf_registry
-        self.max_vocab_size = max_vocab_size
+        self.full_vocab_size = max_vocab_size if max_vocab_size is not None else full_vocab_size
+        self.max_vocab_size = self.full_vocab_size  # backward compat
+        self.pool_size = pool_size
         self.analyzer = analyzer if analyzer is not None else EdgeRAGAnalyzer()
         self.stem_to_surface: Dict[str, str] = {}
 
@@ -151,25 +155,25 @@ class CorpusVocabBuilder:
         if not candidate_stems:
             return []
 
-        if len(candidate_stems) <= self.max_vocab_size:
+        if len(candidate_stems) <= self.pool_size:
             return candidate_stems
 
         if strategy == "coverage" and vocab_matrix is not None:
             vocab_matrix.build_with_fps(
                 candidate_stems,
                 surface_forms=canonical_surfaces,
-                target_pool_size=self.max_vocab_size
+                target_pool_size=self.pool_size
             )
             return vocab_matrix.vocab_terms
 
         if strategy == "idf":
             scored = [(s, self.idf_registry.get_idf(s)) for s in candidate_stems]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return [s for s, _ in scored[:self.max_vocab_size]]
+            return [s for s, _ in scored[:self.pool_size]]
 
         elif strategy == "random":
             rng = random.Random(seed)
-            return rng.sample(candidate_stems, self.max_vocab_size)
+            return rng.sample(candidate_stems, self.pool_size)
 
         else:  # 'salience' default fallback
             scored = [
@@ -177,24 +181,24 @@ class CorpusVocabBuilder:
                 for s in candidate_stems
             ]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return [s for s, _ in scored[:self.max_vocab_size]]
+            return [s for s, _ in scored[:self.pool_size]]
 
     def _select_pool(self, candidate_stems: List[str], strategy: str, seed: int) -> List[str]:
-        """Selects the top-N pool from candidate_stems by strategy (salience/idf/random)."""
+        """Selects the top-N pool (size self.pool_size) from candidate_stems by strategy (salience/idf/random)."""
         if strategy == "idf":
             scored = [(s, self.idf_registry.get_idf(s)) for s in candidate_stems]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return [s for s, _ in scored[:self.max_vocab_size]]
+            return [s for s, _ in scored[:self.pool_size]]
         elif strategy == "random":
             rng = random.Random(seed)
-            return rng.sample(candidate_stems, self.max_vocab_size)
+            return rng.sample(candidate_stems, self.pool_size)
         else:  # salience
             scored = [
                 (s, self.idf_registry.get_idf(s) * math.log(1.0 + self.idf_registry.doc_freqs.get(s, 1)))
                 for s in candidate_stems
             ]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return [s for s, _ in scored[:self.max_vocab_size]]
+            return [s for s, _ in scored[:self.pool_size]]
 
     def build_pool_with_full(
         self,
@@ -203,19 +207,19 @@ class CorpusVocabBuilder:
         seed: int = 42
     ) -> Tuple[List[str], List[str], List[str]]:
         """
-        Builds the N-selected pool AND returns the full filtered corpus vocabulary.
+        Builds the N-selected pool (size self.pool_size) AND returns the full filtered corpus vocabulary (size self.full_vocab_size).
 
         Returns:
             (pool_stems, full_stems, full_surfaces):
-              - pool_stems: top-N selection by strategy (salience/idf/random).
+              - pool_stems: top-N selection by strategy (salience/idf/random), length <= self.pool_size.
               - full_stems / full_surfaces: the complete filtered candidate vocabulary
-                (aligned) for full-corpus storage in DenseVocabMatrix.
+                (aligned, length <= self.full_vocab_size) for full-corpus storage in DenseVocabMatrix.
         """
         candidate_stems, canonical_surfaces = self.extract_candidates_with_surface_forms(corpus)
         if not candidate_stems:
             return [], [], []
 
-        if len(candidate_stems) <= self.max_vocab_size:
+        if len(candidate_stems) <= self.pool_size:
             pool_stems = list(candidate_stems)
         else:
             pool_stems = self._select_pool(candidate_stems, strategy, seed)
