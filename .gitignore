@@ -74,6 +74,7 @@ temp*
 tests/
 scripts/*
 !scripts/benchmark_creation/
+!scripts/data_adapters/
 .ddraft/
 draft*.md
 *.log
