@@ -137,9 +137,18 @@ class BM25LBaseline:
         return results
 
 
+def tokenize_standard_unstemmed(text: str) -> List[str]:
+    """
+    Standard word-boundary tokenization without stemming or stopword removal.
+    Strips trailing/leading punctuation while preserving alphanumeric words.
+    """
+    import re
+    return re.findall(r'\b[a-zA-Z0-9_]+\b', text.lower())
+
+
 class LuceneBM25Baseline:
     """
-    Lucene BM25 Sparse Retrieval Baseline.
+    Lucene BM25 Sparse Retrieval Baseline (Standard Lucene, unstemmed).
     Uses Lucene's non-negative IDF formula:
     IDF = ln(1 + (N - n + 0.5) / (n + 0.5))
     Default parameters: k1 = 1.2, b = 0.75
@@ -165,7 +174,7 @@ class LuceneBM25Baseline:
         self.nd = {}
         self.num_docs = len(corpus)
 
-        self.tokenized_corpus = [doc.lower().split() for doc in self.corpus]
+        self.tokenized_corpus = [tokenize_standard_unstemmed(doc) for doc in self.corpus]
         for doc in self.tokenized_corpus:
             self.doc_len.append(len(doc))
             frequencies = Counter(doc)
@@ -246,10 +255,10 @@ class LuceneBM25Baseline:
 
     def retrieve(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
-        Retrieves top_k most relevant chunks using Lucene BM25 scoring.
+        Retrieves top_k most relevant chunks using standard unstemmed Lucene BM25 scoring.
         Handles repeated tokens via Counter-based weight conversion.
         """
-        tokenized_query = query.lower().split()
+        tokenized_query = tokenize_standard_unstemmed(query)
         term_weights = dict(Counter(tokenized_query))
         return self.retrieve_weighted(term_weights, top_k=top_k)
 

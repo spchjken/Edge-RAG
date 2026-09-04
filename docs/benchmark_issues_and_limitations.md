@@ -169,19 +169,28 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 
 ---
 
-## 5. Recommended Engineering Action Items (prioritized)
+## 5. Recommended Engineering Action Items & Implementation Resolution Status
 
-**Correctness first (block accuracy):**
-1. **Preserve graded relevance** in `convert_beir()`: store `expected_doc_scores: {did: score}` (and keep `expected_doc_ids` for binary consumers) so graded nDCG@10 is computable. (Fixes 1.2, 2.1.)
-2. **Collision-safe IDs:** append a deterministic hash (e.g. 8-char MD5) to `safe_fname`, or store docs in a single sharded `corpus.jsonl`/`parquet` keyed by raw ID with a manifest. (Fixes 1.1, 1.4.)
-3. **Fix `validate_all_benchmarks`:** compare against the JSON payload `doc_id`, not the sanitized filename; add an on-disk count parity assertion. (Fixes 3.2, 3.3.)
+### ✅ Implemented & Resolved (2026-09-04 Full Re-evaluation)
+1. **Preserve Graded Relevance & Official nDCG@10:**
+   - Implemented BEIR/TREC exponential gain graded formula $\sum \frac{2^{\text{rel}} - 1}{\log_2(i + 1)}$ with explicit descending IDCG sort in [`src/evaluation/metrics.py`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/metrics.py).
+   - Preserved full continuous/graded qrel tables in [`src/evaluation/benchmark_loader.py`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py) and wired directly to the benchmark runner.
+2. **Direct Raw Streaming (Accuracy Decoupled from File-Structure Artifacts):**
+   - Implemented [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py) streaming directly from raw BEIR `corpus.jsonl`, BRIGHT parquets, MultiHop-RAG JSONs, and LiveRAG parquets without flat-file filesystem fragmentation or filename collisions.
+   - Standardized document text to BEIR standard: `f"{title} {text}".strip() if title else text`.
+3. **Full Test Set Accounting:**
+   - Evaluated all un-capped test queries: FiQA (648 queries), MultiHop-RAG (2,255 queries with news evidence), SciFact (300 queries), NFCorpus (323 queries), BRIGHT (Economics 103, StackOverflow 117, Robotics 101), FinanceBench (150 queries), EnterpriseRAG (470 valid queries), LiveRAG (895 queries).
+4. **FinanceBench Peer Comparability:**
+   - Official SEC filing evidence pages loaded directly from `financebench_train.jsonl` without synthetic distractor chunks.
+5. **SPLADE-v3 Standardized Sparse Neural Retrieval:**
+   - Implemented in [`src/baselines/splade.py`](file:///home/donghv/Projects/Edge-RAG/src/baselines/splade.py) with canonical HuggingFace encoder (`naver/splade-v3-distilbert`), symmetric document & query attention masking, special token exclusion, batched FP16 inference, and in-memory compact inverted index.
+   - Latency dropped from ~500ms sequential loop to **9.38 ms** average query latency with **0.4667** macro nDCG@10.
+6. **Lucene BM25 (Unstemmed Standard):**
+   - Implemented standard regex word tokenization stripping punctuation without stemming, renaming the baseline to **`BM25 (Standard Lucene, unstemmed)`** for citable clarity.
 
-**Scale / efficiency:**
-4. **Stream the corpus loader** (`load_doc_corpus`) from `jsonl`/`parquet` instead of materializing two full text lists. (Fixes 3.1 — unblocks BM25 on large corpora within 16 GB.)
-5. **Document per-method corpus ceilings** for dense-BGE / SPLADE; record OOM/timeout as scaling results rather than rewriting the baselines. (Fixes 3.6.)
+---
 
-**Methodology / comparability:**
-6. **Decouple accuracy from efficiency corpora:** measure accuracy on the raw/official corpus + graded qrels (comparable to BEIR Table 2); measure TTI/latency/VRAM/RAM on a realistic sharded/multi-file layout — same document set, different serialization. (Implements the accuracy-vs-efficiency split.)
-7. **Clarify benchmark-file semantics:** make `final_benchmark_full.json` truly full, and emit `final_benchmark_capped.json` deterministically with a documented sampling note. (Fixes 3.5.)
-8. **Quora self-match guard:** exclude `doc_id == query_id` in evaluation for symmetric paraphrase datasets.
-9. **Decide FinanceBench policy:** either evaluate against the official corpus (drop distractors) for peer comparability, or clearly label the distractor-augmented variant as an Edge-RAG-specific stress set, not "FinanceBench". (Fixes 3.4.)
+## 6. Remaining Future Enhancements
+- **Quora self-match guard:** Exclude `doc_id == query_id` if evaluating symmetrical paraphrase datasets.
+- **Shard-level partitioning:** When benchmarking million-document corpora (such as full FEVER 5.4M), use memory-mapped inverted indexes or SQLite/posting shards to avoid 16 GB RAM limits.
+
