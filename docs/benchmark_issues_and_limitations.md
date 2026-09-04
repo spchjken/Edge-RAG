@@ -4,11 +4,10 @@
 **Scope:** Issues, limitations, biases, conversion-code edge cases, and evaluation-protocol discrepancies inherent to the **benchmark datasets themselves** and the **dataset adapter / evaluation code**. (Deployment/retriever-engine implementation details are excluded except where they make the converted corpora un-runnable.)
 
 > **Verification status legend**
-> - ✅ **Confirmed** — verified against current source code.
-> - ⚠️ **Partially confirmed** — mechanism verified; a dataset-specific example still needs the real downloaded data to confirm.
-> - 🔍 **Needs data** — cannot be resolved without the actual `corpus.jsonl` / `qrels`.
+> - ✅ **Confirmed** — verified against source code and, where noted, against the live downloaded corpus in `data/raw/beir/`.
+> - ⚠️ **Conditional / environment-dependent** — holds only under the stated condition (e.g. NTFS filesystem).
 >
-> **Static-audit note:** `data/` is currently empty in this checkout, so every finding below is verified at **code/logic level**, not against a live downloaded corpus. The two dataset-specific examples marked 🔍 (DBPedia ID format, Quora title) must be re-checked against `data/raw/beir/<dataset>/corpus.jsonl` before relying on them.
+> **Audit note:** the dataset-specific claims in §1.1 and §1.3 (DBPedia ID format, FEVER/Climate-FEVER slash IDs, Quora empty title) were resolved by direct inspection of `data/raw/beir/<dataset>/corpus.jsonl` on the full benchmark environment.
 
 ---
 
@@ -16,7 +15,7 @@
 
 These are the issues that change the "should I keep converting / accuracy-vs-efficiency split" decision:
 
-1. **The realism claim is only half true.** "A corpus is many separate documents" is realistic; "5.4M tiny JSON files in one flat directory" is a self-inflicted pathology. The retriever never sees the file structure — the loader just globs and reads every file into RAM (`run_v7_calibration_suite.py::load_doc_corpus`). Realism comes from **document-unit granularity + distractor ratio**, not file count.
+1. **The realism claim is only half true.** "A corpus is many separate documents" is realistic; "5.4M tiny JSON files in one flat directory" is a self-inflicted pathology. The retriever never sees the file structure — the loader just globs and reads every file into RAM (`load_doc_corpus` in both `run_v7_vs_baselines_comparison.py` and `run_v7_calibration_suite.py`). Realism comes from **document-unit granularity + distractor ratio**, not file count.
 2. **Conversion is currently lossy in ways that corrupt *accuracy*** (issues 1.1, 1.2, 1.3). Accuracy must be measured on the raw/official corpus + graded qrels to be comparable to BEIR/SPLADE-v3 Table 2.
 3. **Even the scalable methods (BM25/Lucene) cannot load the million-doc converted corpora in 16 GB RAM** because the loader materializes everything (issue 3.1). The bottleneck is the loader, not Lucene.
 4. **Dense-BGE / SPLADE baselines are non-viable on million-doc corpora by construction** (issue 3.6) and should not be rewritten; their OOM/timeout is a measured scaling result.
@@ -25,7 +24,7 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 
 ## 1. Benchmark Data Conversion & Adapter Code Vulnerabilities
 
-### 1.1 Document ID Sanitization & Overwriting Collision Risk — ⚠️ (mechanism ✅, examples 🔍)
+### 1.1 Document ID Sanitization & Overwriting Collision Risk — ✅
 * **Affected code:** `scripts/data_adapters/convert_retriever_doc_level_benchmarks.py::convert_beir` (lines 78, 92)
 * **Problem:**
   The filename is derived from the raw `_id` after sanitization:
@@ -38,9 +37,10 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
   - `<a/b>`, `<a:b>`, `<a?b>`, `<a%b>`, `<a b>` all sanitize to `_a_b_.json`.
   - A *legitimate* ID containing a literal underscore (`a_b`) also collides with `a/b` and `a:b`.
   - Therefore two distinct documents silently overwrite each other on disk while `doc_map` (keyed by the raw ID) still counts both → **on-disk document count < in-memory count**.
-* **Dataset examples — status:**
-  - 🔍 **DBPedia-Entity:** the doc's original claim of RDF URI IDs (`<dbpedia:Category/…>` vs `<dbpedia:Category:…>`) must be confirmed against the downloaded `corpus.jsonl`. If BEIR ships numeric-string `_id`s (as several BEIR datasets do), this example does not apply.
-  - 🔍 **FEVER / Climate-FEVER:** the original claim about Wikipedia *titles* with slashes (`180/Movement…`) is **likely incorrect** for the current code — the filename uses `_id` (numeric Wikipedia page id in BEIR FEVER), **not** `title`. Verify `_id` contents before relying on this example.
+* **Dataset examples — verified against live data:**
+  - ✅ **DBPedia-Entity:** `_id` values are **RDF URIs** with angle brackets, colons, and parentheses — e.g. `<dbpedia:Animalia_(book)>`, `<dbpedia:Academy_Award_…>`. These sanitize to forms like `_dbpedia_Animalia__book_.json`, so distinct URIs collapse together after sanitization.
+  - ✅ **FEVER / Climate-FEVER:** `_id` is the **Wikipedia title slug**, not a numeric page id — e.g. `180/Movement_for_Democracy_and_Education`. The `/` sanitizes to `_`, so it collides with any `180_Movement_for_Democracy_and_Education`-style ID (silent overwrite).
+  - ✅ **Related hard-failure hazard:** any writer that emits `did + ".json"` *without* sanitization raises `FileNotFoundError` when `did` contains `/` (open() targets a non-existent subfolder like `180/`); this was observed live during conversion on the full environment.
   - ✅ **General danger is real** for any dataset whose `_id` contains non-`[a-zA-Z0-9_\-\.]` characters.
 * **Impact:** silent corpus corruption → false-negative evaluations; on-disk `documents/` set is smaller than `corpus.jsonl`.
 
@@ -59,11 +59,11 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
   1. True graded nDCG@10 (BEIR exponential gain `2^rel - 1`) becomes impossible → irreconcilable with published baselines (e.g. arXiv:2403.06789 Table 2).
   2. Queries whose only gold docs have `score < 1.0` are **silently dropped** (the loop only iterates keys present in `q_to_gold_docs`).
   3. The `did in doc_map` guard also drops qrel docs absent from the corpus — compounding with 1.1 to produce false negatives.
-* **Note:** even if scores were kept, the current evaluation path does not consume graded relevance (see 2.1).
+* **Note:** even if scores were kept, the current harness consumes only binary relevance — the reported `ndcg_10` is binary (see 2.1).
 
 ---
 
-### 1.3 Document Title Duplication & Term-Frequency Distortion — ⚠️ (mechanism ✅, Quora example 🔍)
+### 1.3 Document Title Duplication & Term-Frequency Distortion — ✅
 * **Affected code:** `scripts/data_adapters/convert_retriever_doc_level_benchmarks.py::convert_beir` (line 81)
 * **Problem:**
   ```python
@@ -72,7 +72,7 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
   The guard only suppresses concatenation on **exact** equality. When `title` is a meaningful, non-identical copy (different case/whitespace/punctuation), the title is duplicated.
 * **Impact:**
   - ✅ **Real for FEVER / NQ / HotpotQA / Climate-FEVER** — Wikipedia titles are meaningful and distinct from body text, so title tokens get ~2× TF, inflating BM25 term weighting on the title words relative to the raw benchmark.
-  - 🔍 **Quora** — the original claim depends on the raw corpus having a non-empty `title` that differs from `text`; many BEIR Quora records have an empty/equal title, in which case the guard already skips concatenation. Verify against the downloaded corpus.
+  - ✅ **Quora is exempt (verified):** raw BEIR Quora records have `title: ""` (empty string), so `if title and title != text` is `False` and concatenation is skipped. No TF distortion on Quora — the distortion applies only to Wikipedia-backed corpora (FEVER / NQ / HotpotQA / Climate-FEVER).
 
 ---
 
@@ -88,10 +88,10 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 
 ## 2. Evaluation Metric Discrepancies & Gold Representation
 
-### 2.1 Binary nDCG Formula vs. Academic Leaderboard Standards — ✅ (latent)
+### 2.1 Binary nDCG Formula vs. Academic Leaderboard Standards — ✅ (active)
 * **Affected code:** `src/evaluation/metrics.py::calculate_ndcg_at_k` (lines 37–53)
 * **Discrepancy:** implements **binary** relevance nDCG (1.0 gain for any gold hit), not the official BEIR graded gain `2^rel - 1`.
-* **Additional finding:** the primary benchmark runner `scripts/run_v7_calibration_suite.py::evaluate_v7_config` **does not compute nDCG at all** (it reports strict/complete/doc-rec/precision/MRR only; nDCG is absent from `FIELDNAMES`). So the "±0.015–0.035 vs. paper" variance is currently **latent** — it will only appear once graded nDCG is added. Any BEIR Table-2 comparison requires (a) preserving graded qrels (1.2) and (b) implementing graded nDCG in the harness.
+* **Status — active, not latent:** the comparative runner `scripts/run_v7_vs_baselines_comparison.py` **does** compute and report `ndcg_10` (present in `results/v7_vs_baselines/v7_vs_baselines_results.csv`), but it uses the **binary** relevance from `metrics.py` — so the ±0.015–0.035 variance vs. official graded BEIR numbers is already baked into reported results (e.g. `beir_nfcorpus_doc_level`). The older `scripts/run_v7_calibration_suite.py` omits nDCG entirely, which is why a quick grep of that file alone is misleading. Any BEIR Table-2 comparison requires (a) preserving graded qrels (1.2) and (b) a graded-nDCG path in the harness.
 
 ---
 
@@ -106,7 +106,7 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 ## 3. Additional Issues Found During Code Audit
 
 ### 3.1 Corpus Loader Materializes Everything in RAM (blocks BM25 at scale) — ✅
-* **Affected code:** `scripts/run_v7_calibration_suite.py::load_doc_corpus` (lines 109–143)
+* **Affected code:** `scripts/run_v7_vs_baselines_comparison.py::load_doc_corpus` and `scripts/run_v7_calibration_suite.py::load_doc_corpus` (lines 109–143 in the latter) — both share the same materialize-everything pattern.
 * **Problem:** `os.listdir` over the `documents/` dir, then `json.load` each file and append the **full text** to `corpus_texts` and a dict to `corpus_docs`. Two parallel in-memory lists hold the entire corpus.
 * **Impact:** at 5.4M docs this is tens of GB of host RAM **before Lucene ever indexes anything** → BM25/Lucene, the only scalable retriever in the suite, will OOM in a 16 GB machine purely due to the loader. The fragmentation in 1.4 makes this worse (millions of `json.load` calls + list growth).
 * **Fix direction:** stream from a sharded `corpus.jsonl`/`parquet` and hand documents to the indexer incrementally instead of building two full lists.
@@ -140,7 +140,7 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 ### 3.6 Baseline Scale Limits (dense-BGE & SPLADE) — ✅
 * **Affected code:** `src/baselines/dense_rag.py` (line 70), `src/baselines/splade.py` (lines 97–112, 153–190)
 * **Dense BGE-small:** `build_index` stores an **fp32 384-dim embedding for every doc** (`np.asarray(self.model.encode_corpus(...))`) plus the full text list. At 5.4M docs ≈ **8.3 GB** of embeddings + text list + query-time full-corpus matmul → borderline/over 16 GB RAM; TTI is hours. VRAM is not the constraint (model is tiny).
-* **SPLADE-v3:** `build_index` stores a **Python list of sparse dicts** per doc, and `_compute_scores_manual` performs a **pure-Python O(N) scan per query**. Non-viable (memory *and* minutes-per-query) at millions of docs.
+* **SPLADE-v3:** `build_index` stores a **Python list of sparse dicts** per doc, and `_compute_scores_manual` performs a **pure-Python O(N) scan per query**. Non-viable (memory *and* minutes-per-query) at millions of docs. **Fairness caveat:** published SPLADE results (arXiv:2403.06789) use a C++ inverted-index engine (Pisa / Anserini/Lucene) with WAND/MaxScore posting traversal, so their query latency is comparable to Lucene. Our `src/baselines/splade.py` is a non-inverted Python reference implementation — its latency/TTI figures reflect *that* implementation, not an inverted-index SPLADE deployment.
 * **Recommendation:** do **not** rewrite these to survive millions of docs — that mutates them away from "off-the-shelf baselines" and breaks comparability. Run them only up to a documented per-method corpus ceiling (or a stratified sample with the same gold docs), and record "did not complete / OOM / TTI > X" beyond that as a measured scaling result.
 
 ### 3.7 Environment-Specific Filename Risks (WSL / NTFS) — ⚠️
@@ -154,14 +154,14 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 
 | Benchmark | Inherent problem | Conversion / code flaw | Evaluation risk |
 | :--- | :--- | :--- | :--- |
-| `beir_dbpedia_entity_doc_level` | Incomplete pooling; millions of unjudged entities | 🔍 URI-vs-numeric ID sanitization collision (1.1); audit false-FAIL (3.2) | Overwritten docs; false negatives |
-| `beir_fever_doc_level` | Single-hop over 5.4M Wikipedia | 5.4M flat JSON files (1.4); loader OOM (3.1) | E2BIG; BM25 OOM in 16 GB |
-| `beir_climate_fever_doc_level` | Claim verification over Wikipedia | Title-sanitization collision **likely N/A** (filename uses `_id`, 1.1); flat files (1.4) | Same loader issues |
+| `beir_dbpedia_entity_doc_level` | Incomplete pooling; millions of unjudged entities | ✅ RDF-URI `_id` sanitization collision (1.1); audit false-FAIL (3.2) | Overwritten docs; false negatives |
+| `beir_fever_doc_level` | Single-hop over 5.4M Wikipedia | ✅ slash `_id` sanitization collision (1.1); 5.4M flat JSON files (1.4); loader OOM (3.1) | E2BIG; overwritten docs; BM25 OOM in 16 GB |
+| `beir_climate_fever_doc_level` | Claim verification over Wikipedia | ✅ slash `_id` sanitization collision (1.1); flat files (1.4) | Overwritten docs; same loader issues |
 | `beir_hotpotqa_doc_level` | Multi-hop (2 hops) | 5.2M flat files; unstratified 500-query capping | Standard nDCG hides missing hop 2 |
 | `beir_trec_covid_doc_level` | 50 queries; 3-level relevance | Binary threshold drops graded levels (1.2) | Binary nDCG mismatch (2.1) |
 | `beir_webis_touche2020_doc_level` | 49 queries; 3-level relevance | Binary threshold (1.2) | Binary nDCG mismatch |
 | `beir_nfcorpus_doc_level` | 4-level relevance | Binary threshold (1.2) | Binary nDCG mismatch |
-| `beir_quora_doc_level` | Duplicate questions from same pool | 🔍 title duplication (1.3) | Self-match inflation if not filtered |
+| `beir_quora_doc_level` | Duplicate questions from same pool | ✅ title duplication does **not** apply (empty `title`, 1.3) | Self-match inflation if not filtered |
 | `bright_*_doc_level` | Near-zero lexical overlap by design | None | Misleading under keyword search |
 | `financebench_doc_level` | SEC tables & footnotes | Plain-text linearization destroys tables; distractor injection makes corpus non-official (3.4) | Not peer-comparable |
 | `multihop_rag_doc_level` | 2–4 disjoint docs required | None | `DocRec@10` counts partial chains |
