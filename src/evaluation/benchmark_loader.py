@@ -14,7 +14,7 @@ Streams directly from raw academic corpora without lossy conversion artifacts:
 import os
 import re
 import json
-from typing import List, Dict, Any, Tuple, Optional, Set
+from typing import List, Dict, Any, Tuple, Optional, Set, Generator
 import numpy as np
 import pandas as pd
 
@@ -39,15 +39,26 @@ class BenchmarkLoader:
     """
 
     @classmethod
+    def _find_beir_dir(cls, subset: str) -> str:
+        candidates = [
+            os.path.join(RAW_DIR, "beir", subset),
+            os.path.join(RAW_DIR, "beir", subset.replace("_", "-")),
+            os.path.join(RAW_DIR, "beir", subset.replace("-", "_")),
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                return c
+        raise FileNotFoundError(f"BEIR subset '{subset}' not found in {os.path.join(RAW_DIR, 'beir')}")
+
+    @classmethod
     def load(cls, dataset_name: str) -> Tuple[List[str], List[Dict[str, str]], List[Dict[str, Any]], Dict[str, Any]]:
         norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
         
-        if norm in ("beir_scifact", "scifact"):
-            return cls._load_beir("scifact")
-        elif norm in ("beir_nfcorpus", "nfcorpus"):
-            return cls._load_beir("nfcorpus")
-        elif norm in ("beir_fiqa", "fiqa"):
-            return cls._load_beir("fiqa")
+        if norm.startswith("beir_"):
+            subset = norm[5:]
+            return cls._load_beir(subset)
+        elif norm in ("scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora", "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity", "trec_covid", "webis_touche2020"):
+            return cls._load_beir(norm)
         elif norm in ("bright_economics", "economics"):
             return cls._load_bright("economics")
         elif norm in ("bright_stackoverflow", "stackoverflow"):
@@ -63,13 +74,117 @@ class BenchmarkLoader:
         elif norm in ("liverag", "live_rag"):
             return cls._load_liverag()
         else:
-            raise ValueError(f"Unknown benchmark dataset: {dataset_name}")
+            # Fallback: try loading as BEIR
+            try:
+                return cls._load_beir(norm)
+            except FileNotFoundError:
+                raise ValueError(f"Unknown benchmark dataset: {dataset_name}")
 
-    @staticmethod
-    def _load_beir(subset: str) -> Tuple[List[str], List[Dict[str, str]], List[Dict[str, Any]], Dict[str, Any]]:
-        src_dir = os.path.join(RAW_DIR, "beir", subset)
-        if not os.path.exists(src_dir):
-            raise FileNotFoundError(f"BEIR subset not found at {src_dir}")
+    @classmethod
+    def stream_corpus(cls, dataset_name: str) -> Generator[Tuple[str, str], None, None]:
+        """
+        Streams (doc_id, text) one-by-one from the raw source file.
+        Does NOT materialize the full corpus in RAM.
+        """
+        norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+
+        if norm.startswith("beir_") or norm in (
+            "scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora",
+            "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity",
+            "trec_covid", "webis_touche2020"
+        ):
+            subset = norm[5:] if norm.startswith("beir_") else norm
+            src_dir = cls._find_beir_dir(subset)
+            corpus_file = os.path.join(src_dir, "corpus.jsonl")
+            if not os.path.exists(corpus_file):
+                corpus_file = os.path.join(src_dir, "corpus_corpus.jsonl")
+
+            with open(corpus_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    did = str(rec.get("_id", ""))
+                    title = (rec.get("title") or "").strip()
+                    text = (rec.get("text") or "").strip()
+                    full_text = f"{title} {text}".strip() if title else text
+                    if did and full_text:
+                        yield (did, full_text)
+        else:
+            # For in-memory supported datasets, load and yield
+            corpus_texts, corpus_docs, _, _ = cls.load(dataset_name)
+            for d in corpus_docs:
+                yield (d["doc_id"], d["text"])
+
+    @classmethod
+    def load_queries(cls, dataset_name: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        Loads queries and qrels without materializing the corpus in RAM.
+        """
+        norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+        if norm.startswith("beir_") or norm in (
+            "scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora",
+            "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity",
+            "trec_covid", "webis_touche2020"
+        ):
+            subset = norm[5:] if norm.startswith("beir_") else norm
+            src_dir = cls._find_beir_dir(subset)
+
+            queries_file = os.path.join(src_dir, "queries.jsonl")
+            if not os.path.exists(queries_file):
+                queries_file = os.path.join(src_dir, "queries_queries.jsonl")
+            qrels_file = os.path.join(src_dir, "qrels", "test.tsv")
+
+            queries_map = {}
+            with open(queries_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    qid = str(rec.get("_id", ""))
+                    qtext = (rec.get("text") or "").strip()
+                    if qid and qtext:
+                        queries_map[qid] = qtext
+
+            qrels_by_q: Dict[str, Dict[str, float]] = {}
+            total_qrel_entries = 0
+            with open(qrels_file, "r", encoding="utf-8") as f:
+                header = f.readline()
+                for line in f:
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        qid, did, score_val = str(parts[0]), str(parts[1]), float(parts[2])
+                        total_qrel_entries += 1
+                        qrels_by_q.setdefault(qid, {})[did] = score_val
+
+            formatted_queries = []
+            for qid in sorted(queries_map.keys()):
+                if qid in qrels_by_q:
+                    qrels = qrels_by_q[qid]
+                    gold_dids = [did for did, s in qrels.items() if s > 0]
+                    if gold_dids:
+                        formatted_queries.append({
+                            "query_id": f"q_beir_{subset}_{qid}",
+                            "question": queries_map[qid],
+                            "gold_doc_ids": sorted(gold_dids),
+                            "qrels": qrels
+                        })
+
+            stats = {
+                "dataset": f"beir_{subset}",
+                "queries_loaded": len(formatted_queries),
+                "total_qrel_entries": total_qrel_entries,
+            }
+            return formatted_queries, stats
+        else:
+            _, _, queries, stats = cls.load(dataset_name)
+            return queries, stats
+
+    @classmethod
+    def _load_beir(cls, subset: str) -> Tuple[List[str], List[Dict[str, str]], List[Dict[str, Any]], Dict[str, Any]]:
+        src_dir = cls._find_beir_dir(subset)
 
         corpus_file = os.path.join(src_dir, "corpus.jsonl")
         if not os.path.exists(corpus_file):

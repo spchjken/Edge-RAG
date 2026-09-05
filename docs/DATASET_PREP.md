@@ -344,6 +344,15 @@ git clone https://github.com/chen700564/RGB.git data/raw/rgb/
 | 13 | `beir_webis_touche2020_doc_level`| `webis-touche2020`| 382,545 | 49 | 932 | Argument search for controversial social topics |
 | **Total** | **Full BEIR Suite** | — | **~24.5M Docs** | **33,229 Qs** | **108,902 Links** | **100% Ingested in Edge-RAG** |
 
+### Scale Categorization & Hardware Memory Safety Tiers
+When benchmarking on standard research / edge workstations (e.g., 16 GB System RAM, 16 GB GPU VRAM), the BEIR suite naturally segments into three distinct hardware scalability tiers:
+
+| Tier | Scale | Datasets | Memory Footprint & Hardware Viability |
+| :--- | :--- | :--- | :--- |
+| **Tier 1: Fast & Safe** | <60,000 Docs | `scifact` (5.1k), `nfcorpus` (3.6k), `arguana` (8.6k), `scidocs` (25.6k), `fiqa` (57.6k) | **100% Safe**. All models (BM25, Dense, SPLADE, Edge-RAG V7) complete in 1–3 minutes with <1 GB RAM and <11.5 GB VRAM. |
+| **Tier 2: Manageable** | 100k–400k Docs | `trec-covid` (171k docs, 50 Qs), `webis-touche2020` (382k docs, 49 Qs) | **Feasible on 16 GB Workstations**. In-memory text loading consumes ~0.8–1.5 GB RAM. Dense takes 2–3 mins; SPLADE takes 6–9 mins. |
+| **Tier 3: Extreme Scale** | 2.6M–5.4M Docs | `nq` (2.68M), `dbpedia-entity` (4.64M), `hotpotqa` (5.23M), `fever` (5.42M), `climate-fever` (5.42M) | **High Crash Risk for In-Memory Loading**. Python string deserialization alone consumes >12–14 GB RAM, exceeding 16 GB system memory. SPLADE requires >1 billion inverted postings (~9 GB RAM). **Must NOT be loaded in-memory**; requires streaming disk-backed indexes (Lucene/Anserini) or candidate pooling. |
+
 ### Automated Acquisition & Ingestion Pipelines
 1. **Automated Downloader (`download_beir_datasets.py`):**
    ```bash
@@ -351,11 +360,17 @@ git clone https://github.com/chen700564/RGB.git data/raw/rgb/
    ```
    Fetches the official UKP TU-Darmstadt zip archives into `data/raw/beir/<dataset>/`.
 
-2. **Standardization Adapter (`convert_retriever_doc_level_benchmarks.py`):**
-   ```bash
-   PYTHONPATH=. .venv/bin/python3 scripts/data_adapters/convert_retriever_doc_level_benchmarks.py --datasets beir_all
+2. **Unified Direct Ingestion (`src/evaluation/benchmark_loader.py`):**
+   Edge-RAG provides [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py), which streams directly from raw `corpus.jsonl` and `qrels/test.tsv` without flat-file filesystem fragmentation or filename collisions:
+   ```python
+   from src.evaluation.benchmark_loader import BenchmarkLoader
+   corpus_texts, corpus_docs, queries, stats = BenchmarkLoader.load("beir_scifact")
    ```
-   Standardizes all 13 corpora into canonical Document-Level format under `data/benchmarks/beir_<dataset>_doc_level/`.
+   - **BEIR Standard Text**: Follows `f"{title} {text}".strip() if title else text`.
+   - **Graded Relevance**: Preserves raw continuous/graded judgment tables for official graded nDCG@10.
+
+3. **Legacy Flat-File Standardization Adapter (`convert_retriever_doc_level_benchmarks.py`):**
+   Maintained for backwards-compatible export of standalone JSON documents under `data/benchmarks/beir_<dataset>_doc_level/`.
 
 ---
 
@@ -384,21 +399,22 @@ Edge-RAG stores benchmarks under `data/benchmarks/`. There are two primary schem
 
 ## 7.1 Active Evaluation Suites
 
-### Track A: Active Core 10-Benchmark Evaluation Suite (339,425 Docs, 3,223 Queries)
-The primary benchmark suite for automated ablation sweeps and side-by-side model comparison (`scripts/run_v7_vs_baselines_comparison.py`, `scripts/profile_v7_10_benchmarks.py`):
-1. `enterpriserag_doc_level` (50,000 docs, 500 Qs)
-2. `liverag_doc_level` (970 docs, 895 Qs)
-3. `beir_scifact_doc_level` (5,183 docs, 300 Qs)
-4. `beir_nfcorpus_doc_level` (3,633 docs, 323 Qs)
-5. `beir_fiqa_doc_level` (57,600 docs, 648 Qs)
-6. `multihop_rag_doc_level` (609 docs, 186 Qs)
-7. `financebench_doc_level` (2,168 docs, 150 Qs)
-8. `bright_economics_doc_level` (50,220 docs, 103 Qs)
-9. `bright_stackoverflow_doc_level` (107,081 docs, 117 Qs)
-10. `bright_robotics_doc_level` (61,961 docs, 101 Qs)
+### Track A: Active Core 10-Benchmark Evaluation Suite (337,425 Docs, 5,362 Queries)
+The primary benchmark suite for automated ablation sweeps and side-by-side model comparison (`scripts/run_v7_vs_baselines_comparison.py`, `scripts/profile_v7_10_benchmarks.py`), ingested directly via [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py):
+1. `enterpriserag_doc_level` (50,000 docs, 470 Qs) — Standardized 50k seed-42 subset
+2. `liverag_doc_level` (970 docs, 895 Qs) — Unchunked supporting docs & multi-session queries
+3. `beir_scifact_doc_level` (5,183 docs, 300 Qs) — Raw BEIR, standard title-text concatenation
+4. `beir_nfcorpus_doc_level` (3,633 docs, 323 Qs) — Raw BEIR, 4-level graded qrels
+5. `beir_fiqa_doc_level` (57,600 docs, 648 Qs) — Raw BEIR, full un-capped test split
+6. `multihop_rag_doc_level` (609 docs, 2,255 Qs) — Full un-capped news retrieval queries
+7. `financebench_doc_level` (168 docs, 150 Qs) — Official SEC filing evidence pages (distractor-free)
+8. `bright_economics_doc_level` (50,220 docs, 103 Qs) — Raw BRIGHT reasoning parquet
+9. `bright_stackoverflow_doc_level` (107,081 docs, 117 Qs) — Raw BRIGHT reasoning parquet
+10. `bright_robotics_doc_level` (61,961 docs, 101 Qs) — Raw BRIGHT reasoning parquet
 
-### Track B: Extended Multi-Corpus Suite (~24.5 Million Docs)
-Includes all remaining large-scale BEIR corpora (`climate-fever`, `fever`, `dbpedia-entity`, `hotpotqa`, `nq`, `quora`, `scidocs`, `trec-covid`, `webis-touche2020`) and remaining BRIGHT domains (`biology`, `leetcode`).
+### Track B: Extended BEIR & BRIGHT Suite (~24.5 Million Docs)
+- **Feasible Scale Expansion (Tier 1 & 2):** `beir_arguana` (8.7k docs), `beir_scidocs` (25.7k docs), `beir_trec_covid` (171k docs), `beir_webis_touche2020` (383k docs). Fully supported by `BenchmarkLoader` within 16 GB hardware limits.
+- **Ultra-Large Scale (Tier 3 - Million-Doc Corpora):** `climate-fever` (5.42M), `fever` (5.42M), `dbpedia-entity` (4.64M), `hotpotqa` (5.23M), `nq` (2.68M), `quora` (523k), plus BRIGHT `biology` and `leetcode`. Evaluated via disk-backed streaming indexes or standard candidate pooling to prevent system memory exhaustion.
 
 ---
 
@@ -477,26 +493,26 @@ The table below summarizes all surveyed and integrated benchmarks in Edge-RAG:
 
 | # | Benchmark Name | Source / Paper | Primary Domain / Task | Scale (Queries / Corpus) | Multi-Hop? | Pipeline Fit | Retriever Fit | Edge-RAG Status |
 | :---: | :--- | :---: | :--- | :--- | :---: | :---: | :---: | :--- |
-| **1** | **EnterpriseRAG** | Edge-RAG Core | Enterprise Workspace (9 Sources) | 500 Q / 50,000 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
+| **1** | **EnterpriseRAG** | Edge-RAG Core | Enterprise Workspace (9 Sources) | 470 Q / 50,000 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **2** | **LiveRAG** | Edge-RAG Core | Dynamic Web / Streaming News | 895 Q / 970 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **3** | **SciFact (BEIR)** | NeurIPS 2021 | Scientific Claim Verification | 300 Q / 5,183 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **4** | **NFCorpus (BEIR)** | NeurIPS 2021 | Medical / Nutrition Search | 323 Q / 3,633 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **5** | **FiQA-2018 (BEIR)**| NeurIPS 2021 | Financial QA Retrieval | 648 Q / 57,600 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **6** | **MultiHop-RAG** | NTU (Jan 2024) | Multi-Document Evidence Synthesis| 186 Q / 609 Docs | Yes (2–4 hops)| ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **7** | **FinanceBench** | Patronus AI | SEC 10-K Corporate Filings | 150 Q / 2,168 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
+| **6** | **MultiHop-RAG** | NTU (Jan 2024) | Multi-Document Evidence Synthesis| 2,255 Q / 609 Docs | Yes (2–4 hops)| ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
+| **7** | **FinanceBench** | Patronus AI | SEC 10-K Corporate Filings | 150 Q / 168 Docs (Official) | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **8** | **BRIGHT Economics** | NeurIPS 2024 | Complex Economics Reasoning | 103 Q / 50,220 Docs | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **9** | **BRIGHT StackOverflow**| NeurIPS 2024| Technical Code / StackOverflow Q&A | 117 Q / 107,081 Docs | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
 | **10**| **BRIGHT Robotics** | NeurIPS 2024 | Robotics / ROS Engineering | 101 Q / 61,961 Docs | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **11**| **ArguAna (BEIR)** | Table 2 SPLADE-v3 | Counter-Argument Search | 1,401 Q / 8,674 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **12**| **SCIDOCS (BEIR)** | Table 2 SPLADE-v3 | Citation & Research Discovery | 1,000 Q / 25,657 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **13**| **TREC-COVID (BEIR)** | Table 2 SPLADE-v3 | Biomedical Pandemic Research | 50 Q / 171,331 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **14**| **Touché-2020 (BEIR)**| Table 2 SPLADE-v3 | Controversial Argument Search | 49 Q / 382,545 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **15**| **Quora (BEIR)** | Table 2 SPLADE-v3 | Paraphrase / Duplicate Questions | 10,000 Q / 522,931 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **16**| **NQ (BEIR)** | Table 2 SPLADE-v3 | Google Search Natural Questions | 3,452 Q / 2.68M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **17**| **HotpotQA (BEIR)** | Table 2 SPLADE-v3 | Multi-Hop Wikipedia QA | 7,405 Q / 5.23M Docs | Yes | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **18**| **DBPedia (BEIR)** | Table 2 SPLADE-v3 | Structured Entity Link Search | 400 Q / 4.63M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **19**| **FEVER (BEIR)** | Table 2 SPLADE-v3 | Fact Extraction & Verification | 6,666 Q / 5.41M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
-| **20**| **Climate-FEVER** | Table 2 SPLADE-v3 | Climate Fact-Checking | 1,535 Q / 5.41M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Ingested (Table 2 Suite)** |
+| **11**| **ArguAna (BEIR)** | Table 2 SPLADE-v3 | Counter-Argument Search | 1,401 Q / 8,674 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 1 Safe)** |
+| **12**| **SCIDOCS (BEIR)** | Table 2 SPLADE-v3 | Citation & Research Discovery | 1,000 Q / 25,657 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 1 Safe)** |
+| **13**| **TREC-COVID (BEIR)** | Table 2 SPLADE-v3 | Biomedical Pandemic Research | 50 Q / 171,331 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 2 Manageable)** |
+| **14**| **Touché-2020 (BEIR)**| Table 2 SPLADE-v3 | Controversial Argument Search | 49 Q / 382,545 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 2 Manageable)** |
+| **15**| **Quora (BEIR)** | Table 2 SPLADE-v3 | Paraphrase / Duplicate Questions | 10,000 Q / 522,931 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Large Scale)** |
+| **16**| **NQ (BEIR)** | Table 2 SPLADE-v3 | Google Search Natural Questions | 3,452 Q / 2.68M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
+| **17**| **HotpotQA (BEIR)** | Table 2 SPLADE-v3 | Multi-Hop Wikipedia QA | 7,405 Q / 5.23M Docs | Yes | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
+| **18**| **DBPedia (BEIR)** | Table 2 SPLADE-v3 | Structured Entity Link Search | 400 Q / 4.63M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
+| **19**| **FEVER (BEIR)** | Table 2 SPLADE-v3 | Fact Extraction & Verification | 6,666 Q / 5.41M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
+| **20**| **Climate-FEVER** | Table 2 SPLADE-v3 | Climate Fact-Checking | 1,535 Q / 5.41M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
 
 ---
 
