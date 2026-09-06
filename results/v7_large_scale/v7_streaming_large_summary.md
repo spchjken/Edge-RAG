@@ -1,7 +1,7 @@
 # 🐘 Large-Scale 5M+ BEIR Benchmark Summary (Streaming IO)
 
-- **Evaluated Date:** 2026-09-05 04:49:46
-- **Evaluated Massive Datasets:** beir_quora
+- **Evaluated Date:** 2026-09-06 14:49:01
+- **Evaluated Massive Datasets:** beir_dbpedia_entity, beir_climate_fever, beir_nq, beir_hotpotqa, beir_fever
 - **Methodology:** 16-Bucket Radix Partitioned Memory-Mapped Streaming Inverted Index.
 
 ## 📊 Retrieval Quality & Efficiency Comparison
@@ -18,6 +18,16 @@
 | `beir_webis_touche2020` | 382,545 | 49 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 95.92% | 21.56% | 0.7095 | **0.3724** | 113.57 ms | 2396.3 MB | 0.38 GB |
 | `beir_quora` | 522,931 | 10000 | **BM25 (Analyzed Lucene, kstem)** | 92.82% | 88.32% | 0.7797 | **0.7862** | 5.25 ms | 971.8 MB | 0.00 GB |
 | `beir_quora` | 522,931 | 10000 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 92.35% | 87.95% | 0.7721 | **0.7799** | 156.39 ms | 2161.4 MB | 0.38 GB |
+| `beir_dbpedia_entity` | 4,635,922 | 400 | **BM25 (Analyzed Lucene, kstem)** | 79.50% | 19.47% | 0.5697 | **0.2850** | 45.30 ms | 2867.5 MB | 0.00 GB |
+| `beir_dbpedia_entity` | 4,635,922 | 400 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 79.50% | 19.04% | 0.5741 | **0.2793** | 6013.51 ms | 3819.8 MB | 0.37 GB |
+| `beir_climate_fever` | 5,416,593 | 1535 | **BM25 (Analyzed Lucene, kstem)** | 34.72% | 16.30% | 0.1802 | **0.1303** | 84.89 ms | 3503.4 MB | 0.00 GB |
+| `beir_climate_fever` | 5,416,593 | 1535 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 37.33% | 17.89% | 0.1960 | **0.1429** | 8112.08 ms | 4616.6 MB | 0.37 GB |
+| `beir_nq` | 2,681,468 | 3452 | **BM25 (Analyzed Lucene, kstem)** | 47.51% | 43.95% | 0.2433 | **0.2815** | 27.63 ms | 2059.3 MB | 0.00 GB |
+| `beir_nq` | 2,681,468 | 3452 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 47.57% | 44.14% | 0.2435 | **0.2818** | 1191.29 ms | 3234.3 MB | 0.36 GB |
+| `beir_hotpotqa` | 5,233,329 | 7405 | **BM25 (Analyzed Lucene, kstem)** | 87.85% | 60.79% | 0.7442 | **0.5788** | 79.23 ms | 2909.1 MB | 0.00 GB |
+| `beir_hotpotqa` | 5,233,329 | 7405 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 88.24% | 61.29% | 0.7407 | **0.5791** | 7861.18 ms | 3879.3 MB | 0.38 GB |
+| `beir_fever` | 5,416,568 | 6666 | **BM25 (Analyzed Lucene, kstem)** | 70.67% | 67.11% | 0.4658 | **0.5044** | 50.88 ms | 3687.1 MB | 0.00 GB |
+| `beir_fever` | 5,416,568 | 6666 | **Edge-RAG V7 (GPU-Sparse Bailout)** | 70.43% | 66.87% | 0.4620 | **0.5009** | 6941.14 ms | 4780.8 MB | 0.37 GB |
 
 ## 📑 Reference Published Literature Baselines (Official Table 2, arXiv:2403.06789)
 
