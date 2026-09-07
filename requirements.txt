@@ -18,6 +18,8 @@ llmlingua
 pyahocorasick
 yake
 fasttext-wheel
+python-terrier
+ir_measures
 
 # Data Processing & Benchmarks
 pandas

@@ -155,6 +155,21 @@ src/pipeline_v2/
 | **Edge-RAG V7 (GPU-Sparse Bailout)** | **62.82%** | **49.35%** | **74.18%** | **60.54%** | **0.4731** | **15.61 ms** | **14.56 s** | **1.06 GB** |
 | **SPLADE-v3 (DistilBERT)** | 66.40% | 50.68% | 77.47% | 63.04% | 0.4985 | 46.50 ms | 197.84 s | 5.00 GB |
 
+### 4.2 PyTerrier Baseline Evaluation Suite (`src/evaluation/pyterrier_harness.py`)
+
+To establish rigorous external baseline anchors adhering to standard TREC and BEIR protocols across small and multi-million-document corpora (up to 5M+ docs), Edge-RAG integrates a disk-based PyTerrier baseline harness:
+- **5-Baseline Evaluation Matrix:**
+  1. `BM25_Default`: Stock Terrier BM25 (literature anchor).
+  2. `BM25_Analyzed`: Compounding-aware analyzer (`EdgeRAGAnalyzer`) + light Krovetz stemming indexed via `WhitespaceTokeniser`.
+  3. `BM25_RM3_Terrier_Default`: Native PyTerrier Java RM3 pipeline (`bm25 >> pt.rewrite.RM3 >> bm25`).
+  4. `BM25_RM3_Unified_Default`: Unified Dirichlet RM3 on default index.
+  5. `BM25_RM3_Unified_Analyzed`: Unified Dirichlet RM3 on analyzed index.
+- **Large-Corpus (5M+ Docs) Scalable Architecture:**
+  - **Zero-RAM Streaming:** Ingestion via `BenchmarkLoader.stream_corpus()` yielding documents line-by-line into `IterDictIndexer`, keeping Python RAM $<100\text{ MB}$.
+  - **Bounded JVM Heap:** Java max heap hard-capped at 4 GiB (`pt.java.set_memory_limit(4096)`).
+  - **Bounded Indexing Memory:** Configured with `indexing.max.memory = 1073741824` (1 GiB) for periodic disk posting flushes and external multi-way merge sort.
+  - **Query Chunking:** Batches large query sets (`chunk_size=200`) to eliminate JNI memory surges while preserving 100% numerical metric identity (verified via `tests/test_chunking_parity.py`).
+
 ---
 
 ## 5. Configuration Contract (`configs/pipeline_v2.yaml`)

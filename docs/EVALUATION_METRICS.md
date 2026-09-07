@@ -82,6 +82,25 @@ Evaluated at standard retrieval cutoffs: $K \in \{10, 20, 30, 50\}$.
 
 ---
 
+### 2.8 Standard IR Measures Engine (`ir_measures`) & Query Chunking Invariance
+To ensure strict reproducibility and alignment with standard TREC / BEIR evaluation protocols, baseline retrieval metrics are computed using `ir_measures` with pinned exponential gain definitions:
+```python
+BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}
+measures = [
+    nDCG(gains=BEIR_EXP_GAINS) @ 10,
+    nDCG(gains=BEIR_EXP_GAINS) @ 50,
+    RR @ 10,
+    R @ 10,
+    R @ 50,
+    P @ 10,
+]
+```
+
+#### Query Chunking Invariance Property
+Because Information Retrieval scoring is statistically independent across queries (all document scores and PRF term feedback models are conditioned exclusively on the query $q$ and static corpus index statistics), evaluating queries in bounded batches/chunks ($Q = Q_1 \cup Q_2 \cup \dots$) and concatenating outputs produces mathematically and numerically identical results to evaluating all queries in a single unchunked batch:
+$$\text{Metric}(Q) \equiv \frac{1}{|Q|} \sum_{c} \sum_{q \in Q_c} \text{Metric}(q)$$
+Verified via `tests/test_chunking_parity.py` across all 5 baselines with zero floating-point drift ($\le 10^{-12}$).
+
 ## 3. Query Level Expansion & Telemetry Metrics
 
 ### 3.1 Aggregate Query & Expansion Metrics (Corpus Sweep Level)

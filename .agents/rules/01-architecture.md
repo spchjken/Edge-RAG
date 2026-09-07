@@ -51,9 +51,15 @@ trigger: always_on
 ---
 
 ## 4. Evaluation & Testing (`src/evaluation/`, `scripts/`, `tests/`)
-- Orchestrates evaluations comparing Pipeline V2 against baselines (BM25, Dense BGE, SPLADE-v3).
+- Orchestrates evaluations comparing Pipeline V2 against baselines (BM25, Dense BGE, SPLADE-v3, RM3).
+- **PyTerrier Baseline Harness (`src/evaluation/pyterrier_harness.py`, `scripts/run_pyterrier_baselines.py`):**
+  - Canonical disk-backed evaluation harness across small and multi-million-document corpora (up to 5M+ docs).
+  - Evaluates the 5-baseline matrix: `BM25_Default`, `BM25_Analyzed` (EdgeRAGAnalyzer), `BM25_RM3_Terrier_Default` (native Java RM3), `BM25_RM3_Unified_Default`, and `BM25_RM3_Unified_Analyzed`.
+  - Memory-safe architecture for 15 GiB RAM: bounded JVM heap (`-Xmx4096m`), bounded Terrier buffer (`indexing.max.memory = 1073741824`), streaming disk generator ingestion (`stream_corpus`), and query chunking (`chunk_size=200`).
+  - Standard BEIR metric parity using `ir_measures` with pinned Table 2 exponential gains (`BEIR_EXP_GAINS`).
 - Primary evaluation scripts:
   - `scripts/results_scripts_mapping.md` — Authoritative two-column mapping of all result files to scripts/tests.
+  - `scripts/run_pyterrier_baselines.py` — Automated 13-dataset BEIR baseline evaluation runner with auto-resume.
   - `scripts/run_v2_ablation_sweep.py` / `scripts/run_v7_ablation_sweep.py` — Automated multi-corpus evaluation sweeps.
   - `src/evaluation/benchmark_runner.py` — Baseline vs Edge-RAG orchestrator.
   - `src/evaluation/metrics.py` — Retrieval and generation metric evaluators.

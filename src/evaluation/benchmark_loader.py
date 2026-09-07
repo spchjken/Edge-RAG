@@ -118,6 +118,27 @@ class BenchmarkLoader:
                 yield (d["doc_id"], d["text"])
 
     @classmethod
+    def get_corpus_doc_count(cls, dataset_name: str) -> int:
+        """
+        Fast line-count of the corpus file without loading objects into memory.
+        """
+        norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+        if norm.startswith("beir_") or norm in (
+            "scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora",
+            "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity",
+            "trec_covid", "webis_touche2020"
+        ):
+            subset = norm[5:] if norm.startswith("beir_") else norm
+            src_dir = cls._find_beir_dir(subset)
+            corpus_file = os.path.join(src_dir, "corpus.jsonl")
+            if not os.path.exists(corpus_file):
+                corpus_file = os.path.join(src_dir, "corpus_corpus.jsonl")
+            if os.path.exists(corpus_file):
+                with open(corpus_file, "rb") as f:
+                    return sum(1 for _ in f)
+        return 0
+
+    @classmethod
     def load_queries(cls, dataset_name: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Loads queries and qrels without materializing the corpus in RAM.

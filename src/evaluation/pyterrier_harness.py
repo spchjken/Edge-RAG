@@ -33,9 +33,13 @@ from src.pipeline_v2.indexer.analyzer import EdgeRAGAnalyzer, LUCENE_STOPWORDS
 BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}
 
 
-def init_pyterrier():
-    """Idempotent PyTerrier initialization."""
+def init_pyterrier(mem: int = 4096):
+    """Idempotent PyTerrier initialization with bounded JVM heap."""
     if not pt.java.started():
+        try:
+            pt.java.set_memory_limit(mem)
+        except Exception:
+            pass
         pt.java.init()
 
 
@@ -77,15 +81,17 @@ class PyTerrierIndexManager:
     def build_or_load_indices(
         self,
         dataset_name: str,
-        corpus_docs: List[Dict[str, str]],
+        corpus_docs: Optional[Any] = None,
         overwrite: bool = False,
     ) -> Dict[str, Any]:
         """
         Builds or loads dual disk indices with MetaIndex enabled.
+        Supports both in-memory doc lists and streaming disk generators.
         
         Args:
             dataset_name: Name of the benchmark dataset.
-            corpus_docs: List of doc dicts with keys 'doc_id' and 'text'.
+            corpus_docs: Optional list or generator of doc dicts with keys 'doc_id' and 'text'.
+                         If None, streams directly from disk via BenchmarkLoader.stream_corpus().
             overwrite: Whether to force re-indexing.
             
         Returns:
@@ -99,21 +105,52 @@ class PyTerrierIndexManager:
             "analyzed_total_tti_s": 0.0,
         }
 
+        need_default = overwrite or not os.path.exists(os.path.join(default_path, "data.properties"))
+        need_analyzed = overwrite or not os.path.exists(os.path.join(analyzed_path, "data.properties"))
+
+        # Fast path: if both indices exist on disk, bypass corpus reading completely
+        if not need_default and not need_analyzed:
+            print(f"[PyTerrier] Loading cached default index -> {default_path}")
+            index_default = pt.IndexFactory.of(default_path)
+            print(f"[PyTerrier] Loading cached analyzed index -> {analyzed_path}")
+            index_analyzed = pt.IndexFactory.of(analyzed_path)
+            return {
+                "index_default": index_default,
+                "index_analyzed": index_analyzed,
+                "default_path": default_path,
+                "analyzed_path": analyzed_path,
+                "timing": timing,
+            }
+
+        from src.evaluation.benchmark_loader import BenchmarkLoader
+
+        def _get_raw_stream():
+            if corpus_docs is not None:
+                for doc in corpus_docs:
+                    if isinstance(doc, dict):
+                        yield str(doc["doc_id"]), doc.get("text", "")
+                    else:
+                        yield str(doc[0]), str(doc[1])
+            else:
+                for did, text in BenchmarkLoader.stream_corpus(dataset_name):
+                    yield str(did), text
+
         # 1. Build or Load Default Index
-        if overwrite or not os.path.exists(os.path.join(default_path, "data.properties")):
-            print(f"[PyTerrier] Indexing default corpus ({len(corpus_docs)} docs) -> {default_path}")
+        if need_default:
+            print(f"[PyTerrier] Indexing default corpus via stream -> {default_path}")
             os.makedirs(default_path, exist_ok=True)
             t0 = time.perf_counter()
             indexer = pt.IterDictIndexer(
                 default_path,
                 overwrite=True,
-                meta={"docno": 64, "text": 32768},
+                meta={"docno": 64, "text": 4096},
             )
             indexer.setProperty("max.term.length", "256")
+            indexer.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
 
             def default_iter():
-                for doc in corpus_docs:
-                    yield {"docno": str(doc["doc_id"]), "text": doc.get("text", "")}
+                for did, text in _get_raw_stream():
+                    yield {"docno": did, "text": text}
 
             ref_default = indexer.index(default_iter())
             timing["default_index_time_s"] = time.perf_counter() - t0
@@ -123,35 +160,32 @@ class PyTerrierIndexManager:
             index_default = pt.IndexFactory.of(default_path)
 
         # 2. Build or Load Analyzed Index
-        if overwrite or not os.path.exists(os.path.join(analyzed_path, "data.properties")):
-            print(f"[PyTerrier] Pre-tokenizing corpus with EdgeRAGAnalyzer ({len(corpus_docs)} docs)...")
+        if need_analyzed:
+            print(f"[PyTerrier] Pre-tokenizing & indexing analyzed corpus via stream with WhitespaceTokeniser -> {analyzed_path}")
             os.makedirs(analyzed_path, exist_ok=True)
-            t_pre0 = time.perf_counter()
-
-            # Pre-tokenize docs; tokens joined by whitespace, capping absurdly long non-code tokens to 200 chars
-            def analyzed_iter():
-                for doc in corpus_docs:
-                    raw_tokens = self.analyzer.analyze(doc.get("text", ""))
-                    tokens = [t[:200] for t in raw_tokens if len(t) <= 200]
-                    yield {"docno": str(doc["doc_id"]), "text": " ".join(tokens)}
-
-            timing["analyzed_pretokenize_time_s"] = time.perf_counter() - t_pre0
-
-            print(f"[PyTerrier] Indexing analyzed corpus with WhitespaceTokeniser -> {analyzed_path}")
             t_idx0 = time.perf_counter()
+
             indexer_analyzed = pt.IterDictIndexer(
                 analyzed_path,
                 overwrite=True,
                 stemmer=None,
                 stopwords=None,
                 tokeniser="WhitespaceTokeniser",
-                meta={"docno": 64, "text": 32768},
+                meta={"docno": 64, "text": 4096},
             )
             indexer_analyzed.setProperty("termpipelines", "")
             indexer_analyzed.setProperty("max.term.length", "256")
+            indexer_analyzed.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
+
+            def analyzed_iter():
+                for did, text in _get_raw_stream():
+                    raw_tokens = self.analyzer.analyze(text)
+                    tokens = [t[:200] for t in raw_tokens if len(t) <= 200]
+                    yield {"docno": did, "text": " ".join(tokens)}
+
             ref_analyzed = indexer_analyzed.index(analyzed_iter())
             timing["analyzed_index_time_s"] = time.perf_counter() - t_idx0
-            timing["analyzed_total_tti_s"] = timing["analyzed_pretokenize_time_s"] + timing["analyzed_index_time_s"]
+            timing["analyzed_total_tti_s"] = timing["analyzed_index_time_s"]
             index_analyzed = pt.IndexFactory.of(ref_analyzed)
         else:
             print(f"[PyTerrier] Loading cached analyzed index -> {analyzed_path}")
@@ -234,13 +268,13 @@ class UnifiedRM3Retriever:
             return " ".join([pt.terrier.Retriever.matchop(t) for t in tokens if t.strip()])
         return sanitize_default_query(query_text)
 
-    def search_queries(self, queries: List[Dict[str, Any]], num_results: int = 100) -> pd.DataFrame:
+    def search_queries(self, queries: List[Dict[str, Any]], num_results: Optional[int] = 1000) -> pd.DataFrame:
         """
         Executes 2-pass Unified RM3 PRF across the given queries.
         
         Args:
             queries: List of dicts with 'query_id' and 'question'.
-            num_results: Final number of ranked documents per query.
+            num_results: Final number of ranked documents per query (default: 1000).
             
         Returns:
             DataFrame with ['qid', 'docno', 'score', 'rank'].
@@ -457,15 +491,15 @@ class PyTerrierBaselineHarness:
             res_list.append(res_c)
         return pd.concat(res_list, ignore_index=True)
 
-    def _chunk_search(self, retriever_obj: UnifiedRM3Retriever, queries: List[Dict[str, Any]], chunk_size: int = 200) -> pd.DataFrame:
+    def _chunk_search(self, retriever_obj: UnifiedRM3Retriever, queries: List[Dict[str, Any]], chunk_size: int = 200, num_results: int = 1000) -> pd.DataFrame:
         """Executes UnifiedRM3 in bounded query chunks to cap memory footprint."""
         if len(queries) <= chunk_size:
-            return retriever_obj.search_queries(queries, num_results=100)
+            return retriever_obj.search_queries(queries, num_results=num_results)
         
         res_list = []
         for i in range(0, len(queries), chunk_size):
             chunk = queries[i : i + chunk_size]
-            res_c = retriever_obj.search_queries(chunk, num_results=100)
+            res_c = retriever_obj.search_queries(chunk, num_results=num_results)
             res_list.append(res_c)
         return pd.concat(res_list, ignore_index=True)
 

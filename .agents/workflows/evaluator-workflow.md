@@ -10,13 +10,16 @@ description: Edge-RAG evaluator workflow for baselines and benchmarks.
 3. Read `draft.md` §V for benchmark design (note: draft may lag behind code).
 
 ## Evaluation Modules (`src/evaluation/`)
+- `pyterrier_harness.py` — PyTerrier disk-based baseline evaluation harness (`BM25_Default`, `BM25_Analyzed`, `BM25_RM3_Terrier_Default`, `BM25_RM3_Unified_Default`, `BM25_RM3_Unified_Analyzed`) with `ir_measures`
+- `benchmark_loader.py` — Standardized loader with streaming corpus generator (`stream_corpus`) and fast query loader
 - `metrics.py` — EM, F1, TTFT, Peak VRAM, Factual Consistency
 - `device_simulator.py` — VRAM fraction limiter for simulated edge profiles
 - `benchmark_runner.py` — Orchestrate systems × profiles × datasets
 - `evaluate_router.py` — Cascade Router threshold sensitivity (Strict/Balanced/Permissive)
 - `query_expansion_ablation.py` — Cross-method QE comparison (aspect coverage, keyword Jaccard, acronym retention)
 
-## Baselines (`src/baselines/`)
+## Baselines (`src/baselines/` & PyTerrier)
+- `src/evaluation/pyterrier_harness.py` — PyTerrier disk-backed 5-baseline suite (Stock BM25, Analyzed BM25, Native Terrier RM3, Unified Dirichlet RM3 Default, Unified Dirichlet RM3 Analyzed)
 - `bm25.py` — BM25 via rank_bm25
 - `dense_rag.py` — BGE-m3 via FlagEmbedding + FAISS
 - `llm_lingua.py` — LLMLingua-2 wrapper
@@ -43,6 +46,7 @@ See `benchmark_generation_pipeline.md` for full methodology.
 - Results output to `results/pipeline_combinations/` as timestamped JSON.
 
 ## CLI Scripts
+- `scripts/run_pyterrier_baselines.py` — Run PyTerrier 5-baseline matrix across 13 BEIR datasets
 - `scripts/run_benchmarks.py` — CLI for Table 1 & 2
 - `scripts/run_ablations.py` — CLI for §5.3 ablations
 - `scripts/download_datasets.py` — Fetch datasets, prep data dirs

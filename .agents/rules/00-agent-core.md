@@ -9,7 +9,7 @@ trigger: always_on
 - **Type:** Python research experiment (Extractive-Compression RAG / High-Speed Anchored Lexical-Semantic Retriever)
 - **Root:** `Edge-RAG/`
 - **Runtime:** Python 3.11+ (MANDATORY: Always use the local virtual environment `.venv/bin/python3` to run Python commands), Ollama + llama.cpp for LLM inference, PyTorch for VRAM monitoring
-- **Key Libraries:** pyahocorasick, FlagEmbedding, faiss-cpu, scikit-learn, rank_bm25, fasttext, YAKE
+- **Key Libraries:** pyahocorasick, FlagEmbedding, faiss-cpu, scikit-learn, rank_bm25, fasttext, YAKE, pyterrier, ir_measures
 
 ## 2. Key Documentation Paths
 | Document | Path | Purpose |
