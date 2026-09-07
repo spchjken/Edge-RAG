@@ -92,6 +92,3 @@ python scripts/run_v2_ablation_sweep.py
 - **Canonical Architecture**: [`docs/ARCHITECTURE.md`](file:///home/donghv/Projects/Edge-RAG/docs/ARCHITECTURE.md)
 - **Module Rules & Boundaries**: [`.agents/rules/01-architecture.md`](file:///home/donghv/Projects/Edge-RAG/.agents/rules/01-architecture.md)
 - **Evaluation Metrics**: [`docs/EVALUATION_METRICS.md`](file:///home/donghv/Projects/Edge-RAG/docs/EVALUATION_METRICS.md)
-- **Theoretical Foundations**:
-  - [Query Expansion Weighting & IT-MPE Theorem](file:///home/donghv/Projects/Edge-RAG/docs/theoretical_foundations_query_expansion_weighting.md)
-  - [Saliency-Proportional Expansion Capacity](file:///home/donghv/Projects/Edge-RAG/docs/theoretical_foundations_expansion_capacity.md)
