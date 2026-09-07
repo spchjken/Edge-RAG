@@ -143,9 +143,9 @@ class PyTerrierIndexManager:
             indexer = pt.IterDictIndexer(
                 default_path,
                 overwrite=True,
-                meta={"docno": 64, "text": 4096},
+                meta={"docno": 512, "text": 4096},
             )
-            indexer.setProperty("max.term.length", "256")
+            indexer.setProperty("max.term.length", "512")
             indexer.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
 
             def default_iter():
@@ -171,10 +171,10 @@ class PyTerrierIndexManager:
                 stemmer=None,
                 stopwords=None,
                 tokeniser="WhitespaceTokeniser",
-                meta={"docno": 64, "text": 4096},
+                meta={"docno": 512, "text": 4096},
             )
             indexer_analyzed.setProperty("termpipelines", "")
-            indexer_analyzed.setProperty("max.term.length", "256")
+            indexer_analyzed.setProperty("max.term.length", "512")
             indexer_analyzed.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
 
             def analyzed_iter():
@@ -429,45 +429,52 @@ class PyTerrierBaselineHarness:
     5. BM25_RM3_Unified_Analyzed
     """
 
-    def __init__(self, index_dict: Dict[str, Any]):
-        self.index_default = index_dict["index_default"]
-        self.index_analyzed = index_dict["index_analyzed"]
-        self.timing = index_dict["timing"]
+    def __init__(self, index_dict: Optional[Dict[str, Any]] = None):
+        index_dict = index_dict or {}
+        self.index_default = index_dict.get("index_default")
+        self.index_analyzed = index_dict.get("index_analyzed")
+        self.timing = index_dict.get("timing", {})
         self.analyzer = EdgeRAGAnalyzer()
 
-        # Build Base Retrievers
-        self.bm25_default = pt.terrier.Retriever(self.index_default, wmodel="BM25")
-        self.bm25_analyzed = pt.terrier.Retriever(
-            self.index_analyzed,
-            wmodel="BM25",
-            controls={"matchopql": "on"},
-            properties={"termpipelines": ""},
-        )
+        # Build Base Retrievers if indices provided
+        if self.index_default is not None:
+            self.bm25_default = pt.terrier.Retriever(self.index_default, wmodel="BM25")
+            self.bm25_rm3_native = (
+                self.bm25_default
+                >> pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
+                >> self.bm25_default
+            )
+            self.unified_rm3_default = UnifiedRM3Retriever(
+                self.index_default,
+                is_analyzed=False,
+                fb_docs=10,
+                fb_terms=10,
+                fb_lambda=0.5,
+                mu=1000.0,
+            )
+        else:
+            self.bm25_default = None
+            self.bm25_rm3_native = None
+            self.unified_rm3_default = None
 
-        # Build Native Terrier RM3 Pipeline (Literature Anchor)
-        self.bm25_rm3_native = (
-            self.bm25_default
-            >> pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
-            >> self.bm25_default
-        )
-
-        # Build Unified RM3 Retrievers (Un-confounded Pair)
-        self.unified_rm3_default = UnifiedRM3Retriever(
-            self.index_default,
-            is_analyzed=False,
-            fb_docs=10,
-            fb_terms=10,
-            fb_lambda=0.5,
-            mu=1000.0,
-        )
-        self.unified_rm3_analyzed = UnifiedRM3Retriever(
-            self.index_analyzed,
-            is_analyzed=True,
-            fb_docs=10,
-            fb_terms=10,
-            fb_lambda=0.5,
-            mu=1000.0,
-        )
+        if self.index_analyzed is not None:
+            self.bm25_analyzed = pt.terrier.Retriever(
+                self.index_analyzed,
+                wmodel="BM25",
+                controls={"matchopql": "on"},
+                properties={"termpipelines": ""},
+            )
+            self.unified_rm3_analyzed = UnifiedRM3Retriever(
+                self.index_analyzed,
+                is_analyzed=True,
+                fb_docs=10,
+                fb_terms=10,
+                fb_lambda=0.5,
+                mu=1000.0,
+            )
+        else:
+            self.bm25_analyzed = None
+            self.unified_rm3_analyzed = None
 
     def warmup(self, num_queries: int = 10):
         """Warm up JVM JIT compiler with dummy queries before measurement."""
@@ -511,46 +518,13 @@ class PyTerrierBaselineHarness:
         gold_map: Dict[str, Dict[str, float]],
         chunk_size: int = 200,
     ) -> Dict[str, Any]:
-        """Runs retrieval and computes IR measures and latency for a given pipeline."""
+        """
+        Runs retrieval and computes IR measures and latency in bounded query chunks.
+        Never materializes millions of candidate records in memory simultaneously.
+        """
         t0 = time.perf_counter()
 
-        if pipeline_name == "BM25_Default":
-            df_q = pd.DataFrame([{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])} for q in queries])
-            res = self._chunk_transform(self.bm25_default, df_q, chunk_size=chunk_size)
-        elif pipeline_name == "BM25_Analyzed":
-            encoded = []
-            for q in queries:
-                tokens = self.analyzer.analyze(q["question"])
-                if not tokens:
-                    tokens = [w for w in q["question"].lower().split() if w.strip()]
-                q_enc = " ".join([pt.terrier.Retriever.matchop(t) for t in tokens if t.strip()])
-                encoded.append({"qid": str(q["query_id"]), "query": q_enc})
-            df_q = pd.DataFrame(encoded)
-            res = self._chunk_transform(self.bm25_analyzed, df_q, chunk_size=chunk_size)
-        elif pipeline_name == "BM25_RM3_Terrier_Default":
-            df_q = pd.DataFrame([{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])} for q in queries])
-            res = self._chunk_transform(self.bm25_rm3_native, df_q, chunk_size=chunk_size)
-        elif pipeline_name == "BM25_RM3_Unified_Default":
-            res = self._chunk_search(self.unified_rm3_default, queries, chunk_size=chunk_size)
-        elif pipeline_name == "BM25_RM3_Unified_Analyzed":
-            res = self._chunk_search(self.unified_rm3_analyzed, queries, chunk_size=chunk_size)
-        else:
-            raise ValueError(f"Unknown pipeline: {pipeline_name}")
-
-        total_latency_s = time.perf_counter() - t0
-        avg_latency_ms = (total_latency_s / max(1, len(queries))) * 1000.0
-
-        # Convert result DataFrame to ir_measures ScoredDoc list
-        run_ir = []
-        retrieved_by_qid = {}
-        for _, row in res.iterrows():
-            qid = str(row["qid"])
-            docno = str(row["docno"])
-            score = float(row["score"])
-            run_ir.append(ir_measures.ScoredDoc(qid, docno, score))
-            retrieved_by_qid.setdefault(qid, []).append(docno)
-
-        # Standard IR Measures (with pinned BEIR exponential gains)
+        # 1. Standard IR Measures (with pinned BEIR exponential gains)
         measures = [
             nDCG(gains=BEIR_EXP_GAINS) @ 10,
             nDCG(gains=BEIR_EXP_GAINS) @ 50,
@@ -559,31 +533,119 @@ class PyTerrierBaselineHarness:
             R @ 50,
             P @ 10,
         ]
-        ir_metrics = ir_measures.calc_aggregate(measures, qrels_ir, run_ir)
 
-        # Custom Metrics (Strict@K / Hit Rate, DocRec@K)
+        # 2. Configure Pipeline Dispatch
+        if pipeline_name == "BM25_Default":
+            transformer = self.bm25_default
+            is_transformer = True
+            formatted_queries = [{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])} for q in queries]
+        elif pipeline_name == "BM25_Analyzed":
+            transformer = self.bm25_analyzed
+            is_transformer = True
+            encoded = []
+            for q in queries:
+                tokens = self.analyzer.analyze(q["question"])
+                if not tokens:
+                    tokens = [w for w in q["question"].lower().split() if w.strip()]
+                q_enc = " ".join([pt.terrier.Retriever.matchop(t) for t in tokens if t.strip()])
+                encoded.append({"qid": str(q["query_id"]), "query": q_enc})
+            formatted_queries = encoded
+        elif pipeline_name == "BM25_RM3_Terrier_Default":
+            transformer = self.bm25_rm3_native
+            is_transformer = True
+            formatted_queries = [{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])} for q in queries]
+        elif pipeline_name == "BM25_RM3_Unified_Default":
+            retriever_obj = self.unified_rm3_default
+            is_transformer = False
+        elif pipeline_name == "BM25_RM3_Unified_Analyzed":
+            retriever_obj = self.unified_rm3_analyzed
+            is_transformer = False
+        elif hasattr(self, "pipelines") and pipeline_name in self.pipelines:
+            transformer = self.pipelines[pipeline_name]
+            is_transformer = True
+            formatted_queries = [{"qid": str(q["query_id"]), "query": q.get("question", "")} for q in queries]
+        else:
+            raise ValueError(f"Unknown pipeline: {pipeline_name}")
+
+        # 3. Stream & Accumulate Metrics in Bounded Query Chunks
+        total_queries = len(queries)
+        metric_sums = {m: 0.0 for m in measures}
         strict_10_hits = 0
         strict_50_hits = 0
-        for qid, ret_list in retrieved_by_qid.items():
-            golds = gold_map.get(qid, {})
-            gold_set = {did for did, s in golds.items() if s > 0}
-            if any(doc in gold_set for doc in ret_list[:10]):
-                strict_10_hits += 1
-            if any(doc in gold_set for doc in ret_list[:50]):
-                strict_50_hits += 1
 
-        total_q = max(1, len(queries))
+        # Pre-group qrels by qid for fast chunk filtering
+        qrels_by_qid: Dict[str, List[ir_measures.Qrel]] = {}
+        for qrel in qrels_ir:
+            qrels_by_qid.setdefault(str(qrel.query_id), []).append(qrel)
+
+        for i in range(0, total_queries, chunk_size):
+            chunk_queries = queries[i : i + chunk_size]
+
+            # Retrieve chunk results
+            if is_transformer:
+                chunk_df_q = pd.DataFrame(formatted_queries[i : i + chunk_size])
+                res_c = transformer.transform(chunk_df_q)
+            else:
+                res_c = retriever_obj.search_queries(chunk_queries, num_results=1000)
+
+            # Check for excluded document IDs (e.g. BRIGHT protocol)
+            excluded_map = {str(q["query_id"]): set(q.get("excluded_doc_ids", [])) for q in chunk_queries if q.get("excluded_doc_ids")}
+
+            # Build chunk ScoredDoc list & check strict hits
+            chunk_run_ir = []
+            chunk_retrieved_by_qid: Dict[str, List[str]] = {}
+            for _, row in res_c.iterrows():
+                qid = str(row["qid"])
+                docno = str(row["docno"])
+                if qid in excluded_map and docno in excluded_map[qid]:
+                    continue
+                score = float(row["score"])
+                chunk_run_ir.append(ir_measures.ScoredDoc(qid, docno, score))
+                chunk_retrieved_by_qid.setdefault(qid, []).append(docno)
+
+            # Check Strict@10 and Strict@50 for queries in this chunk
+            for q in chunk_queries:
+                qid = str(q["query_id"])
+                ret_list = chunk_retrieved_by_qid.get(qid, [])
+                golds = gold_map.get(qid, {})
+                gold_set = {did for did, s in golds.items() if s > 0}
+                if any(doc in gold_set for doc in ret_list[:10]):
+                    strict_10_hits += 1
+                if any(doc in gold_set for doc in ret_list[:50]):
+                    strict_50_hits += 1
+
+            # Build chunk qrels
+            chunk_qrels = []
+            for q in chunk_queries:
+                qid = str(q["query_id"])
+                chunk_qrels.extend(qrels_by_qid.get(qid, []))
+
+            # Compute chunk IR metrics via iter_calc (exact additive per-query computation)
+            if chunk_run_ir and chunk_qrels:
+                for mv in ir_measures.iter_calc(measures, chunk_qrels, chunk_run_ir):
+                    metric_sums[mv.measure] += float(mv.value)
+
+            # Immediately release chunk memory
+            del res_c, chunk_run_ir, chunk_retrieved_by_qid, chunk_qrels
+
+            if total_queries > 500 and (min(i + chunk_size, total_queries) % 1000 < chunk_size or (i + chunk_size) >= total_queries):
+                print(f"  [{pipeline_name}] Progress: {min(i + chunk_size, total_queries)}/{total_queries} queries evaluated...", flush=True)
+
+        total_latency_s = time.perf_counter() - t0
+        avg_latency_ms = (total_latency_s / max(1, total_queries)) * 1000.0
+
+        total_q = max(1, total_queries)
         strict_at_10 = strict_10_hits / total_q
         strict_at_50 = strict_50_hits / total_q
 
         return {
             "pipeline": pipeline_name,
-            "ndcg_10": float(ir_metrics[nDCG(gains=BEIR_EXP_GAINS) @ 10]),
-            "ndcg_50": float(ir_metrics[nDCG(gains=BEIR_EXP_GAINS) @ 50]),
-            "mrr_10": float(ir_metrics[RR @ 10]),
-            "recall_10": float(ir_metrics[R @ 10]),
-            "recall_50": float(ir_metrics[R @ 50]),
-            "p_10": float(ir_metrics[P @ 10]),
+            "ndcg_10": metric_sums[measures[0]] / total_q,
+            "ndcg_50": metric_sums[measures[1]] / total_q,
+            "mrr_10": metric_sums[measures[2]] / total_q,
+            "recall_10": metric_sums[measures[3]] / total_q,
+            "recall_50": metric_sums[measures[4]] / total_q,
+            "p_10": metric_sums[measures[5]] / total_q,
             "strict_10": strict_at_10,
             "strict_50": strict_at_50,
             "avg_latency_ms": avg_latency_ms,

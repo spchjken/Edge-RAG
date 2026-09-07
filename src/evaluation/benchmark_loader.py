@@ -28,6 +28,34 @@ def sanitize_bright_doc_id(raw_id: str) -> str:
     return str(raw_id).replace("/", "__").replace("\\", "__").replace(":", "_").replace(" ", "_")
 
 
+ALL_BRIGHT_DOMAINS = [
+    "biology",
+    "earth_science",
+    "economics",
+    "psychology",
+    "robotics",
+    "stackoverflow",
+    "sustainable_living",
+    "leetcode",
+    "pony",
+    "aops",
+    "theoremqa_questions",
+    "theoremqa_theorems",
+]
+
+
+def parse_bright_domain(dataset_name: str) -> Optional[str]:
+    """Extracts valid BRIGHT domain name if dataset_name refers to BRIGHT."""
+    norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+    if norm.startswith("bright_"):
+        cand = norm[7:]
+        if cand in ALL_BRIGHT_DOMAINS:
+            return cand
+    elif norm in ALL_BRIGHT_DOMAINS:
+        return norm
+    return None
+
+
 class BenchmarkLoader:
     """
     Standardized loader providing uniform interface across all benchmarks:
@@ -59,12 +87,8 @@ class BenchmarkLoader:
             return cls._load_beir(subset)
         elif norm in ("scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora", "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity", "trec_covid", "webis_touche2020"):
             return cls._load_beir(norm)
-        elif norm in ("bright_economics", "economics"):
-            return cls._load_bright("economics")
-        elif norm in ("bright_stackoverflow", "stackoverflow"):
-            return cls._load_bright("stackoverflow")
-        elif norm in ("bright_robotics", "robotics"):
-            return cls._load_bright("robotics")
+        elif parse_bright_domain(dataset_name) is not None:
+            return cls._load_bright(parse_bright_domain(dataset_name))
         elif norm in ("multihop_rag", "multihop"):
             return cls._load_multihop_rag()
         elif norm in ("financebench", "finance_bench"):
@@ -87,6 +111,25 @@ class BenchmarkLoader:
         Does NOT materialize the full corpus in RAM.
         """
         norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+
+        bright_domain = parse_bright_domain(dataset_name)
+        if bright_domain:
+            src_dir = os.path.join(RAW_DIR, "bright")
+            doc_parquet = os.path.join(src_dir, "documents", f"{bright_domain}-00000-of-00001.parquet")
+            if not os.path.exists(doc_parquet):
+                raise FileNotFoundError(f"BRIGHT domain '{bright_domain}' parquet not found at {doc_parquet}")
+            import pyarrow.parquet as pq
+            pf = pq.ParquetFile(doc_parquet)
+            for batch in pf.iter_batches(batch_size=5000):
+                pydict = batch.to_pydict()
+                ids = pydict.get("id", [])
+                contents = pydict.get("content") or pydict.get("text") or []
+                for raw_id, content in zip(ids, contents):
+                    safe_id = sanitize_bright_doc_id(str(raw_id))
+                    text_str = str(content).strip()
+                    if safe_id and text_str:
+                        yield (safe_id, text_str)
+            return
 
         if norm.startswith("beir_") or norm in (
             "scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora",
@@ -120,9 +163,18 @@ class BenchmarkLoader:
     @classmethod
     def get_corpus_doc_count(cls, dataset_name: str) -> int:
         """
-        Fast line-count of the corpus file without loading objects into memory.
+        Fast line-count of the corpus file or parquet metadata without loading objects into memory.
         """
         norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+        bright_domain = parse_bright_domain(dataset_name)
+        if bright_domain:
+            src_dir = os.path.join(RAW_DIR, "bright")
+            doc_parquet = os.path.join(src_dir, "documents", f"{bright_domain}-00000-of-00001.parquet")
+            if os.path.exists(doc_parquet):
+                import pyarrow.parquet as pq
+                return pq.ParquetFile(doc_parquet).metadata.num_rows
+            return 0
+
         if norm.startswith("beir_") or norm in (
             "scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora",
             "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity",
@@ -144,6 +196,11 @@ class BenchmarkLoader:
         Loads queries and qrels without materializing the corpus in RAM.
         """
         norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+
+        bright_domain = parse_bright_domain(dataset_name)
+        if bright_domain:
+            return cls._load_bright_queries(bright_domain)
+
         if norm.startswith("beir_") or norm in (
             "scifact", "nfcorpus", "fiqa", "arguana", "scidocs", "quora",
             "hotpotqa", "fever", "nq", "climate_fever", "dbpedia_entity",
@@ -340,13 +397,23 @@ class BenchmarkLoader:
             valid_gold = [did for did in safe_gold if did in doc_ids_set]
             missing_gold_docs += (len(safe_gold) - len(valid_gold))
 
+            raw_excluded = q.get("excluded_ids", [])
+            if isinstance(raw_excluded, (list, np.ndarray)) or hasattr(raw_excluded, "__iter__"):
+                excluded_list = [str(e) for e in raw_excluded if e is not None]
+            elif isinstance(raw_excluded, str):
+                excluded_list = [raw_excluded]
+            else:
+                excluded_list = []
+            safe_excluded = set([sanitize_bright_doc_id(e) for e in excluded_list if str(e).strip()])
+
             if valid_gold and qtext:
                 qrels = {did: 1.0 for did in valid_gold}
                 formatted_queries.append({
                     "query_id": f"q_bright_{domain}_{qid}",
                     "question": qtext,
                     "gold_doc_ids": sorted(valid_gold),
-                    "qrels": qrels
+                    "qrels": qrels,
+                    "excluded_doc_ids": safe_excluded,
                 })
 
         formatted_queries.sort(key=lambda x: x["query_id"])
@@ -358,6 +425,58 @@ class BenchmarkLoader:
             "missing_qrel_docs_count": missing_gold_docs
         }
         return corpus_texts, corpus_docs, formatted_queries, stats
+
+    @staticmethod
+    def _load_bright_queries(domain: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        src_dir = os.path.join(RAW_DIR, "bright")
+        example_parquet = os.path.join(src_dir, "examples", f"{domain}-00000-of-00001.parquet")
+        if not os.path.exists(example_parquet):
+            raise FileNotFoundError(f"BRIGHT domain {domain} examples parquet not found at {example_parquet}")
+
+        ex_df = pd.read_parquet(example_parquet)
+        formatted_queries = []
+        total_qrels = 0
+
+        for q in ex_df.to_dict(orient="records"):
+            qid = str(q.get("id", ""))
+            qtext = str(q.get("query", "")).strip()
+
+            raw_gold = q.get("gold_ids", [])
+            if isinstance(raw_gold, (list, np.ndarray)) or hasattr(raw_gold, "__iter__"):
+                gold_list = [str(g) for g in raw_gold if g is not None]
+            elif isinstance(raw_gold, str):
+                gold_list = [raw_gold]
+            else:
+                gold_list = []
+            safe_gold = [sanitize_bright_doc_id(g) for g in gold_list if str(g).strip()]
+
+            raw_excluded = q.get("excluded_ids", [])
+            if isinstance(raw_excluded, (list, np.ndarray)) or hasattr(raw_excluded, "__iter__"):
+                excluded_list = [str(e) for e in raw_excluded if e is not None]
+            elif isinstance(raw_excluded, str):
+                excluded_list = [raw_excluded]
+            else:
+                excluded_list = []
+            safe_excluded = set([sanitize_bright_doc_id(e) for e in excluded_list if str(e).strip()])
+
+            if safe_gold and qtext:
+                qrels = {did: 1.0 for did in safe_gold}
+                total_qrels += len(qrels)
+                formatted_queries.append({
+                    "query_id": f"q_bright_{domain}_{qid}",
+                    "question": qtext,
+                    "gold_doc_ids": sorted(safe_gold),
+                    "qrels": qrels,
+                    "excluded_doc_ids": safe_excluded,
+                })
+
+        formatted_queries.sort(key=lambda x: x["query_id"])
+        stats = {
+            "dataset": f"bright_{domain}",
+            "queries_loaded": len(formatted_queries),
+            "total_qrel_entries": total_qrels,
+        }
+        return formatted_queries, stats
 
     @staticmethod
     def _load_multihop_rag() -> Tuple[List[str], List[Dict[str, str]], List[Dict[str, Any]], Dict[str, Any]]:
