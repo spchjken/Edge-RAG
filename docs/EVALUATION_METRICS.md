@@ -79,8 +79,9 @@ Edge-RAG reports both **Official BEIR Linear nDCG** (primary benchmark metric) a
    where $\text{rel}^*(j)$ represents all positive relevance scores in $\text{Gold}^+(q)$ sorted in descending order.
 
 2. **Supplemental Exponential Gain Formulation (`exp_ndcg_10`):**
-   Evaluated using `ir_measures.nDCG(gains=BEIR_EXP_GAINS) @ 10` with `BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}`:
+   Evaluated using `ir_measures.nDCG(gains=EXP_GAINS) @ 10` with `EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}`:
    $$\text{DCG@K} = \sum_{i=1}^{K} \frac{2^{\text{rel}(d_i)} - 1}{\log_2(i + 1)}, \quad \text{IDCG@K} = \sum_{j=1}^{\min\left(K, |\text{Gold}^+(q)|\right)} \frac{2^{\text{rel}^*(j)} - 1}{\log_2(j + 1)}$$
+   *Note:* The exponential gain mapping ($2^{\text{rel}} - 1$) is a supplemental convention adopted in literature comparisons (e.g. SPLADE-v3 arXiv:2403.06789 Table 2 and standard TREC Web tracks) to heavily reward high graded relevance. It is **not** official BEIR parity (official BEIR strictly prescribes linear relevance gain $\text{rel}$).
 
 3. **Binary Relevance Invariance:**
    When judgments are binary ($\text{rel} \in \{0, 1\}$), $2^1 - 1 = 1$, and both linear and exponential formulations yield mathematically identical values.
@@ -126,7 +127,7 @@ PRIMARY_MEASURES = [
     R @ 1000,
     P @ 10,
     P @ 100,
-    nDCG(gains=BEIR_EXP_GAINS) @ 10,  # Supplemental exp_ndcg_10
+    nDCG(gains=EXP_GAINS) @ 10,  # Supplemental exp_ndcg_10
 ]
 ```
 

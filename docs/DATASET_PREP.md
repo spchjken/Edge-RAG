@@ -430,8 +430,8 @@ The primary benchmark matrix for formal Information Retrieval baselining and rep
    - `bright_pony` (3,678 docs, 101 Qs) — Domain programming language semantics
    - `bright_leetcode` (1,833 docs, 179 Qs) — Algorithmic coding puzzles
    - `bright_aops` (6,419 docs, 142 Qs) — Art of Problem Solving competitive math
-   - `bright_olympiads` (10,951 docs, 125 Qs) — Olympiad-level mathematics
    - `bright_theoremqa_questions` (11,206 docs, 169 Qs) — Multi-discipline STEM theorem QA
+   - `bright_theoremqa_theorems` (23,839 docs, 76 Qs) — Formal mathematical and physical theorem retrieval
 
 ### Track B: Local Specialized & Diagnostic Benchmarks
 - `enterpriserag_doc_level` (50,000 docs, 470 Qs) — Multi-source enterprise workspace collection
@@ -539,8 +539,8 @@ The table below summarizes all 25 active benchmarks and core enterprise corpora 
 | **21**| **BRIGHT Pony** | BRIGHT / Language Semantics| 3,678 | 101 | Syntax & Actor Semantics| PyTerrier Disk Suite | **Active Benchmark** |
 | **22**| **BRIGHT LeetCode** | BRIGHT / Competitive Code | 1,833 | 179 | Algorithm Discovery | PyTerrier Disk Suite | **Active Benchmark** |
 | **23**| **BRIGHT Aops** | BRIGHT / Math Problem Solving| 6,419 | 142 | Olympiad Math | PyTerrier Disk Suite | **Active Benchmark** |
-| **24**| **BRIGHT Olympiads**| BRIGHT / International Math| 10,951 | 125 | Proof & Competition | PyTerrier Disk Suite | **Active Benchmark** |
-| **25**| **BRIGHT TheoremQA**| BRIGHT / STEM Theorems | 11,206 | 169 | Theorem-level QA | PyTerrier Disk Suite | **Active Benchmark** |
+| **24**| **BRIGHT TheoremQA (Questions)**| BRIGHT / STEM Questions| 11,206 | 169 | Theorem-level Question QA | PyTerrier Disk Suite | **Active Benchmark** |
+| **25**| **BRIGHT TheoremQA (Theorems)** | BRIGHT / STEM Theorems | 23,839 | 76 | Formal Theorem Retrieval | PyTerrier Disk Suite | **Active Benchmark** |
 | **26**| **EnterpriseRAG**| Enterprise Workspace (9 sources)| 50,000 | 470 | Domain RAG Evaluation | Pipeline V2 Core | **Enterprise Benchmark** |
 | **27**| **LiveRAG** | Dynamic Streaming Web | 970 | 895 | Real-Time News Updates | Pipeline V2 Core | **Enterprise Benchmark** |
 

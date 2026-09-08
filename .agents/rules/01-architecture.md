@@ -54,9 +54,9 @@ trigger: always_on
 - Orchestrates evaluations comparing Pipeline V2 against baselines (BM25, Dense BGE, SPLADE-v3, RM3).
 - **PyTerrier Baseline Harness (`src/evaluation/pyterrier_harness.py`, `scripts/run_pyterrier_baselines.py`):**
   - Canonical disk-backed evaluation harness across small and multi-million-document corpora (up to 5M+ docs).
-  - Evaluates the 5-baseline matrix: `BM25_Default`, `BM25_Analyzed` (EdgeRAGAnalyzer), `BM25_RM3_Terrier_Default` (native Java RM3), `BM25_RM3_Unified_Default`, and `BM25_RM3_Unified_Analyzed`.
-  - Memory-safe architecture for 15 GiB RAM: bounded JVM heap (`-Xmx4096m`), bounded Terrier buffer (`indexing.max.memory = 1073741824`), streaming disk generator ingestion (`stream_corpus`), and query chunking (`chunk_size=200`).
-  - Standard BEIR metric parity using `ir_measures` with pinned Table 2 exponential gains (`BEIR_EXP_GAINS`).
+  - Evaluates the canonical 6-baseline matrix: `BM25_Default`, `BM25_RM3_Terrier_Default`, `BM25_Bo1_Terrier_Default`, `DPH`, `DPH_Bo1_Terrier_Default`, and `DPH_RM3_Terrier_Default`.
+  - Memory-safe architecture for 15 GiB RAM: bounded JVM heap (`pt.init(mem=3072)`), bounded Terrier buffer (`indexing.max.memory = 1073741824`), streaming disk generator ingestion (`stream_corpus`), and query chunking (`chunk_size=200`).
+  - Standard BEIR metric parity using official linear `ir_measures` with supplemental Table 2 exponential gains (`EXP_GAINS`).
 - Primary evaluation scripts:
   - `scripts/results_scripts_mapping.md` — Authoritative two-column mapping of all result files to scripts/tests.
   - `scripts/run_pyterrier_baselines.py` — Canonical 6-baseline evaluation runner across 25 BEIR & BRIGHT datasets with auto-resume.

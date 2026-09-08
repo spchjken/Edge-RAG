@@ -168,7 +168,7 @@ To establish rigorous external baseline anchors adhering to standard TREC and BE
 
 - **Benchmark Coverage (25 Datasets Across Small & Massive Corpora):**
   - **13 Canonical BEIR Benchmarks:** `scifact`, `nfcorpus`, `fiqa`, `arguana`, `scidocs`, `quora`, `hotpotqa`, `trec_covid`, `webis_touche2020`, `dbpedia_entity`, `nq`, `climate_fever`, `fever`.
-  - **12 BRIGHT Complex Reasoning Domains:** `biology`, `earth_science`, `economics`, `psychology`, `robotics`, `stackoverflow`, `sustainable_living`, `pony`, `leetcode`, `aops`, `olympiads`, `theoremqa_questions`.
+  - **12 BRIGHT Complex Reasoning Domains:** `biology`, `earth_science`, `economics`, `psychology`, `robotics`, `stackoverflow`, `sustainable_living`, `pony`, `leetcode`, `aops`, `theoremqa_questions`, `theoremqa_theorems`.
 
 - **Multi-Million-Document Scalable & Memory-Safe Architecture (15 GiB Hardware Profile):**
   - **Zero-RAM Streaming:** Ingestion via `BenchmarkLoader.stream_corpus()` yielding documents line-by-line into `IterDictIndexer`, keeping Python host RAM $<100\text{ MB}$.

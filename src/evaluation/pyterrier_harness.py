@@ -31,8 +31,9 @@ import pyterrier as pt
 import ir_measures
 from ir_measures import nDCG, RR, R, P, AP
 
-# Standard BEIR Table 2 exponential gain mapping (2^rel - 1) for supplemental comparison
-BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}
+# Standard literature Table 2 exponential gain mapping (2^rel - 1) for supplemental comparison
+EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}
+BEIR_EXP_GAINS = EXP_GAINS  # Backward-compatible alias
 
 # Primary Benchmark Metrics (Official BEIR Linear Gains + Candidate Funnel)
 PRIMARY_MEASURES = [
@@ -49,7 +50,7 @@ PRIMARY_MEASURES = [
     R @ 1000,
     P @ 10,
     P @ 100,
-    nDCG(gains=BEIR_EXP_GAINS) @ 10,  # Supplemental exp_ndcg_10
+    nDCG(gains=EXP_GAINS) @ 10,  # Supplemental exp_ndcg_10
 ]
 
 

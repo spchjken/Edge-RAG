@@ -1,6 +1,6 @@
 # PyTerrier Baseline Evaluation Summary (Default Baselines Suite)
 
-Generated on 2026-09-08 21:03:41
+Generated on 2026-09-08 22:42:03
 
 ### 1. Headline Retrieval Quality (Linear nDCG@10, Supplemental Exp-nDCG, MRR@10, P@10)
 
@@ -118,6 +118,44 @@ Generated on 2026-09-08 21:03:41
 | scidocs                    | DPH_RM3_Terrier_Default  |    0.1499 |        0.1499 |     0.2204 |    0.1059 |   0.2602 | 0.0767 |      0.463  |
 | quora                      | DPH_Bo1_Terrier_Default  |    0.3585 |        0.3585 |     0.4176 |    0.3159 |   0.3263 | 0.0666 |      0.5475 |
 | quora                      | DPH_RM3_Terrier_Default  |    0.3933 |        0.3933 |     0.4467 |    0.3544 |   0.3665 | 0.069  |      0.563  |
+| hotpotqa                   | DPH_Bo1_Terrier_Default  |    0.5534 |        0.5534 |     0.5941 |    0.4655 |   0.707  | 0.1201 |      0.8774 |
+| hotpotqa                   | DPH_RM3_Terrier_Default  |    0.5651 |        0.5651 |     0.6013 |    0.4815 |   0.7579 | 0.1144 |      0.8644 |
+| trec_covid                 | DPH_Bo1_Terrier_Default  |    0.6345 |        0      |     0.4884 |    0.0935 |   0.829  | 0.726  |      0.98   |
+| trec_covid                 | DPH_RM3_Terrier_Default  |    0.6192 |        0      |     0.4603 |    0.0859 |   0.8214 | 0.7    |      0.98   |
+| webis_touche2020           | DPH_Bo1_Terrier_Default  |    0.4457 |        0.4399 |     0.5298 |    0.2815 |   0.758  | 0.3837 |      0.8776 |
+| webis_touche2020           | DPH_RM3_Terrier_Default  |    0.458  |        0.4541 |     0.5347 |    0.2773 |   0.7436 | 0.4082 |      0.9796 |
+| dbpedia_entity             | DPH_Bo1_Terrier_Default  |    0.3032 |        0.2829 |     0.3604 |    0.2061 |   0.564  | 0.2807 |      0.8    |
+| dbpedia_entity             | DPH_RM3_Terrier_Default  |    0.3083 |        0.2883 |     0.3627 |    0.2115 |   0.5585 | 0.2805 |      0.7875 |
+| nq                         | DPH_Bo1_Terrier_Default  |    0.2683 |        0.2683 |     0.3383 |    0.2235 |   0.2245 | 0.0514 |      0.471  |
+| nq                         | DPH_RM3_Terrier_Default  |    0.2886 |        0.2886 |     0.3554 |    0.2453 |   0.2473 | 0.0529 |      0.4815 |
+| climate_fever              | DPH_Bo1_Terrier_Default  |    0.1925 |        0      |     0.2597 |    0.1413 |   0.2557 | 0.065  |      0.5075 |
+| climate_fever              | DPH_RM3_Terrier_Default  |    0.1855 |        0      |     0.2483 |    0.1366 |   0.2413 | 0.0633 |      0.4906 |
+| fever                      | DPH_Bo1_Terrier_Default  |    0.6427 |        0.6427 |     0.6654 |    0.5842 |   0.6098 | 0.0891 |      0.847  |
+| fever                      | DPH_RM3_Terrier_Default  |    0.6571 |        0.6571 |     0.6791 |    0.6052 |   0.6311 | 0.0884 |      0.8402 |
+| bright_biology             | DPH_Bo1_Terrier_Default  |    0.2875 |        0.2875 |     0.3615 |    0.2453 |   0.3876 | 0.1068 |      0.466  |
+| bright_biology             | DPH_RM3_Terrier_Default  |    0.2922 |        0.2922 |     0.3491 |    0.2553 |   0.352  | 0.1068 |      0.4466 |
+| bright_earth_science       | DPH_Bo1_Terrier_Default  |    0.3001 |        0.3001 |     0.3797 |    0.2487 |   0.3602 | 0.1302 |      0.5776 |
+| bright_earth_science       | DPH_RM3_Terrier_Default  |    0.3637 |        0.3637 |     0.4203 |    0.3183 |   0.4353 | 0.1509 |      0.569  |
+| bright_economics           | DPH_Bo1_Terrier_Default  |    0.1614 |        0.1614 |     0.2376 |    0.1369 |   0.1777 | 0.0854 |      0.3204 |
+| bright_economics           | DPH_RM3_Terrier_Default  |    0.1699 |        0.1699 |     0.2262 |    0.1381 |   0.1708 | 0.0845 |      0.2913 |
+| bright_psychology          | DPH_Bo1_Terrier_Default  |    0.1849 |        0.1849 |     0.2393 |    0.1526 |   0.199  | 0.0941 |      0.3366 |
+| bright_psychology          | DPH_RM3_Terrier_Default  |    0.1821 |        0.1821 |     0.2255 |    0.1478 |   0.2065 | 0.0891 |      0.3267 |
+| bright_robotics            | DPH_Bo1_Terrier_Default  |    0.1173 |        0.1173 |     0.2064 |    0.0969 |   0.1385 | 0.0475 |      0.297  |
+| bright_robotics            | DPH_RM3_Terrier_Default  |    0.1474 |        0.1474 |     0.2086 |    0.1216 |   0.1691 | 0.0574 |      0.3069 |
+| bright_stackoverflow       | DPH_Bo1_Terrier_Default  |    0.1629 |        0.1629 |     0.2338 |    0.147  |   0.1692 | 0.0675 |      0.3077 |
+| bright_stackoverflow       | DPH_RM3_Terrier_Default  |    0.1694 |        0.1694 |     0.2269 |    0.1497 |   0.1782 | 0.0718 |      0.2821 |
+| bright_sustainable_living  | DPH_Bo1_Terrier_Default  |    0.1519 |        0.1519 |     0.2397 |    0.1245 |   0.1651 | 0.0685 |      0.3796 |
+| bright_sustainable_living  | DPH_RM3_Terrier_Default  |    0.1632 |        0.1632 |     0.2369 |    0.1442 |   0.1905 | 0.0639 |      0.3333 |
+| bright_leetcode            | DPH_Bo1_Terrier_Default  |    0.2073 |        0.2073 |     0.2503 |    0.1737 |   0.2361 | 0.0549 |      0.3803 |
+| bright_leetcode            | DPH_RM3_Terrier_Default  |    0.2285 |        0.2285 |     0.2592 |    0.1979 |   0.2781 | 0.0521 |      0.3662 |
+| bright_pony                | DPH_Bo1_Terrier_Default  |    0.0529 |        0.0529 |     0.1315 |    0.0274 |   0.095  | 0.0616 |      0.4196 |
+| bright_pony                | DPH_RM3_Terrier_Default  |    0.0478 |        0.0478 |     0.1047 |    0.0224 |   0.105  | 0.0464 |      0.3214 |
+| bright_aops                | DPH_Bo1_Terrier_Default  |    0.0418 |        0.0418 |     0.0769 |    0.0275 |   0.0869 | 0.0243 |      0.1802 |
+| bright_aops                | DPH_RM3_Terrier_Default  |    0.0389 |        0.0389 |     0.075  |    0.0271 |   0.0986 | 0.0189 |      0.1441 |
+| bright_theoremqa_questions | DPH_Bo1_Terrier_Default  |    0.045  |        0.045  |     0.062  |    0.0411 |   0.0435 | 0.0103 |      0.067  |
+| bright_theoremqa_questions | DPH_RM3_Terrier_Default  |    0.046  |        0.046  |     0.0573 |    0.0427 |   0.0445 | 0.0098 |      0.067  |
+| bright_theoremqa_theorems  | DPH_Bo1_Terrier_Default  |    0.0272 |        0.0272 |     0.055  |    0.0257 |   0.0345 | 0.0066 |      0.0526 |
+| bright_theoremqa_theorems  | DPH_RM3_Terrier_Default  |    0.0286 |        0.0286 |     0.0423 |    0.0251 |   0.03   | 0.0079 |      0.0526 |
 
 ### 2. Candidate Funnel Ceiling Diagnostics (Recall@K, Completeness@K, Oracle-nDCG@10)
 
@@ -235,6 +273,44 @@ Generated on 2026-09-08 21:03:41
 | scidocs                    | DPH_RM3_Terrier_Default  |       0.3615 |       0.5175 |        0.585  |             0.054  |             0.136  |              0.183  |           0.6736 |
 | quora                      | DPH_Bo1_Terrier_Default  |       0.7635 |       0.87   |        0.9029 |             0.7269 |             0.8418 |              0.8797 |           0.9078 |
 | quora                      | DPH_RM3_Terrier_Default  |       0.7551 |       0.8573 |        0.8886 |             0.7188 |             0.8284 |              0.8643 |           0.8936 |
+| hotpotqa                   | DPH_Bo1_Terrier_Default  |       0.7597 |       0.8404 |        0.8682 |             0.5564 |             0.6941 |              0.7448 |           0.8961 |
+| hotpotqa                   | DPH_RM3_Terrier_Default  |       0.7144 |       0.8014 |        0.8358 |             0.4878 |             0.6313 |              0.6907 |           0.8686 |
+| trec_covid                 | DPH_Bo1_Terrier_Default  |       0.1294 |       0.3483 |        0.4606 |             0      |             0      |              0      |           0.9973 |
+| trec_covid                 | DPH_RM3_Terrier_Default  |       0.1203 |       0.3383 |        0.4563 |             0      |             0      |              0      |           0.9947 |
+| webis_touche2020           | DPH_Bo1_Terrier_Default  |       0.5782 |       0.7876 |        0.8721 |             0.0408 |             0.2449 |              0.3061 |           0.9945 |
+| webis_touche2020           | DPH_RM3_Terrier_Default  |       0.5949 |       0.7918 |        0.8711 |             0.0204 |             0.2449 |              0.3061 |           0.9965 |
+| dbpedia_entity             | DPH_Bo1_Terrier_Default  |       0.4681 |       0.6371 |        0.6892 |             0.105  |             0.1925 |              0.2275 |           0.8537 |
+| dbpedia_entity             | DPH_RM3_Terrier_Default  |       0.4637 |       0.6241 |        0.6799 |             0.1025 |             0.1775 |              0.2225 |           0.8461 |
+| nq                         | DPH_Bo1_Terrier_Default  |       0.7518 |       0.8717 |        0.9087 |             0.73   |             0.8569 |              0.896  |           0.9114 |
+| nq                         | DPH_RM3_Terrier_Default  |       0.7506 |       0.8688 |        0.9026 |             0.7289 |             0.8552 |              0.8911 |           0.9051 |
+| climate_fever              | DPH_Bo1_Terrier_Default  |       0.4863 |       0.6447 |        0.6997 |             0.2137 |             0.3733 |              0.4391 |           0.7516 |
+| climate_fever              | DPH_RM3_Terrier_Default  |       0.4647 |       0.611  |        0.6638 |             0.2039 |             0.3362 |              0.4007 |           0.7161 |
+| fever                      | DPH_Bo1_Terrier_Default  |       0.9077 |       0.9426 |        0.9545 |             0.8765 |             0.9154 |              0.9307 |           0.9599 |
+| fever                      | DPH_RM3_Terrier_Default  |       0.8964 |       0.9342 |        0.9472 |             0.8647 |             0.9067 |              0.9227 |           0.9528 |
+| bright_biology             | DPH_Bo1_Terrier_Default  |       0.5603 |       0.7358 |        0.8097 |             0.3786 |             0.5243 |              0.6699 |           0.832  |
+| bright_biology             | DPH_RM3_Terrier_Default  |       0.5156 |       0.696  |        0.7515 |             0.3592 |             0.4854 |              0.5825 |           0.779  |
+| bright_earth_science       | DPH_Bo1_Terrier_Default  |       0.6191 |       0.7462 |        0.7925 |             0.4224 |             0.5345 |              0.6207 |           0.8397 |
+| bright_earth_science       | DPH_RM3_Terrier_Default  |       0.5808 |       0.7243 |        0.7715 |             0.4397 |             0.5345 |              0.5776 |           0.8212 |
+| bright_economics           | DPH_Bo1_Terrier_Default  |       0.4737 |       0.6719 |        0.7418 |             0.3204 |             0.4563 |              0.5146 |           0.8075 |
+| bright_economics           | DPH_RM3_Terrier_Default  |       0.4309 |       0.5961 |        0.7048 |             0.301  |             0.4175 |              0.5049 |           0.7691 |
+| bright_psychology          | DPH_Bo1_Terrier_Default  |       0.4416 |       0.6466 |        0.7214 |             0.3168 |             0.4851 |              0.5248 |           0.7865 |
+| bright_psychology          | DPH_RM3_Terrier_Default  |       0.3943 |       0.5535 |        0.6584 |             0.2871 |             0.4158 |              0.495  |           0.7283 |
+| bright_robotics            | DPH_Bo1_Terrier_Default  |       0.473  |       0.6737 |        0.7802 |             0.3168 |             0.495  |              0.6238 |           0.8272 |
+| bright_robotics            | DPH_RM3_Terrier_Default  |       0.3963 |       0.6108 |        0.707  |             0.2475 |             0.4158 |              0.5347 |           0.7538 |
+| bright_stackoverflow       | DPH_Bo1_Terrier_Default  |       0.4414 |       0.6383 |        0.6955 |             0.3248 |             0.547  |              0.5983 |           0.723  |
+| bright_stackoverflow       | DPH_RM3_Terrier_Default  |       0.4073 |       0.5707 |        0.6211 |             0.2821 |             0.453  |              0.5214 |           0.6485 |
+| bright_sustainable_living  | DPH_Bo1_Terrier_Default  |       0.5215 |       0.7305 |        0.83   |             0.3796 |             0.5556 |              0.6296 |           0.8785 |
+| bright_sustainable_living  | DPH_RM3_Terrier_Default  |       0.4547 |       0.6711 |        0.7577 |             0.3241 |             0.5093 |              0.5833 |           0.8116 |
+| bright_leetcode            | DPH_Bo1_Terrier_Default  |       0.4485 |       0.6954 |        0.8241 |             0.331  |             0.5775 |              0.7254 |           0.8418 |
+| bright_leetcode            | DPH_RM3_Terrier_Default  |       0.3892 |       0.5406 |        0.6741 |             0.2746 |             0.4085 |              0.5352 |           0.7033 |
+| bright_pony                | DPH_Bo1_Terrier_Default  |       0.2198 |       0.5608 |        0.7572 |             0.0089 |             0.0179 |              0.0804 |           0.9719 |
+| bright_pony                | DPH_RM3_Terrier_Default  |       0.1702 |       0.4376 |        0.6421 |             0.0089 |             0.0179 |              0.0268 |           0.955  |
+| bright_aops                | DPH_Bo1_Terrier_Default  |       0.1596 |       0.327  |        0.3932 |             0.027  |             0.0811 |              0.0991 |           0.4603 |
+| bright_aops                | DPH_RM3_Terrier_Default  |       0.148  |       0.289  |        0.3561 |             0.018  |             0.0541 |              0.0811 |           0.4273 |
+| bright_theoremqa_questions | DPH_Bo1_Terrier_Default  |       0.1372 |       0.2461 |        0.3426 |             0.1082 |             0.1959 |              0.2526 |           0.3673 |
+| bright_theoremqa_questions | DPH_RM3_Terrier_Default  |       0.1044 |       0.1653 |        0.2017 |             0.0773 |             0.1289 |              0.1598 |           0.2143 |
+| bright_theoremqa_theorems  | DPH_Bo1_Terrier_Default  |       0.1601 |       0.2245 |        0.3506 |             0.1316 |             0.1842 |              0.2763 |           0.3714 |
+| bright_theoremqa_theorems  | DPH_RM3_Terrier_Default  |       0.1042 |       0.196  |        0.302  |             0.0658 |             0.1711 |              0.2368 |           0.3174 |
 
 ### 3. Retrieval Efficiency & Resource Footprint
 
@@ -352,3 +428,41 @@ Generated on 2026-09-08 21:03:41
 | scidocs                    | DPH_RM3_Terrier_Default  |                  29.82 |                  33.96 |                  41.85 |                  71.39 |           69.01 |            1019.46 |               0 |           0.13 |
 | quora                      | DPH_Bo1_Terrier_Default  |                  21.81 |                  27.45 |                  63.33 |                  34.01 |          212.62 |             816.73 |               0 |           0.24 |
 | quora                      | DPH_RM3_Terrier_Default  |                  21.01 |                  28.08 |                  65.64 |                  33.38 |          212.62 |             832.85 |               0 |           0.24 |
+| hotpotqa                   | DPH_Bo1_Terrier_Default  |                  94.83 |                 279.04 |                   9.32 |                 137.74 |         4178.75 |             704.91 |               0 |           0.83 |
+| hotpotqa                   | DPH_RM3_Terrier_Default  |                 109.75 |                 255.67 |                   8.77 |                 146.24 |         4178.75 |             763.31 |               0 |           0.83 |
+| trec_covid                 | DPH_Bo1_Terrier_Default  |                  33.93 |                  54.99 |                  18.04 |                 131.25 |          287    |             775.27 |               0 |           0.33 |
+| trec_covid                 | DPH_RM3_Terrier_Default  |                  35.21 |                  52.43 |                  24.59 |                 114.11 |          287    |             767.01 |               0 |           0.33 |
+| webis_touche2020           | DPH_Bo1_Terrier_Default  |                  47.19 |                  63.17 |                  16.42 |                 144.22 |          685.06 |            1624.97 |               0 |           0.87 |
+| webis_touche2020           | DPH_RM3_Terrier_Default  |                  31.5  |                  45.51 |                  19.81 |                 120.57 |          685.06 |            1632.48 |               0 |           0.87 |
+| dbpedia_entity             | DPH_Bo1_Terrier_Default  |                  54.37 |                 131.29 |                   6.83 |                 226.09 |         4041    |             539.79 |               0 |           0.64 |
+| dbpedia_entity             | DPH_RM3_Terrier_Default  |                  67    |                 139.92 |                  13.26 |                 166.41 |         4041    |             558.28 |               0 |           0.64 |
+| nq                         | DPH_Bo1_Terrier_Default  |                  52.27 |                 108.33 |                  17    |                  91.17 |         2304.87 |             583.18 |               0 |           0.44 |
+| nq                         | DPH_RM3_Terrier_Default  |                  59.45 |                 114.96 |                  17.57 |                  91.19 |         2304.87 |             604.21 |               0 |           0.44 |
+| climate_fever              | DPH_Bo1_Terrier_Default  |                 102.92 |                 338.4  |                   6.93 |                 241.26 |         5555.75 |             609.81 |               0 |           0.63 |
+| climate_fever              | DPH_RM3_Terrier_Default  |                 117.97 |                 330.56 |                   7.65 |                 234.66 |         5555.75 |             607.8  |               0 |           0.63 |
+| fever                      | DPH_Bo1_Terrier_Default  |                  84.57 |                 210.5  |                  10.51 |                 125.18 |         5555.71 |             682.18 |               0 |           0.6  |
+| fever                      | DPH_RM3_Terrier_Default  |                 102.01 |                 229.75 |                   9.6  |                 136.93 |         5555.71 |             687.39 |               0 |           0.6  |
+| bright_biology             | DPH_Bo1_Terrier_Default  |                  43.25 |                  61.06 |                  19.15 |                 126.48 |           75.34 |             609.71 |               0 |           0.14 |
+| bright_biology             | DPH_RM3_Terrier_Default  |                  42.36 |                  56.5  |                  26.35 |                 110.16 |           75.34 |             599.08 |               0 |           0.14 |
+| bright_earth_science       | DPH_Bo1_Terrier_Default  |                  47.6  |                  76.26 |                  15.71 |                 143.6  |          174.82 |             666.21 |               0 |           0.17 |
+| bright_earth_science       | DPH_RM3_Terrier_Default  |                  49.63 |                  67.96 |                  20.11 |                 130.49 |          174.82 |             666.84 |               0 |           0.17 |
+| bright_economics           | DPH_Bo1_Terrier_Default  |                  47.71 |                  67.49 |                  15.6  |                 146.43 |          168.75 |             691.4  |               0 |           0.13 |
+| bright_economics           | DPH_RM3_Terrier_Default  |                  46.83 |                  61.54 |                  21.45 |                 126.05 |          168.75 |             635.58 |               0 |           0.13 |
+| bright_psychology          | DPH_Bo1_Terrier_Default  |                  47.8  |                  70.52 |                  15.38 |                 146.34 |          191.01 |             675.97 |               0 |           0.13 |
+| bright_psychology          | DPH_RM3_Terrier_Default  |                  46.42 |                  60.69 |                  20.46 |                 126.97 |          191.01 |             638.3  |               0 |           0.13 |
+| bright_robotics            | DPH_Bo1_Terrier_Default  |                  51.86 |                 128.02 |                  13.56 |                 165.62 |           74.28 |             929.49 |               0 |           0.13 |
+| bright_robotics            | DPH_RM3_Terrier_Default  |                  49.2  |                  95.89 |                  19.59 |                 136.38 |           74.28 |             837.91 |               0 |           0.13 |
+| bright_stackoverflow       | DPH_Bo1_Terrier_Default  |                  71.22 |                 145.6  |                  10.63 |                 210.09 |          147.42 |             853.93 |               0 |           0.21 |
+| bright_stackoverflow       | DPH_RM3_Terrier_Default  |                  65.66 |                 118.63 |                  14.89 |                 171.69 |          147.42 |             764.38 |               0 |           0.21 |
+| bright_sustainable_living  | DPH_Bo1_Terrier_Default  |                  47.1  |                  76.36 |                  15.86 |                 143.42 |          193.46 |             718.62 |               0 |           0.14 |
+| bright_sustainable_living  | DPH_RM3_Terrier_Default  |                  45.6  |                  69.61 |                  21.59 |                 123.68 |          193.46 |             637.46 |               0 |           0.14 |
+| bright_leetcode            | DPH_Bo1_Terrier_Default  |                 232.5  |                 320.99 |                   3.79 |                 567.26 |          577.59 |            1404.47 |               0 |           0.49 |
+| bright_leetcode            | DPH_RM3_Terrier_Default  |                 209.67 |                 275.23 |                   4.57 |                 495.22 |          577.59 |            1351.1  |               0 |           0.49 |
+| bright_pony                | DPH_Bo1_Terrier_Default  |                  40.22 |                  45    |                  25.87 |                 106.78 |            8.32 |             618.04 |               0 |           0.09 |
+| bright_pony                | DPH_RM3_Terrier_Default  |                  40.01 |                  44.35 |                  29.93 |                 100.71 |            8.32 |             611.69 |               0 |           0.09 |
+| bright_aops                | DPH_Bo1_Terrier_Default  |                 130.32 |                 185.34 |                   6.95 |                 333.31 |          165.73 |             748.02 |               0 |           0.27 |
+| bright_aops                | DPH_RM3_Terrier_Default  |                 124.99 |                 176.55 |                   7.75 |                 313.46 |          165.73 |             783.14 |               0 |           0.27 |
+| bright_theoremqa_questions | DPH_Bo1_Terrier_Default  |                 127.78 |                 199.73 |                   6.86 |                 318.21 |          165.73 |             900.4  |               0 |           0.27 |
+| bright_theoremqa_questions | DPH_RM3_Terrier_Default  |                 122.49 |                 182.64 |                   7.88 |                 289.4  |          165.73 |             898.48 |               0 |           0.27 |
+| bright_theoremqa_theorems  | DPH_Bo1_Terrier_Default  |                  24.75 |                  31.43 |                  37    |                  78.77 |           23.79 |             547.36 |               0 |           0.11 |
+| bright_theoremqa_theorems  | DPH_RM3_Terrier_Default  |                  23.63 |                  28.69 |                  54.47 |                  67.7  |           23.79 |             532.99 |               0 |           0.11 |

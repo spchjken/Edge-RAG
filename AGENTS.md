@@ -38,7 +38,7 @@ Specialized agent execution playbooks are located in `.agents/workflows/`:
 
 When modifying core components or checking evidence, consult:
 1. **System Architecture:** [`docs/ARCHITECTURE.md`](file:///home/donghv/Projects/Edge-RAG/docs/ARCHITECTURE.md) — Canonical blueprint for V2 Retriever and PyTerrier Baseline Suite.
-2. **Evaluation Metrics:** [`docs/EVALUATION_METRICS.md`](file:///home/donghv/Projects/Edge-RAG/docs/EVALUATION_METRICS.md) — Formal definitions of `Strict@K`, `nDCG@K` (with Table 2 exponential gains `BEIR_EXP_GAINS`), `MRR@K`, and query chunking invariance.
+2. **Evaluation Metrics:** [`docs/EVALUATION_METRICS.md`](file:///home/donghv/Projects/Edge-RAG/docs/EVALUATION_METRICS.md) — Formal definitions of `Strict@K`, official linear `nDCG@K`, supplemental Table 2 exponential gains `EXP_GAINS`, `MRR@K`, and query chunking invariance.
 3. **PyTerrier Adoption & Large-Corpus Plan:** [`docs/pyterrier_adoption_plan.md`](file:///home/donghv/Projects/Edge-RAG/docs/pyterrier_adoption_plan.md) — Strategic integration design for PyTerrier and `ir_measures`.
 4. **Results-to-Scripts Mapping:** [`scripts/results_scripts_mapping.md`](file:///home/donghv/Projects/Edge-RAG/scripts/results_scripts_mapping.md) — Authoritative mapping linking every result file under `results/` to its generator script.
 
