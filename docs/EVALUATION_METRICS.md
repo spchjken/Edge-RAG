@@ -69,37 +69,88 @@ Evaluated at standard retrieval cutoffs: $K \in \{10, 20, 30, 50\}$.
 ---
 
 ### 2.7 `nDCG@K` (Normalized Discounted Cumulative Gain@K)
-- **Definition:** Measures ranking quality by penalizing relevant documents retrieved at lower rank positions, normalized against the Ideal Discounted Cumulative Gain (IDCG). Supports both **official BEIR/TREC graded relevance** and binary fallback.
-- **Official Graded BEIR/TREC Formula (Exponential Gain):**
-  When continuous or multi-level relevance judgments are available in `qrels` ($r(d) \ge 0$, e.g., NFCorpus 0–3, TREC-COVID 0–2):
-  $$\text{DCG@K} = \sum_{i=1}^{K} \frac{2^{\text{rel}(d_i)} - 1}{\log_2(i + 1)}$$
-  $$\text{IDCG@K} = \sum_{j=1}^{\min\left(K, |\text{Gold}^+(q)|\right)} \frac{2^{\text{rel}^*(j)} - 1}{\log_2(j + 1)}$$
-  where $\text{rel}^*(j)$ is the $j$-th relevance score of all positive judgments in $\text{Gold}^+(q)$ sorted in **strictly descending order**, ensuring $0.0 \le \text{nDCG@K} \le 1.0$.
-  $$\text{nDCG@K} = \frac{1}{|Q|} \sum_{q \in Q} \begin{cases} \frac{\text{DCG@K}(q)}{\text{IDCG@K}(q)} & \text{if } \text{IDCG@K}(q) > 0 \\ 0.0 & \text{otherwise} \end{cases}$$
-- **Binary Fallback:**
-  When only binary relevance $\text{Gold}(q) \subset \mathcal{D}$ is provided ($\text{rel} \in \{0, 1\}$), $2^1 - 1 = 1$, recovering the linear indicator formulation:
-  $$\text{DCG@K} = \sum_{i=1}^{K} \frac{\mathbb{I}\left(d_i \in \text{Gold}(q)\right)}{\log_2(i + 1)}, \quad \text{IDCG@K} = \sum_{j=1}^{\min\left(K, |\text{Gold}(q)|\right)} \frac{1}{\log_2(j + 1)}$$
+Measures ranking quality by penalizing relevant documents retrieved at lower rank positions, normalized against the Ideal Discounted Cumulative Gain (IDCG). 
+
+Edge-RAG reports both **Official BEIR Linear nDCG** (primary benchmark metric) and **Supplemental Exponential nDCG** (Table 2 comparison metric):
+
+1. **Official BEIR Linear Gain Formulation (`ndcg_10`, `ndcg_50`, `ndcg_100`):**
+   Standard BEIR and TREC evaluation (implemented via `ir_measures.nDCG @ K`):
+   $$\text{DCG@K} = \sum_{i=1}^{K} \frac{\text{rel}(d_i)}{\log_2(i + 1)}, \quad \text{IDCG@K} = \sum_{j=1}^{\min\left(K, |\text{Gold}^+(q)|\right)} \frac{\text{rel}^*(j)}{\log_2(j + 1)}$$
+   where $\text{rel}^*(j)$ represents all positive relevance scores in $\text{Gold}^+(q)$ sorted in descending order.
+
+2. **Supplemental Exponential Gain Formulation (`exp_ndcg_10`):**
+   Evaluated using `ir_measures.nDCG(gains=BEIR_EXP_GAINS) @ 10` with `BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}`:
+   $$\text{DCG@K} = \sum_{i=1}^{K} \frac{2^{\text{rel}(d_i)} - 1}{\log_2(i + 1)}, \quad \text{IDCG@K} = \sum_{j=1}^{\min\left(K, |\text{Gold}^+(q)|\right)} \frac{2^{\text{rel}^*(j)} - 1}{\log_2(j + 1)}$$
+
+3. **Binary Relevance Invariance:**
+   When judgments are binary ($\text{rel} \in \{0, 1\}$), $2^1 - 1 = 1$, and both linear and exponential formulations yield mathematically identical values.
 
 ---
 
-### 2.8 Standard IR Measures Engine (`ir_measures`) & Query Chunking Invariance
-To ensure strict reproducibility and alignment with standard TREC / BEIR evaluation protocols, baseline retrieval metrics are computed using `ir_measures` with pinned exponential gain definitions:
+### 2.8 Candidate-Funnel Ceiling Diagnostics & Retrieval Ceilings
+To evaluate candidate quality prior to reranking or downstream generation, Edge-RAG computes multi-depth funnel diagnostics across candidate depths $K \in \{10, 50, 100, 200, 500, 1000\}$:
+
+1. **`Recall@K` (`recall_10` through `recall_1000`):**
+   Proportion of all gold relevant documents retrieved in the top-$K$:
+   $$\text{Recall@K} = \frac{1}{|Q|} \sum_{q \in Q} \frac{|\text{Retrieved@K}(q) \cap \text{Gold}(q)|}{|\text{Gold}(q)|}$$
+
+2. **`Completeness@K` (`completeness_100`, `completeness_500`, `completeness_1000`):**
+   The percentage of queries where **100% of all relevant documents** are contained within the top-$K$ candidates:
+   $$\text{Completeness@K} = \frac{1}{|Q|} \sum_{q \in Q} \mathbb{I}\left(\text{Recall@K}(q) = 1.0\right) \times 100\%$$
+   *Diagnostic value:* Measures whether downstream listwise rerankers or late context compressors have the full evidence set available.
+
+3. **`Strict@K` (`strict_10`, `strict_50`, `strict_100`, `strict_1000`):**
+   Percentage of queries with at least one relevant document retrieved in top-$K$:
+   $$\text{Strict@K} = \frac{1}{|Q|} \sum_{q \in Q} \mathbb{I}\left(|\text{Retrieved@K}(q) \cap \text{Gold}(q)| \ge 1\right) \times 100\%$$
+
+4. **`Oracle-nDCG@10` (`oracle_ndcg_10`):**
+   The theoretical maximum nDCG@10 achievable if an ideal oracle reranker re-sorted the top-$1,000$ retrieved candidates to place all retrieved ground-truth documents at ranks $1 \dots \min(10, |\text{Gold}|)$:
+   $$\text{Oracle-nDCG@10}(q) = \frac{\text{IDCG@10}\left(\text{Retrieved@1000}(q) \cap \text{Gold}(q)\right)}{\text{IDCG@10}\left(\text{Gold}(q)\right)}$$
+
+---
+
+### 2.9 Standard IR Measures Engine & Query Chunking Invariance
+Baseline retrieval metrics are computed using `ir_measures`:
 ```python
-BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}
-measures = [
-    nDCG(gains=BEIR_EXP_GAINS) @ 10,
-    nDCG(gains=BEIR_EXP_GAINS) @ 50,
-    RR @ 10,
+PRIMARY_MEASURES = [
+    nDCG @ 10,
+    nDCG @ 50,
+    nDCG @ 100,
+    AP @ 100,    # MAP@100
+    RR @ 10,     # MRR@10
     R @ 10,
     R @ 50,
+    R @ 100,
+    R @ 200,
+    R @ 500,
+    R @ 1000,
     P @ 10,
+    P @ 100,
+    nDCG(gains=BEIR_EXP_GAINS) @ 10,  # Supplemental exp_ndcg_10
 ]
 ```
 
 #### Query Chunking Invariance Property
-Because Information Retrieval scoring is statistically independent across queries (all document scores and PRF term feedback models are conditioned exclusively on the query $q$ and static corpus index statistics), evaluating queries in bounded batches/chunks ($Q = Q_1 \cup Q_2 \cup \dots$) and concatenating outputs produces mathematically and numerically identical results to evaluating all queries in a single unchunked batch:
+Because Information Retrieval scoring is statistically independent across queries (all document scores and PRF term feedback models are conditioned exclusively on query $q$ and static corpus index statistics), evaluating queries in bounded chunks ($Q = Q_1 \cup Q_2 \cup \dots$, `chunk_size=200`) and aggregating metric sums produces mathematically and numerically identical results to evaluating all queries in a single unchunked batch:
 $$\text{Metric}(Q) \equiv \frac{1}{|Q|} \sum_{c} \sum_{q \in Q_c} \text{Metric}(q)$$
-Verified via `tests/test_chunking_parity.py` across all 5 baselines with zero floating-point drift ($\le 10^{-12}$).
+Verified with zero floating-point drift ($\le 10^{-12}$).
+
+---
+
+### 2.10 BRIGHT Pre/Post PRF Exclusion Dynamics & Safety Clamping
+In the BRIGHT reasoning benchmark, each query specifies a set of excluded document IDs (`excluded_doc_ids`, up to 11,206 documents in `theoremqa_questions`) representing source documents that must be disqualified to prevent label leakage and trivial keyword matching:
+
+1. **Pass 1 Pre-PRF Feedback Protection:**
+   To prevent Pseudo-Relevance Feedback (RM3 / Bo1) from extracting expansion terms from forbidden documents, Pass 1 requests depth:
+   $$K_1 = \min\left(\max(100, 10 + \text{max\_ex}), 300\right)$$
+   Excluded documents are filtered out immediately, and the remaining ranking is sliced to `.head(10)` before passing to `pt.rewrite.RM3` or `pt.rewrite.Bo1QueryExpansion`.
+
+2. **Pass 2 Candidate Funnel Depth Clamping:**
+   To ensure that the candidate ranking preserves full depth ($K = 1,000$) after post-filtering:
+   $$K_2 = \min(1000 + \text{max\_ex}, 3000)$$
+   Post-exclusion filtering removes disqualified documents and slices to `.head(1000)`. Because the maximum observed excluded document count within the top-3,000 for any BRIGHT query is 1,130, $\min(1000 + \text{max\_ex}, 3000)$ guarantees that $\ge 1,870$ eligible candidates remain, ensuring 100% candidate completeness without truncation.
+
+---
 
 ## 3. Query Level Expansion & Telemetry Metrics
 
@@ -206,6 +257,31 @@ Logged in JSON trace files (`trace_*.json`) for individual query diagnostics:
 - **Measurement Protocol:**
   - Monitored via `psutil.Process().memory_info().rss / (1024 ** 2)`.
   - Reported in megabytes (MB) or gigabytes (GB).
+
+---
+
+### 4.5 PyTerrier Retrieval API Latency & Throughput Diagnostics
+Evaluated by `src/evaluation/pyterrier_harness.py` under two distinct operational regimes:
+
+1. **Isolated Single-Query API Latency (`retrieval_api_p50_ms`, `p90`, `p99`, `mean`):**
+   - Measures pure single-query interactive service response time:
+     `transformer.transform(pd.DataFrame([{"qid": str(q["query_id"]), "query": q["question"]}]))`
+   - Samples 50 queries per dataset (with deterministic seed) after a 5-query warmup.
+   - Accurately captures interactive tail latency (P90 and P99) under edge-serving conditions.
+
+2. **Batch Retrieval Throughput (`batch_throughput_qps`):**
+   - Total queries evaluated divided by pure pipeline execution time across bounded query chunks (`chunk_size=200`):
+     $$\text{Throughput} = \frac{|Q|}{t_{\text{total\_retrieval\_s}}}$$
+   - Reports queries served per second (QPS).
+
+3. **End-to-End Harness Overhead (`harness_per_query_ms`):**
+   - Total wall-clock time per query including chunk batching, ir_measures accumulation, diagnostic filtering, and Parquet serialization.
+
+4. **Resource Footprint Diagnostics:**
+   - `index_disk_mb`: Total disk storage size of the cached Terrier index.
+   - `host_ram_peak_mb`: Peak resident host RAM during retrieval execution.
+   - `index_build_s`: Wall-clock seconds to build index from streamed raw corpus.
+   - `cache_load_s`: Wall-clock seconds to load cached index from disk via `pt.IndexFactory.of()`.
 
 ---
 

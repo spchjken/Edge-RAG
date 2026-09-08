@@ -397,24 +397,47 @@ When benchmarking on standard research / edge workstations (e.g., 16 GB System R
 
 Edge-RAG stores benchmarks under `data/benchmarks/`. There are two primary schemas — external **document-level** benchmarks and **synthetic** (chunked) benchmarks.
 
-## 7.1 Active Evaluation Suites
+## 7.1 Canonical Evaluation Suites
 
-### Track A: Active Core 10-Benchmark Evaluation Suite (337,425 Docs, 5,362 Queries)
-The primary benchmark suite for automated ablation sweeps and side-by-side model comparison (`scripts/legacy/v7_legacy/run_v7_vs_baselines_comparison.py`, `scripts/legacy/v7_legacy/profile_v7_10_benchmarks.py`), ingested directly via [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py):
-1. `enterpriserag_doc_level` (50,000 docs, 470 Qs) — Standardized 50k seed-42 subset
-2. `liverag_doc_level` (970 docs, 895 Qs) — Unchunked supporting docs & multi-session queries
-3. `beir_scifact_doc_level` (5,183 docs, 300 Qs) — Raw BEIR, standard title-text concatenation
-4. `beir_nfcorpus_doc_level` (3,633 docs, 323 Qs) — Raw BEIR, 4-level graded qrels
-5. `beir_fiqa_doc_level` (57,600 docs, 648 Qs) — Raw BEIR, full un-capped test split
-6. `multihop_rag_doc_level` (609 docs, 2,255 Qs) — Full un-capped news retrieval queries
-7. `financebench_doc_level` (168 docs, 150 Qs) — Official SEC filing evidence pages (distractor-free)
-8. `bright_economics_doc_level` (50,220 docs, 103 Qs) — Raw BRIGHT reasoning parquet
-9. `bright_stackoverflow_doc_level` (107,081 docs, 117 Qs) — Raw BRIGHT reasoning parquet
-10. `bright_robotics_doc_level` (61,961 docs, 101 Qs) — Raw BRIGHT reasoning parquet
+The Edge-RAG evaluation ecosystem is organized into two primary tracks:
 
-### Track B: Extended BEIR & BRIGHT Suite (~24.5 Million Docs)
-- **Feasible Scale Expansion (Tier 1 & 2):** `beir_arguana` (8.7k docs), `beir_scidocs` (25.7k docs), `beir_trec_covid` (171k docs), `beir_webis_touche2020` (383k docs). Fully supported by `BenchmarkLoader` within 16 GB hardware limits.
-- **Ultra-Large Scale (Tier 3 - Million-Doc Corpora):** `climate-fever` (5.42M), `fever` (5.42M), `dbpedia-entity` (4.64M), `hotpotqa` (5.23M), `nq` (2.68M), `quora` (523k), plus BRIGHT `biology` and `leetcode`. Evaluated via disk-backed streaming indexes or standard candidate pooling to prevent system memory exhaustion.
+### Track A: Canonical 25-Dataset Baseline Suite (13 BEIR + 12 BRIGHT Domains)
+The primary benchmark matrix for formal Information Retrieval baselining and reproduction, executed via [`scripts/run_pyterrier_baselines.py`](file:///home/donghv/Projects/Edge-RAG/scripts/run_pyterrier_baselines.py) with zero raw-corpus RAM retention (`BenchmarkLoader.stream_corpus`):
+
+1. **13 Canonical BEIR Academic Datasets:**
+   - `scifact` (5,183 docs, 300 Qs) — Scientific claim verification
+   - `nfcorpus` (3,633 docs, 323 Qs) — Medical information retrieval (4-level graded qrels)
+   - `fiqa` (57,600 docs, 648 Qs) — Financial QA retrieval
+   - `arguana` (8,674 docs, 1,401 Qs) — Counter-argument retrieval
+   - `scidocs` (25,657 docs, 1,000 Qs) — Scientific paper citation discovery
+   - `quora` (522,931 docs, 10,000 Qs) — Duplicate question detection
+   - `hotpotqa` (5,233,329 docs, 7,405 Qs) — Multi-hop Wikipedia reasoning
+   - `trec_covid` (171,331 docs, 50 Qs) — Biomedical COVID-19 pandemic research
+   - `webis_touche2020` (382,545 docs, 49 Qs) — Controversial argument retrieval
+   - `dbpedia_entity` (4,635,922 docs, 400 Qs) — Structured Wikipedia entity linking
+   - `nq` (2,681,468 docs, 3,452 Qs) — Google Search Natural Questions
+   - `climate_fever` (5,416,593 docs, 1,535 Qs) — Climate change claim verification
+   - `fever` (5,416,593 docs, 6,666 Qs) — Wikipedia fact extraction and verification
+
+2. **12 BRIGHT Complex Reasoning Domains:**
+   - `bright_biology` (43,266 docs, 126 Qs) — Biological & life sciences reasoning
+   - `bright_earth_science` (15,907 docs, 137 Qs) — Geological & atmospheric science
+   - `bright_economics` (50,220 docs, 103 Qs) — Complex macroeconomic & financial models
+   - `bright_psychology` (14,484 docs, 116 Qs) — Cognitive & behavioral psychology
+   - `bright_robotics` (61,961 docs, 101 Qs) — Robotics & ROS engineering
+   - `bright_stackoverflow` (107,081 docs, 117 Qs) — Technical programming Q&A
+   - `bright_sustainable_living` (1,675 docs, 140 Qs) — Environmental sustainability
+   - `bright_pony` (3,678 docs, 101 Qs) — Domain programming language semantics
+   - `bright_leetcode` (1,833 docs, 179 Qs) — Algorithmic coding puzzles
+   - `bright_aops` (6,419 docs, 142 Qs) — Art of Problem Solving competitive math
+   - `bright_olympiads` (10,951 docs, 125 Qs) — Olympiad-level mathematics
+   - `bright_theoremqa_questions` (11,206 docs, 169 Qs) — Multi-discipline STEM theorem QA
+
+### Track B: Local Specialized & Diagnostic Benchmarks
+- `enterpriserag_doc_level` (50,000 docs, 470 Qs) — Multi-source enterprise workspace collection
+- `liverag_doc_level` (970 docs, 895 Qs) — Real-time dynamic web news
+- `multihop_rag_doc_level` (609 docs, 2,255 Qs) — 2–4 hop document synthesis
+- `financebench_doc_level` (168 docs, 150 Qs) — SEC 10-K corporate filings
 
 ---
 
@@ -489,30 +512,37 @@ flowchart LR
 
 # 8. 📊 Master Benchmark Comparison & Recommendation Matrix
 
-The table below summarizes all surveyed and integrated benchmarks in Edge-RAG:
+The table below summarizes all 25 active benchmarks and core enterprise corpora evaluated in Edge-RAG:
 
-| # | Benchmark Name | Source / Paper | Primary Domain / Task | Scale (Queries / Corpus) | Multi-Hop? | Pipeline Fit | Retriever Fit | Edge-RAG Status |
-| :---: | :--- | :---: | :--- | :--- | :---: | :---: | :---: | :--- |
-| **1** | **EnterpriseRAG** | Edge-RAG Core | Enterprise Workspace (9 Sources) | 470 Q / 50,000 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **2** | **LiveRAG** | Edge-RAG Core | Dynamic Web / Streaming News | 895 Q / 970 Docs | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **3** | **SciFact (BEIR)** | NeurIPS 2021 | Scientific Claim Verification | 300 Q / 5,183 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **4** | **NFCorpus (BEIR)** | NeurIPS 2021 | Medical / Nutrition Search | 323 Q / 3,633 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **5** | **FiQA-2018 (BEIR)**| NeurIPS 2021 | Financial QA Retrieval | 648 Q / 57,600 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **6** | **MultiHop-RAG** | NTU (Jan 2024) | Multi-Document Evidence Synthesis| 2,255 Q / 609 Docs | Yes (2–4 hops)| ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **7** | **FinanceBench** | Patronus AI | SEC 10-K Corporate Filings | 150 Q / 168 Docs (Official) | Partial | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **8** | **BRIGHT Economics** | NeurIPS 2024 | Complex Economics Reasoning | 103 Q / 50,220 Docs | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **9** | **BRIGHT StackOverflow**| NeurIPS 2024| Technical Code / StackOverflow Q&A | 117 Q / 107,081 Docs | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **10**| **BRIGHT Robotics** | NeurIPS 2024 | Robotics / ROS Engineering | 101 Q / 61,961 Docs | Yes | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Active Core Benchmark** |
-| **11**| **ArguAna (BEIR)** | Table 2 SPLADE-v3 | Counter-Argument Search | 1,401 Q / 8,674 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 1 Safe)** |
-| **12**| **SCIDOCS (BEIR)** | Table 2 SPLADE-v3 | Citation & Research Discovery | 1,000 Q / 25,657 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 1 Safe)** |
-| **13**| **TREC-COVID (BEIR)** | Table 2 SPLADE-v3 | Biomedical Pandemic Research | 50 Q / 171,331 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 2 Manageable)** |
-| **14**| **Touché-2020 (BEIR)**| Table 2 SPLADE-v3 | Controversial Argument Search | 49 Q / 382,545 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Feasible (Tier 2 Manageable)** |
-| **15**| **Quora (BEIR)** | Table 2 SPLADE-v3 | Paraphrase / Duplicate Questions | 10,000 Q / 522,931 Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Large Scale)** |
-| **16**| **NQ (BEIR)** | Table 2 SPLADE-v3 | Google Search Natural Questions | 3,452 Q / 2.68M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
-| **17**| **HotpotQA (BEIR)** | Table 2 SPLADE-v3 | Multi-Hop Wikipedia QA | 7,405 Q / 5.23M Docs | Yes | ⭐⭐⭐⭐⭐ (5/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
-| **18**| **DBPedia (BEIR)** | Table 2 SPLADE-v3 | Structured Entity Link Search | 400 Q / 4.63M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
-| **19**| **FEVER (BEIR)** | Table 2 SPLADE-v3 | Fact Extraction & Verification | 6,666 Q / 5.41M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
-| **20**| **Climate-FEVER** | Table 2 SPLADE-v3 | Climate Fact-Checking | 1,535 Q / 5.41M Docs | No | ⭐⭐⭐⭐ (4/5) | ⭐⭐⭐⭐⭐ (5/5) | **Tier 3 (Extreme Scale)** |
+| # | Benchmark Name | Corpus / Domain | Corpus Docs | Queries | Task Nature | Evaluator Harness | Status |
+| :---: | :--- | :--- | :---: | :---: | :--- | :--- | :--- |
+| **1** | **SciFact** | BEIR / Scientific Claims | 5,183 | 300 | Fact Verification | PyTerrier Disk Suite | **Active Benchmark** |
+| **2** | **NFCorpus** | BEIR / Medical Search | 3,633 | 323 | Graded Medical Search | PyTerrier Disk Suite | **Active Benchmark** |
+| **3** | **FiQA-2018** | BEIR / Financial QA | 57,600 | 648 | Financial QA Retrieval | PyTerrier Disk Suite | **Active Benchmark** |
+| **4** | **ArguAna** | BEIR / Argumentation | 8,674 | 1,401 | Counter-Argument Search| PyTerrier Disk Suite | **Active Benchmark** |
+| **5** | **SCIDOCS** | BEIR / Citation Discovery | 25,657 | 1,000 | Citation Recommendation| PyTerrier Disk Suite | **Active Benchmark** |
+| **6** | **Quora** | BEIR / Social Q&A | 522,931 | 10,000 | Duplicate Question Finding| PyTerrier Disk Suite | **Active Benchmark** |
+| **7** | **HotpotQA** | BEIR / Multi-Hop Wikipedia | 5,233,329 | 7,405 | Multi-Hop QA | PyTerrier Disk Suite | **Active Benchmark** |
+| **8** | **TREC-COVID** | BEIR / Pandemic Articles | 171,331 | 50 | Graded Bio-IR | PyTerrier Disk Suite | **Active Benchmark** |
+| **9** | **Touché-2020** | BEIR / Argument Retrieval | 382,545 | 49 | Controversial Arguments | PyTerrier Disk Suite | **Active Benchmark** |
+| **10**| **DBPedia-Entity**| BEIR / Structured Entities | 4,635,922 | 400 | Entity Linking | PyTerrier Disk Suite | **Active Benchmark** |
+| **11**| **NQ (Natural Qs)**| BEIR / Web Search | 2,681,468 | 3,452 | User Query Answering | PyTerrier Disk Suite | **Active Benchmark** |
+| **12**| **Climate-FEVER** | BEIR / Climate Science | 5,416,593 | 1,535 | Scientific Verification| PyTerrier Disk Suite | **Active Benchmark** |
+| **13**| **FEVER** | BEIR / Fact Extraction | 5,416,593 | 6,666 | Fact Verification | PyTerrier Disk Suite | **Active Benchmark** |
+| **14**| **BRIGHT Biology** | BRIGHT / Life Sciences | 43,266 | 126 | Intensive Reasoning | PyTerrier Disk Suite | **Active Benchmark** |
+| **15**| **BRIGHT Earth Sci**| BRIGHT / Earth Sciences | 15,907 | 137 | Multi-hop Geoscience | PyTerrier Disk Suite | **Active Benchmark** |
+| **16**| **BRIGHT Economics**| BRIGHT / Economics | 50,220 | 103 | Macroeconomic Models | PyTerrier Disk Suite | **Active Benchmark** |
+| **17**| **BRIGHT Psychology**| BRIGHT / Psychology | 14,484 | 116 | Behavioral Science | PyTerrier Disk Suite | **Active Benchmark** |
+| **18**| **BRIGHT Robotics** | BRIGHT / ROS Engineering | 61,961 | 101 | Technical Engineering | PyTerrier Disk Suite | **Active Benchmark** |
+| **19**| **BRIGHT StackOverflow**| BRIGHT / Coding Q&A | 107,081 | 117 | Technical Programming | PyTerrier Disk Suite | **Active Benchmark** |
+| **20**| **BRIGHT Sustainable**| BRIGHT / Sustainability | 1,675 | 140 | Applied Environmental | PyTerrier Disk Suite | **Active Benchmark** |
+| **21**| **BRIGHT Pony** | BRIGHT / Language Semantics| 3,678 | 101 | Syntax & Actor Semantics| PyTerrier Disk Suite | **Active Benchmark** |
+| **22**| **BRIGHT LeetCode** | BRIGHT / Competitive Code | 1,833 | 179 | Algorithm Discovery | PyTerrier Disk Suite | **Active Benchmark** |
+| **23**| **BRIGHT Aops** | BRIGHT / Math Problem Solving| 6,419 | 142 | Olympiad Math | PyTerrier Disk Suite | **Active Benchmark** |
+| **24**| **BRIGHT Olympiads**| BRIGHT / International Math| 10,951 | 125 | Proof & Competition | PyTerrier Disk Suite | **Active Benchmark** |
+| **25**| **BRIGHT TheoremQA**| BRIGHT / STEM Theorems | 11,206 | 169 | Theorem-level QA | PyTerrier Disk Suite | **Active Benchmark** |
+| **26**| **EnterpriseRAG**| Enterprise Workspace (9 sources)| 50,000 | 470 | Domain RAG Evaluation | Pipeline V2 Core | **Enterprise Benchmark** |
+| **27**| **LiveRAG** | Dynamic Streaming Web | 970 | 895 | Real-Time News Updates | Pipeline V2 Core | **Enterprise Benchmark** |
 
 ---
 

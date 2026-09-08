@@ -155,20 +155,36 @@ src/pipeline_v2/
 | **Edge-RAG V7 (GPU-Sparse Bailout)** | **62.82%** | **49.35%** | **74.18%** | **60.54%** | **0.4731** | **15.61 ms** | **14.56 s** | **1.06 GB** |
 | **SPLADE-v3 (DistilBERT)** | 66.40% | 50.68% | 77.47% | 63.04% | 0.4985 | 46.50 ms | 197.84 s | 5.00 GB |
 
-### 4.2 PyTerrier Baseline Evaluation Suite (`src/evaluation/pyterrier_harness.py`)
+### 4.2 PyTerrier Baseline Evaluation Suite (`src/evaluation/pyterrier_harness.py`, `scripts/run_pyterrier_baselines.py`)
 
-To establish rigorous external baseline anchors adhering to standard TREC and BEIR protocols across small and multi-million-document corpora (up to 5M+ docs), Edge-RAG integrates a disk-based PyTerrier baseline harness:
-- **5-Baseline Evaluation Matrix:**
-  1. `BM25_Default`: Stock Terrier BM25 (literature anchor).
-  2. `BM25_Analyzed`: Compounding-aware analyzer (`EdgeRAGAnalyzer`) + light Krovetz stemming indexed via `WhitespaceTokeniser`.
-  3. `BM25_RM3_Terrier_Default`: Native PyTerrier Java RM3 pipeline (`bm25 >> pt.rewrite.RM3 >> bm25`).
-  4. `BM25_RM3_Unified_Default`: Unified Dirichlet RM3 on default index.
-  5. `BM25_RM3_Unified_Analyzed`: Unified Dirichlet RM3 on analyzed index.
-- **Large-Corpus (5M+ Docs) Scalable Architecture:**
-  - **Zero-RAM Streaming:** Ingestion via `BenchmarkLoader.stream_corpus()` yielding documents line-by-line into `IterDictIndexer`, keeping Python RAM $<100\text{ MB}$.
-  - **Bounded JVM Heap:** Java max heap hard-capped at 4 GiB (`pt.java.set_memory_limit(4096)`).
-  - **Bounded Indexing Memory:** Configured with `indexing.max.memory = 1073741824` (1 GiB) for periodic disk posting flushes and external multi-way merge sort.
-  - **Query Chunking:** Batches large query sets (`chunk_size=200`) to eliminate JNI memory surges while preserving 100% numerical metric identity (verified via `tests/test_chunking_parity.py`).
+To establish rigorous external baseline anchors adhering to standard TREC and BEIR protocols across small and multi-million-document corpora (up to 5.4M+ docs), Edge-RAG integrates a canonical disk-backed PyTerrier evaluation suite:
+- **Canonical 6-Baseline Evaluation Matrix:**
+  1. `BM25_Default`: Standard Terrier BM25 ($k_1=1.2, b=0.75$, literature anchor).
+  2. `BM25_RM3_Terrier_Default`: Native PyTerrier Java Relevance Model 3 PRF ($fb\_docs=10, fb\_terms=10, \lambda=0.5$).
+  3. `BM25_Bo1_Terrier_Default`: Native PyTerrier Java Bose-Einstein DFR PRF ($fb\_docs=10, fb\_terms=10$).
+  4. `DPH`: Standard Terrier Divergence From Randomness Model (parameter-free DFR).
+  5. `DPH_Bo1_Terrier_Default`: DPH Pass 1 $\to$ Bo1 query expansion $\to$ DPH Pass 2.
+  6. `DPH_RM3_Terrier_Default`: DPH Pass 1 $\to$ RM3 query expansion $\to$ DPH Pass 2.
+
+- **Benchmark Coverage (25 Datasets Across Small & Massive Corpora):**
+  - **13 Canonical BEIR Benchmarks:** `scifact`, `nfcorpus`, `fiqa`, `arguana`, `scidocs`, `quora`, `hotpotqa`, `trec_covid`, `webis_touche2020`, `dbpedia_entity`, `nq`, `climate_fever`, `fever`.
+  - **12 BRIGHT Complex Reasoning Domains:** `biology`, `earth_science`, `economics`, `psychology`, `robotics`, `stackoverflow`, `sustainable_living`, `pony`, `leetcode`, `aops`, `olympiads`, `theoremqa_questions`.
+
+- **Multi-Million-Document Scalable & Memory-Safe Architecture (15 GiB Hardware Profile):**
+  - **Zero-RAM Streaming:** Ingestion via `BenchmarkLoader.stream_corpus()` yielding documents line-by-line into `IterDictIndexer`, keeping Python host RAM $<100\text{ MB}$.
+  - **Bounded JVM Heap:** Java max heap hard-capped at 3–4 GiB (`pt.init(mem=3072)`).
+  - **Bounded Indexing Memory Buffer:** Configured with `indexing.max.memory = 1073741824` (1 GiB) for periodic disk posting flushes and external multi-way merge sort.
+  - **Query Chunking:** Batches query sets (`chunk_size=200`) to eliminate JNI memory surges while preserving 100% numerical metric identity (mathematically invariant across all IR metrics).
+  - **Subprocess Isolation:** Supervisor orchestrates isolated worker subprocesses per dataset to prevent JVM/Python memory accumulation and ensure 100% clean teardown between corpora.
+
+- **BRIGHT Pre/Post PRF Exclusion Dynamics & Candidate Depth Safety:**
+  - **Pass 1 Feedback Protection:** Clamped to $\min(\max(100, 10 + \text{max\_ex}), 300)$ followed by exclusion filtering and `.head(10)` to eliminate prompt contamination from query-source documents.
+  - **Pass 2 Candidate Funnel Depth:** Clamped to $\min(1000 + \text{max\_ex}, 3000)$ followed by exclusion filtering and `.head(1000)`, guaranteeing that even on math/reasoning datasets with $>1,100$ excluded distractors per query (e.g. `theoremqa_questions`), 100% of queries retain the full $K=1,000$ eligible candidates without truncation.
+
+- **Output Artifacts & Compressed Run Persistence:**
+  - **Results Matrix:** Appended non-destructively into [`results/pyterrier_baselines/pyterrier_baselines_results.csv`](file:///home/donghv/Projects/Edge-RAG/results/pyterrier_baselines/pyterrier_baselines_results.csv) (150 rows across 25 datasets $\times$ 6 baselines).
+  - **Candidate Parquet Cache:** Top-1,000 candidate rankings persisted as compressed Parquet files under `data/cache/runs/{dataset}_{pipeline}.parquet` (150 runs total).
+  - **Historical Sweeps:** Previous V1, V2, and V7 calibration/ablation scripts are permanently archived in [`scripts/legacy/`](file:///home/donghv/Projects/Edge-RAG/scripts/legacy/) (`pipeline_v1_legacy/`, `v2_ablation/`, `v7_legacy/`).
 
 ---
 
