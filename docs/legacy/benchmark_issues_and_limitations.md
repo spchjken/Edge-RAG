@@ -15,7 +15,7 @@
 
 These are the issues that change the "should I keep converting / accuracy-vs-efficiency split" decision:
 
-1. **The realism claim is only half true.** "A corpus is many separate documents" is realistic; "5.4M tiny JSON files in one flat directory" is a self-inflicted pathology. The retriever never sees the file structure — the loader just globs and reads every file into RAM (`load_doc_corpus` in both `run_v7_vs_baselines_comparison.py` and `run_v7_calibration_suite.py`). Realism comes from **document-unit granularity + distractor ratio**, not file count.
+1. **The realism claim is only half true.** "A corpus is many separate documents" is realistic; "5.4M tiny JSON files in one flat directory" is a self-inflicted pathology. The retriever never sees the file structure — the loader just globs and reads every file into RAM (`load_doc_corpus` in both `scripts/legacy/v7_legacy/run_v7_vs_baselines_comparison.py` and `scripts/legacy/v7_legacy/run_v7_calibration_suite.py`). Realism comes from **document-unit granularity + distractor ratio**, not file count.
 2. **Conversion is currently lossy in ways that corrupt *accuracy*** (issues 1.1, 1.2, 1.3). Accuracy must be measured on the raw/official corpus + graded qrels to be comparable to BEIR/SPLADE-v3 Table 2.
 3. **Even the scalable methods (BM25/Lucene) cannot load the million-doc converted corpora in 16 GB RAM** because the loader materializes everything (issue 3.1). The bottleneck is the loader, not Lucene.
 4. **Dense-BGE / SPLADE baselines are non-viable on million-doc corpora by construction** (issue 3.6) and should not be rewritten; their OOM/timeout is a measured scaling result.
@@ -91,7 +91,7 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 ### 2.1 Binary nDCG Formula vs. Academic Leaderboard Standards — ✅ (active)
 * **Affected code:** `src/evaluation/metrics.py::calculate_ndcg_at_k` (lines 37–53)
 * **Discrepancy:** implements **binary** relevance nDCG (1.0 gain for any gold hit), not the official BEIR graded gain `2^rel - 1`.
-* **Status — active, not latent:** the comparative runner `scripts/run_v7_vs_baselines_comparison.py` **does** compute and report `ndcg_10` (present in `results/v7_vs_baselines/v7_vs_baselines_results.csv`), but it uses the **binary** relevance from `metrics.py` — so the ±0.015–0.035 variance vs. official graded BEIR numbers is already baked into reported results (e.g. `beir_nfcorpus_doc_level`). The older `scripts/run_v7_calibration_suite.py` omits nDCG entirely, which is why a quick grep of that file alone is misleading. Any BEIR Table-2 comparison requires (a) preserving graded qrels (1.2) and (b) a graded-nDCG path in the harness.
+* **Status — active, not latent:** the comparative runner `scripts/legacy/v7_legacy/run_v7_vs_baselines_comparison.py` **does** compute and report `ndcg_10` (present in `results/legacy/v7_legacy/v7_vs_baselines/v7_vs_baselines_results.csv`), but it uses the **binary** relevance from `metrics.py` — so the ±0.015–0.035 variance vs. official graded BEIR numbers is already baked into reported results (e.g. `beir_nfcorpus_doc_level`). The older `scripts/legacy/v7_legacy/run_v7_calibration_suite.py` omits nDCG entirely, which is why a quick grep of that file alone is misleading. Any BEIR Table-2 comparison requires (a) preserving graded qrels (1.2) and (b) a graded-nDCG path in the harness.
 
 ---
 
@@ -106,7 +106,7 @@ These are the issues that change the "should I keep converting / accuracy-vs-eff
 ## 3. Additional Issues Found During Code Audit
 
 ### 3.1 Corpus Loader Materializes Everything in RAM (blocks BM25 at scale) — ✅
-* **Affected code:** `scripts/run_v7_vs_baselines_comparison.py::load_doc_corpus` and `scripts/run_v7_calibration_suite.py::load_doc_corpus` (lines 109–143 in the latter) — both share the same materialize-everything pattern.
+* **Affected code:** `scripts/legacy/v7_legacy/run_v7_vs_baselines_comparison.py::load_doc_corpus` and `scripts/legacy/v7_legacy/run_v7_calibration_suite.py::load_doc_corpus` (lines 109–143 in the latter) — both share the same materialize-everything pattern.
 * **Problem:** `os.listdir` over the `documents/` dir, then `json.load` each file and append the **full text** to `corpus_texts` and a dict to `corpus_docs`. Two parallel in-memory lists hold the entire corpus.
 * **Impact:** at 5.4M docs this is tens of GB of host RAM **before Lucene ever indexes anything** → BM25/Lucene, the only scalable retriever in the suite, will OOM in a 16 GB machine purely due to the loader. The fragmentation in 1.4 makes this worse (millions of `json.load` calls + list growth).
 * **Fix direction:** stream from a sharded `corpus.jsonl`/`parquet` and hand documents to the indexer incrementally instead of building two full lists.

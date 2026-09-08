@@ -79,11 +79,12 @@ print("Augmented Tokens:", result["aspect_payload"]["augmented_token_list"])
 print("Retrieved Chunks:", result["aspect_payload"]["aspects"])
 ```
 
-### 3. Running Multi-Corpus Evaluation Sweeps
-To run automated evaluation sweeps comparing Pipeline V2 schemas against baselines (Lucene BM25, Dense BGE, SPLADE-v3):
+### 3. Running Benchmark Evaluation Suites
+To run the automated baseline evaluation suite across all 25 BEIR and BRIGHT benchmark datasets:
 ```bash
-python scripts/run_v2_ablation_sweep.py
+.venv/bin/python3 -u scripts/run_pyterrier_baselines.py --all-beir --all-bright
 ```
+Historical ablation sweep scripts are archived in [`scripts/legacy/`](file:///home/donghv/Projects/Edge-RAG/scripts/legacy/).
 
 ---
 

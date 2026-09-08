@@ -18,7 +18,7 @@ Before making changes, all agents MUST read and strictly adhere to the rules def
 
 | Rule File | Scope & Mandatory Constraints |
 |---|---|
-| [`.agents/rules/00-agent-core.md`](file:///home/donghv/Projects/Edge-RAG/.agents/rules/00-agent-core.md) | **Core Project Invariants:** Local venv enforcement, terminal safety (NEVER use interactive commands like `nano`, `vim`, `cat >>`), Three-Strikes Halt rule, surgical edits, anti-steamrolling, and definition of done. |
+| [`.agents/rules/00-agent-core.md`](file:///home/donghv/Projects/Edge-RAG/.agents/rules/00-agent-core.md) | **Core Project Invariants:** Local venv enforcement, terminal safety (NEVER use interactive commands like `nano`, `vim`, `cat >>`), process & terminal hang prevention (ephemeral subshells, detached background FDs, unbuffered I/O), Three-Strikes Halt rule, surgical edits, anti-steamrolling, and definition of done. |
 | [`.agents/rules/01-architecture.md`](file:///home/donghv/Projects/Edge-RAG/.agents/rules/01-architecture.md) | **Module Boundaries & Tiered Architecture:** Tier 0 (`docs/ARCHITECTURE.md`), Tier 1 (module boundaries), Tier 2 (co-located `pathway_*.md`), PyTerrier baseline harness contracts, 15 GiB RAM limits. |
 | [`.agents/rules/02-reproducibility.md`](file:///home/donghv/Projects/Edge-RAG/.agents/rules/02-reproducibility.md) | **Scientific Reproducibility:** Deterministic RNG seed locking (`--seed`), PyTorch VRAM measurement protocols (`torch.cuda.reset_peak_memory_stats()`), and results directory structure (`results/`). |
 

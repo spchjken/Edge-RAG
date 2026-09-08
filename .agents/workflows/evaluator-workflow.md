@@ -46,10 +46,9 @@ See `benchmark_generation_pipeline.md` for full methodology.
 - Results output to `results/pipeline_combinations/` as timestamped JSON.
 
 ## CLI Scripts
-- `scripts/run_pyterrier_baselines.py` — Run PyTerrier 5-baseline matrix across 13 BEIR datasets
-- `scripts/run_benchmarks.py` — CLI for Table 1 & 2
-- `scripts/run_ablations.py` — CLI for §5.3 ablations
+- `scripts/run_pyterrier_baselines.py` — Run PyTerrier 6-baseline matrix across 25 BEIR & BRIGHT datasets
 - `scripts/download_datasets.py` — Fetch datasets, prep data dirs
+- `scripts/download_retriever_benchmarks.py` — Fetch external BEIR & BRIGHT corpora
 - `scripts/setup_zaya.sh` — Build llama.cpp, download GGUF
 
 ## Post-Work

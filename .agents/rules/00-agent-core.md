@@ -31,6 +31,11 @@ Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
 ## 4. Security & Safety
 - **Destructive Action Safety**: Never use `--force` or recursive force deletions (`rm -rf`) on broad directories. Read-Before-Write on critical files.
 - **Terminal & Tool Safety**: NEVER use `cat >>`, `nano`, `vim`, or any interactive commands in the bash terminal. It will permanently hang your terminal waiting for `stdin`. ALWAYS use native file editing tools (`replace_file_content` or `write_to_file`) to modify code.
+- **Process & Terminal Hang Prevention**:
+  - **Fresh Ephemeral Subshells**: ALWAYS use non-persistent terminals (`RunPersistent: false`) for benchmark, test, or evaluation runs. Never reuse a shared persistent terminal that can deadlock on unreturned shell prompts (`PS1`) or background jobs.
+  - **Background Process Detachment**: Any background watcher, daemon, or async script spawned in bash MUST fully detach its file descriptors (`> /dev/null 2>&1 < /dev/null &`). Leaving child processes attached to `stdout`/`stderr` prevents EOF and indefinitely deadlocks the IDE task monitor.
+  - **IPC & Named FIFO Safety**: In multi-process pipelines (e.g. PyTerrier streaming via named FIFOs to the JVM), ensure error handlers close FIFOs cleanly to prevent downstream Java/C readers from blocking on empty pipes.
+  - **Unbuffered Execution & Non-Interactive stdin**: Always execute Python scripts with unbuffered I/O (`.venv/bin/python3 -u`) so error traces flush immediately, and enforce non-interactive execution (`< /dev/null` or `CI=1`) to prevent any library from blocking on `/dev/tty`.
 
 ## 5. Three Strikes Halt
 - If a specific test, script, command, or operation fails with the exact same error 3 times consecutively: **HALT**.

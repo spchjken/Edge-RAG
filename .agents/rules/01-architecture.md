@@ -59,8 +59,8 @@ trigger: always_on
   - Standard BEIR metric parity using `ir_measures` with pinned Table 2 exponential gains (`BEIR_EXP_GAINS`).
 - Primary evaluation scripts:
   - `scripts/results_scripts_mapping.md` — Authoritative two-column mapping of all result files to scripts/tests.
-  - `scripts/run_pyterrier_baselines.py` — Automated 13-dataset BEIR baseline evaluation runner with auto-resume.
-  - `scripts/run_v2_ablation_sweep.py` / `scripts/run_v7_ablation_sweep.py` — Automated multi-corpus evaluation sweeps.
+  - `scripts/run_pyterrier_baselines.py` — Canonical 6-baseline evaluation runner across 25 BEIR & BRIGHT datasets with auto-resume.
+  - `scripts/legacy/` — Historical multi-corpus ablation sweeps and calibration suites (`pipeline_v1_legacy/`, `v2_ablation/`, `v7_legacy/`).
   - `src/evaluation/benchmark_runner.py` — Baseline vs Edge-RAG orchestrator.
   - `src/evaluation/metrics.py` — Retrieval and generation metric evaluators.
 

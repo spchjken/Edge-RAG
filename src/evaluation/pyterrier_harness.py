@@ -2,51 +2,72 @@
 src/evaluation/pyterrier_harness.py
 
 High-Performance Disk-Based Baseline Evaluation Harness using PyTerrier.
-Supports standard BM25, compound-preserving analyzed BM25, and Dirichlet-smoothed
-Relevance Model 3 (RM3) pseudo-relevance feedback across small and multi-million-document corpora.
+Evaluates standard Terrier default indexing baselines:
+  1. BM25_Default (Standard Terrier BM25)
+  2. BM25_RM3_Terrier_Default (Native Java Relevance Model 3 PRF)
+  3. BM25_Bo1_Terrier_Default (Native Java Bose-Einstein DFR PRF)
+  4. DPH (Terrier Divergence From Randomness Model)
 
-Enforces:
-1. Disk-backed Terrier Indexing via IterDictIndexer with MetaIndex.
-2. O(K) memory scaling for PRF feedback via on-demand disk text fetching.
-3. Un-confounded RM3 evaluation: Unified RM3 evaluates identical Dirichlet math
-   across both default and analyzed indexes.
-4. Exact metric parity with BEIR standards (ir_measures with BEIR_EXP_GAINS).
+Features:
+- Full BEIR metric parity using ir_measures standard linear gain nDCG@10.
+- Deep candidate-funnel diagnostics: R@10-1000, Completeness@100/500/1000, Strict@10-1000, Oracle-nDCG@10.
+- Strict BRIGHT exclusion semantics: Pre- and post-filtering with adaptive depth padding.
+- Memory-safe streaming execution in bounded query chunks (chunk_size=200).
+- Isolated PyTerrier single-query API latency benchmarking (P50/P90/P99) and resource tracking.
+- Optional compressed Parquet candidate run persistence (snappy).
 """
 
 import os
+import sys
 import time
 import math
-import hashlib
-import inspect
+import random
 from typing import List, Dict, Any, Tuple, Optional, Set
-from collections import Counter
 import pandas as pd
 import numpy as np
+import psutil
 
 import pyterrier as pt
 import ir_measures
-from ir_measures import nDCG, RR, R, P
+from ir_measures import nDCG, RR, R, P, AP
 
-from src.pipeline_v2.indexer.analyzer import EdgeRAGAnalyzer, LUCENE_STOPWORDS
-
-# Standard BEIR Table 2 exponential gain mapping (2^rel - 1)
+# Standard BEIR Table 2 exponential gain mapping (2^rel - 1) for supplemental comparison
 BEIR_EXP_GAINS = {1: 1, 2: 3, 3: 7, 4: 15}
 
+# Primary Benchmark Metrics (Official BEIR Linear Gains + Candidate Funnel)
+PRIMARY_MEASURES = [
+    nDCG @ 10,   # Standard linear gain (official BEIR publication parity)
+    nDCG @ 50,
+    nDCG @ 100,
+    AP @ 100,    # MAP@100
+    RR @ 10,
+    R @ 10,
+    R @ 50,
+    R @ 100,
+    R @ 200,
+    R @ 500,
+    R @ 1000,
+    P @ 10,
+    P @ 100,
+    nDCG(gains=BEIR_EXP_GAINS) @ 10,  # Supplemental exp_ndcg_10
+]
 
-def init_pyterrier(mem: int = 4096):
-    """Idempotent PyTerrier initialization with bounded JVM heap."""
+
+def init_pyterrier(mem: int = 3072):
+    """Idempotent PyTerrier initialization with bounded JVM heap and OOM protection."""
+    if sys.platform.startswith("linux"):
+        try:
+            with open(f"/proc/{os.getpid()}/oom_score_adj", "w") as f:
+                f.write("500\n")
+        except Exception:
+            pass
+
     if not pt.java.started():
         try:
             pt.java.set_memory_limit(mem)
         except Exception:
             pass
         pt.java.init()
-
-
-def get_analyzer_version_hash() -> str:
-    """Computes a SHA256 hash of EdgeRAGAnalyzer to version analyzed index directories."""
-    src = inspect.getsource(EdgeRAGAnalyzer)
-    return hashlib.sha256(src.encode("utf-8")).hexdigest()[:8]
 
 
 def sanitize_default_query(query_text: str) -> str:
@@ -61,22 +82,138 @@ def sanitize_default_query(query_text: str) -> str:
     return " ".join(tokens) if tokens else "a"
 
 
+def get_directory_size_mb(path: str) -> float:
+    """Computes total disk footprint of a directory in megabytes."""
+    if not os.path.exists(path):
+        return 0.0
+    total = 0
+    for dirpath, _, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.exists(fp):
+                total += os.path.getsize(fp)
+    return round(total / (1024.0 * 1024.0), 2)
+
+
+def create_exclusion_filter(excluded_map: Optional[Dict[str, Set[str]]] = None, max_docs: Optional[int] = None):
+    """
+    Creates a PyTerrier transformer that drops documents in excluded_map[qid],
+    slices each query to top max_docs, and recomputes contiguous 0-indexed ranks.
+    Preserves all PyTerrier metadata columns (qid, query, docno, score, docid, etc.).
+    """
+    def _filter(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return df
+        
+        if excluded_map:
+            mask = [
+                str(row["docno"]) not in excluded_map.get(str(row["qid"]), set())
+                for _, row in df.iterrows()
+            ]
+            df = df[mask]
+        
+        if max_docs is not None:
+            df = df.groupby("qid").head(max_docs)
+            
+        df = df.reset_index(drop=True)
+        df["rank"] = df.groupby("qid").cumcount()
+        return df
+
+    return pt.apply.generic(_filter)
+
+
+def calc_oracle_ndcg_10(retrieved_docs: List[str], gold_map: Dict[str, float]) -> float:
+    """
+    Computes Oracle nDCG@10 of an ideal reranking of the retrieved candidate documents,
+    normalized by the full ground-truth ideal DCG (IDCG@10) using standard linear gain:
+    DCG = sum_{i=1}^10 rel_i / log2(i + 1).
+    """
+    if not gold_map:
+        return 0.0
+        
+    retrieved_rels = [gold_map.get(str(doc_id), 0.0) for doc_id in retrieved_docs]
+    oracle_sorted_rels = sorted([r for r in retrieved_rels if r > 0], reverse=True)[:10]
+    if not oracle_sorted_rels:
+        return 0.0
+        
+    dcg_oracle = sum(r / math.log2(i + 2) for i, r in enumerate(oracle_sorted_rels))
+    
+    all_gold_rels = sorted([r for r in gold_map.values() if r > 0], reverse=True)[:10]
+    idcg = sum(r / math.log2(i + 2) for i, r in enumerate(all_gold_rels))
+    
+    if idcg <= 0.0:
+        return 0.0
+        
+    return dcg_oracle / idcg
+
+
+def benchmark_single_query_api_latency(
+    transformer: Any,
+    queries: List[Dict[str, Any]],
+    sample_size: int = 1000,
+    warmup_size: int = 30,
+    seed: int = 42,
+) -> Dict[str, float]:
+    """
+    Measures PyTerrier single-query API latency (P50, P90, P99, mean in ms).
+    Evaluates on all queries if len(queries) <= sample_size, or a seeded sample of sample_size.
+    Directly benchmarks the online API path: Python DataFrame -> JNI -> JVM -> index matching -> DataFrame.
+    """
+    if not queries:
+        return {
+            "retrieval_api_p50_ms": 0.0,
+            "retrieval_api_p90_ms": 0.0,
+            "retrieval_api_p99_ms": 0.0,
+            "retrieval_api_mean_ms": 0.0,
+        }
+
+    # Deterministic sampling
+    if len(queries) <= sample_size:
+        eval_queries = list(queries)
+    else:
+        rng = random.Random(seed)
+        eval_queries = rng.sample(queries, sample_size)
+
+    # Prepare single-query dataframes
+    single_dfs = [
+        pd.DataFrame([{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])}])
+        for q in eval_queries
+    ]
+
+    # Warmup
+    for q_df in single_dfs[: min(warmup_size, len(single_dfs))]:
+        try:
+            _ = transformer.transform(q_df)
+        except Exception:
+            pass
+
+    # Timed individual queries
+    latencies_ms = []
+    for q_df in single_dfs:
+        t0 = time.perf_counter()
+        _ = transformer.transform(q_df)
+        latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+
+    return {
+        "retrieval_api_p50_ms": round(float(np.percentile(latencies_ms, 50)), 2),
+        "retrieval_api_p90_ms": round(float(np.percentile(latencies_ms, 90)), 2),
+        "retrieval_api_p99_ms": round(float(np.percentile(latencies_ms, 99)), 2),
+        "retrieval_api_mean_ms": round(float(np.mean(latencies_ms)), 2),
+    }
+
+
 class PyTerrierIndexManager:
-    """Manages building and caching of dual disk indices: default and analyzed."""
+    """Manages building and caching of standard default Terrier disk indices."""
 
     def __init__(self, cache_dir: str = "data/cache/terrier_indices"):
         init_pyterrier()
         self.cache_dir = os.path.abspath(cache_dir)
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.analyzer = EdgeRAGAnalyzer()
-        self.analyzer_hash = get_analyzer_version_hash()
 
-    def get_index_paths(self, dataset_name: str) -> Tuple[str, str]:
-        """Returns (default_index_path, analyzed_index_path)."""
+    def get_index_path(self, dataset_name: str) -> str:
+        """Returns path to the default Terrier index."""
         safe_name = dataset_name.lower().replace("-", "_")
-        default_path = os.path.abspath(os.path.join(self.cache_dir, f"{safe_name}_default"))
-        analyzed_path = os.path.abspath(os.path.join(self.cache_dir, f"{safe_name}_analyzed_{self.analyzer_hash}"))
-        return default_path, analyzed_path
+        return os.path.abspath(os.path.join(self.cache_dir, f"{safe_name}_default"))
 
     def build_or_load_indices(
         self,
@@ -85,40 +222,26 @@ class PyTerrierIndexManager:
         overwrite: bool = False,
     ) -> Dict[str, Any]:
         """
-        Builds or loads dual disk indices with MetaIndex enabled.
-        Supports both in-memory doc lists and streaming disk generators.
-        
-        Args:
-            dataset_name: Name of the benchmark dataset.
-            corpus_docs: Optional list or generator of doc dicts with keys 'doc_id' and 'text'.
-                         If None, streams directly from disk via BenchmarkLoader.stream_corpus().
-            overwrite: Whether to force re-indexing.
-            
-        Returns:
-            Dict containing 'index_default', 'index_analyzed', and 'timing'.
+        Builds or loads standard default disk index with MetaIndex enabled.
+        Supports streaming disk generators with zero raw-corpus RAM retention.
         """
-        default_path, analyzed_path = self.get_index_paths(dataset_name)
+        default_path = self.get_index_path(dataset_name)
         timing = {
-            "default_index_time_s": 0.0,
-            "analyzed_pretokenize_time_s": 0.0,
-            "analyzed_index_time_s": 0.0,
-            "analyzed_total_tti_s": 0.0,
+            "default_build_time_s": 0.0,
+            "default_load_time_s": 0.0,
         }
 
         need_default = overwrite or not os.path.exists(os.path.join(default_path, "data.properties"))
-        need_analyzed = overwrite or not os.path.exists(os.path.join(analyzed_path, "data.properties"))
 
-        # Fast path: if both indices exist on disk, bypass corpus reading completely
-        if not need_default and not need_analyzed:
+        if not need_default:
             print(f"[PyTerrier] Loading cached default index -> {default_path}")
+            t_ld = time.perf_counter()
             index_default = pt.IndexFactory.of(default_path)
-            print(f"[PyTerrier] Loading cached analyzed index -> {analyzed_path}")
-            index_analyzed = pt.IndexFactory.of(analyzed_path)
+            timing["default_load_time_s"] = round(time.perf_counter() - t_ld, 2)
             return {
                 "index_default": index_default,
-                "index_analyzed": index_analyzed,
                 "default_path": default_path,
-                "analyzed_path": analyzed_path,
+                "default_disk_mb": get_directory_size_mb(default_path),
                 "timing": timing,
             }
 
@@ -135,380 +258,150 @@ class PyTerrierIndexManager:
                 for did, text in BenchmarkLoader.stream_corpus(dataset_name):
                     yield str(did), text
 
-        # 1. Build or Load Default Index
-        if need_default:
-            print(f"[PyTerrier] Indexing default corpus via stream -> {default_path}")
-            os.makedirs(default_path, exist_ok=True)
-            t0 = time.perf_counter()
-            indexer = pt.IterDictIndexer(
-                default_path,
-                overwrite=True,
-                meta={"docno": 512, "text": 4096},
-            )
-            indexer.setProperty("max.term.length", "512")
-            indexer.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
+        print(f"[PyTerrier] Indexing default corpus via stream -> {default_path}")
+        os.makedirs(default_path, exist_ok=True)
+        t0 = time.perf_counter()
+        indexer = pt.IterDictIndexer(
+            default_path,
+            overwrite=True,
+            meta={"docno": 512, "text": 4096},
+        )
+        indexer.setProperty("max.term.length", "512")
+        indexer.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
 
-            def default_iter():
-                for did, text in _get_raw_stream():
-                    yield {"docno": did, "text": text}
+        def default_iter():
+            for did, text in _get_raw_stream():
+                yield {"docno": did, "text": text}
 
-            ref_default = indexer.index(default_iter())
-            timing["default_index_time_s"] = time.perf_counter() - t0
-            index_default = pt.IndexFactory.of(ref_default)
-        else:
-            print(f"[PyTerrier] Loading cached default index -> {default_path}")
-            index_default = pt.IndexFactory.of(default_path)
-
-        # 2. Build or Load Analyzed Index
-        if need_analyzed:
-            print(f"[PyTerrier] Pre-tokenizing & indexing analyzed corpus via stream with WhitespaceTokeniser -> {analyzed_path}")
-            os.makedirs(analyzed_path, exist_ok=True)
-            t_idx0 = time.perf_counter()
-
-            indexer_analyzed = pt.IterDictIndexer(
-                analyzed_path,
-                overwrite=True,
-                stemmer=None,
-                stopwords=None,
-                tokeniser="WhitespaceTokeniser",
-                meta={"docno": 512, "text": 4096},
-            )
-            indexer_analyzed.setProperty("termpipelines", "")
-            indexer_analyzed.setProperty("max.term.length", "512")
-            indexer_analyzed.setProperty("indexing.max.memory", "1073741824")  # 1 GiB flush threshold
-
-            def analyzed_iter():
-                for did, text in _get_raw_stream():
-                    raw_tokens = self.analyzer.analyze(text)
-                    tokens = [t[:200] for t in raw_tokens if len(t) <= 200]
-                    yield {"docno": did, "text": " ".join(tokens)}
-
-            ref_analyzed = indexer_analyzed.index(analyzed_iter())
-            timing["analyzed_index_time_s"] = time.perf_counter() - t_idx0
-            timing["analyzed_total_tti_s"] = timing["analyzed_index_time_s"]
-            index_analyzed = pt.IndexFactory.of(ref_analyzed)
-        else:
-            print(f"[PyTerrier] Loading cached analyzed index -> {analyzed_path}")
-            index_analyzed = pt.IndexFactory.of(analyzed_path)
+        ref_default = indexer.index(default_iter())
+        timing["default_build_time_s"] = round(time.perf_counter() - t0, 2)
+        index_default = pt.IndexFactory.of(ref_default)
 
         return {
             "index_default": index_default,
-            "index_analyzed": index_analyzed,
             "default_path": default_path,
-            "analyzed_path": analyzed_path,
+            "default_disk_mb": get_directory_size_mb(default_path),
             "timing": timing,
         }
 
 
-class UnifiedRM3Retriever:
-    """
-    Unified Dirichlet-Smoothed Relevance Model 3 (RM3) PRF Retriever.
-    Runs identically across both default and analyzed indexes for un-confounded comparison.
-    Memory scales at O(K) per query by reading feedback texts from disk on-demand.
-    """
-
-    def __init__(
-        self,
-        index: Any,
-        is_analyzed: bool = False,
-        fb_docs: int = 10,
-        fb_terms: int = 10,
-        fb_lambda: float = 0.5,
-        mu: float = 1000.0,
-    ):
-        self.index = index
-        self.is_analyzed = is_analyzed
-        self.fb_docs = fb_docs
-        self.fb_terms = fb_terms
-        self.fb_lambda = fb_lambda
-        self.mu = mu
-
-        self.lexicon = index.getLexicon()
-        self.coll_stats = index.getCollectionStatistics()
-        self.total_tokens = max(1, self.coll_stats.getNumberOfTokens())
-        self.meta = index.getMetaIndex()
-        self.analyzer = EdgeRAGAnalyzer() if is_analyzed else None
-
-        # Base retriever
-        if is_analyzed:
-            self.base_retriever = pt.terrier.Retriever(
-                self.index,
-                wmodel="BM25",
-                controls={"matchopql": "on"},
-                properties={"termpipelines": ""},
-            )
-        else:
-            self.base_retriever = pt.terrier.Retriever(
-                self.index,
-                wmodel="BM25",
-            )
-
-    def _tokenize_text(self, text: str) -> List[str]:
-        """Extracts candidate tokens from a feedback document text."""
-        if self.is_analyzed:
-            # Document text was pre-tokenized and joined by spaces
-            return text.split()
-        else:
-            # Default text: lowercase alphanumeric words
-            raw = [w.strip() for w in text.lower().split() if w.strip()]
-            cleaned = []
-            for w in raw:
-                # Basic token filter matching standard IR feedback
-                clean_w = "".join(c for c in w if c.isalnum())
-                if len(clean_w) >= 2 and clean_w not in LUCENE_STOPWORDS:
-                    cleaned.append(clean_w)
-            return cleaned
-
-    def _encode_query(self, query_text: str) -> str:
-        """Encodes query for first-pass retrieval."""
-        if self.is_analyzed:
-            tokens = self.analyzer.analyze(query_text)
-            if not tokens:
-                tokens = [w for w in query_text.lower().split() if w.strip()]
-            return " ".join([pt.terrier.Retriever.matchop(t) for t in tokens if t.strip()])
-        return sanitize_default_query(query_text)
-
-    def search_queries(self, queries: List[Dict[str, Any]], num_results: Optional[int] = 1000) -> pd.DataFrame:
-        """
-        Executes 2-pass Unified RM3 PRF across the given queries.
-        
-        Args:
-            queries: List of dicts with 'query_id' and 'question'.
-            num_results: Final number of ranked documents per query (default: 1000).
-            
-        Returns:
-            DataFrame with ['qid', 'docno', 'score', 'rank'].
-        """
-        # 1. Format First-Pass Queries
-        encoded_queries = []
-        orig_tokens_map = {}
-        for q in queries:
-            qid = str(q["query_id"])
-            q_text = q["question"]
-            encoded_q = self._encode_query(q_text)
-            encoded_queries.append({"qid": qid, "query": encoded_q})
-            
-            if self.is_analyzed:
-                t_list = self.analyzer.analyze(q_text)
-                orig_tokens_map[qid] = t_list if t_list else [w.strip() for w in q_text.lower().split() if w.strip()]
-            else:
-                clean_q = sanitize_default_query(q_text)
-                orig_tokens_map[qid] = [w.strip() for w in clean_q.lower().split() if w.strip()]
-
-        df_queries = pd.DataFrame(encoded_queries)
-
-        # 2. First Pass BM25 Retrieval (fetching top fb_docs per query)
-        first_pass_res = self.base_retriever.transform(df_queries)
-
-        # 3. Compute RM3 Expanded Queries
-        second_pass_queries = []
-        grouped = first_pass_res.groupby("qid")
-
-        for qid, q_row in df_queries.set_index("qid").iterrows():
-            orig_tokens = orig_tokens_map.get(qid, [])
-            if qid not in grouped.groups:
-                # No hits in first pass, retain original query
-                second_pass_queries.append({"qid": qid, "query": q_row["query"]})
-                continue
-
-            q_hits = grouped.get_group(qid).head(self.fb_docs)
-            if len(q_hits) == 0:
-                second_pass_queries.append({"qid": qid, "query": q_row["query"]})
-                continue
-
-            # Calculate Document Probabilities P(d|Q)
-            raw_scores = q_hits["score"].values
-            # Non-negative score clipping and normalization
-            pos_scores = np.maximum(0.0, raw_scores)
-            sum_scores = np.sum(pos_scores)
-            if sum_scores > 0:
-                p_d = pos_scores / sum_scores
-            else:
-                p_d = np.ones(len(q_hits)) / len(q_hits)
-
-            # Extract feedback doc tokens from disk on-demand (O(K) memory)
-            feedback_docs_tokens = []
-            for docid in q_hits["docid"].values:
-                doc_text = self.meta.getItem("text", int(docid))
-                doc_tokens = self._tokenize_text(doc_text) if doc_text else []
-                feedback_docs_tokens.append(doc_tokens)
-
-            # Compute Dirichlet smoothed Language Model P(w|d) and RM1
-            candidate_vocab = set()
-            doc_token_counts = []
-            for doc_tokens in feedback_docs_tokens:
-                c = Counter(doc_tokens)
-                doc_token_counts.append(c)
-                candidate_vocab.update(c.keys())
-
-            if not candidate_vocab:
-                second_pass_queries.append({"qid": qid, "query": q_row["query"]})
-                continue
-
-            # Accumulate P(w|R) across feedback documents
-            rm1_scores = {}
-            for w in candidate_vocab:
-                lex_entry = self.lexicon.getLexiconEntry(w)
-                cf = lex_entry.getFrequency() if lex_entry else 1
-                bg_prob = cf / self.total_tokens
-
-                p_w_R = 0.0
-                for d_idx, doc_tokens in enumerate(feedback_docs_tokens):
-                    doc_len = len(doc_tokens)
-                    tf = doc_token_counts[d_idx].get(w, 0)
-                    p_w_d = (tf + self.mu * bg_prob) / (doc_len + self.mu)
-                    p_w_R += p_w_d * p_d[d_idx]
-
-                rm1_scores[w] = p_w_R
-
-            # Select Top fb_terms
-            # Filter out terms that are stopwords
-            sorted_terms = sorted(
-                [(w, s) for w, s in rm1_scores.items() if w not in LUCENE_STOPWORDS],
-                key=lambda x: x[1],
-                reverse=True,
-            )[:self.fb_terms]
-
-            if not sorted_terms:
-                second_pass_queries.append({"qid": qid, "query": q_row["query"]})
-                continue
-
-            # Normalize RM1 feedback term weights to sum to 1.0
-            sum_rm1 = sum(s for _, s in sorted_terms)
-            norm_rm1 = {w: (s / sum_rm1) for w, s in sorted_terms}
-
-            # Combine with original query terms (RM3 Interpolation)
-            # Original term base weight = (1 - lambda) / |Q|
-            q_term_weight = (1.0 - self.fb_lambda) / max(1, len(orig_tokens))
-            combined_weights = {}
-            for t in orig_tokens:
-                combined_weights[t] = combined_weights.get(t, 0.0) + q_term_weight
-
-            for w, s in norm_rm1.items():
-                combined_weights[w] = combined_weights.get(w, 0.0) + (self.fb_lambda * s)
-
-            # Format 2nd-pass query string
-            if self.is_analyzed:
-                # Format MatchOpQL with weights
-                parts = [
-                    pt.terrier.Retriever.matchop(term, w=round(float(weight), 6))
-                    for term, weight in combined_weights.items()
-                    if term.strip()
-                ]
-                q2_str = " ".join(parts)
-            else:
-                # Default index: matchop or term^weight
-                parts = [
-                    pt.terrier.Retriever.matchop(term, w=round(float(weight), 6))
-                    for term, weight in combined_weights.items()
-                    if term.strip()
-                ]
-                q2_str = " ".join(parts)
-
-            second_pass_queries.append({"qid": qid, "query": q2_str})
-
-        # 4. Second Pass BM25 Retrieval
-        df_q2 = pd.DataFrame(second_pass_queries)
-        res_pass2 = self.base_retriever.transform(df_q2)
-
-        # Truncate to num_results per query
-        if num_results:
-            res_pass2 = res_pass2.groupby("qid").head(num_results).reset_index(drop=True)
-            res_pass2["rank"] = res_pass2.groupby("qid").cumcount()
-
-        return res_pass2
-
-
 class PyTerrierBaselineHarness:
     """
-    Orchestrates the Phase 1 Baseline Evaluation Suite across all 5 configurations:
-    1. BM25_Default
-    2. BM25_Analyzed
-    3. BM25_RM3_Terrier_Default
-    4. BM25_RM3_Unified_Default
-    5. BM25_RM3_Unified_Analyzed
+    Orchestrates the 4 Standard Terrier Default Baselines:
+      1. BM25_Default
+      2. BM25_RM3_Terrier_Default
+      3. BM25_Bo1_Terrier_Default
+      4. DPH
     """
 
     def __init__(self, index_dict: Optional[Dict[str, Any]] = None):
         index_dict = index_dict or {}
         self.index_default = index_dict.get("index_default")
-        self.index_analyzed = index_dict.get("index_analyzed")
         self.timing = index_dict.get("timing", {})
-        self.analyzer = EdgeRAGAnalyzer()
-
-        # Build Base Retrievers if indices provided
-        if self.index_default is not None:
-            self.bm25_default = pt.terrier.Retriever(self.index_default, wmodel="BM25")
-            self.bm25_rm3_native = (
-                self.bm25_default
-                >> pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
-                >> self.bm25_default
-            )
-            self.unified_rm3_default = UnifiedRM3Retriever(
-                self.index_default,
-                is_analyzed=False,
-                fb_docs=10,
-                fb_terms=10,
-                fb_lambda=0.5,
-                mu=1000.0,
-            )
-        else:
-            self.bm25_default = None
-            self.bm25_rm3_native = None
-            self.unified_rm3_default = None
-
-        if self.index_analyzed is not None:
-            self.bm25_analyzed = pt.terrier.Retriever(
-                self.index_analyzed,
-                wmodel="BM25",
-                controls={"matchopql": "on"},
-                properties={"termpipelines": ""},
-            )
-            self.unified_rm3_analyzed = UnifiedRM3Retriever(
-                self.index_analyzed,
-                is_analyzed=True,
-                fb_docs=10,
-                fb_terms=10,
-                fb_lambda=0.5,
-                mu=1000.0,
-            )
-        else:
-            self.bm25_analyzed = None
-            self.unified_rm3_analyzed = None
+        self.default_disk_mb = index_dict.get("default_disk_mb", 0.0)
 
     def warmup(self, num_queries: int = 10):
         """Warm up JVM JIT compiler with dummy queries before measurement."""
-        dummy_q = [{"qid": f"warmup_{i}", "question": "retrieval search machine learning algorithm"} for i in range(num_queries)]
-        df_dummy = pd.DataFrame([{"qid": q["qid"], "query": q["question"]} for q in dummy_q])
+        if self.index_default is None:
+            return
+        dummy_q = [{"qid": f"warmup_{i}", "query": "retrieval search machine learning algorithm"} for i in range(num_queries)]
+        df_dummy = pd.DataFrame(dummy_q)
         try:
-            self.bm25_default.transform(df_dummy)
-            self.unified_rm3_analyzed.search_queries(dummy_q[:2], num_results=10)
+            bm25 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=10)
+            _ = bm25.transform(df_dummy)
         except Exception:
             pass
 
-    def _chunk_transform(self, transformer: Any, df_q: pd.DataFrame, chunk_size: int = 200) -> pd.DataFrame:
-        """Executes transformer.transform in bounded query chunks to cap memory footprint."""
-        if len(df_q) <= chunk_size:
-            return transformer.transform(df_q)
-        
-        chunks = [df_q.iloc[i : i + chunk_size] for i in range(0, len(df_q), chunk_size)]
-        res_list = []
-        for c in chunks:
-            res_c = transformer.transform(c)
-            res_list.append(res_c)
-        return pd.concat(res_list, ignore_index=True)
+    def build_pipeline(self, pipeline_name: str, excluded_map: Optional[Dict[str, Set[str]]] = None) -> Any:
+        """
+        Builds the specified retrieval pipeline enforcing strict BRIGHT pre/post exclusion filtering.
+        """
+        max_ex = max([len(s) for s in excluded_map.values()] or [0]) if excluded_map else 0
 
-    def _chunk_search(self, retriever_obj: UnifiedRM3Retriever, queries: List[Dict[str, Any]], chunk_size: int = 200, num_results: int = 1000) -> pd.DataFrame:
-        """Executes UnifiedRM3 in bounded query chunks to cap memory footprint."""
-        if len(queries) <= chunk_size:
-            return retriever_obj.search_queries(queries, num_results=num_results)
-        
-        res_list = []
-        for i in range(0, len(queries), chunk_size):
-            chunk = queries[i : i + chunk_size]
-            res_c = retriever_obj.search_queries(chunk, num_results=num_results)
-            res_list.append(res_c)
-        return pd.concat(res_list, ignore_index=True)
+        if pipeline_name == "BM25_Default":
+            if excluded_map:
+                retriever = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=min(1000 + max_ex, 3000))
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retriever >> filter_post
+            return pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=1000)
+
+        elif pipeline_name == "DPH":
+            if excluded_map:
+                retriever = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=min(1000 + max_ex, 3000))
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retriever >> filter_post
+            return pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=1000)
+
+        elif pipeline_name == "BM25_RM3_Terrier_Default":
+            if excluded_map:
+                # First pass: request K1 = min(max(100, fb_docs + max_ex), 300), filter excluded, slice to fb_docs=10
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=min(max(100, 10 + max_ex), 300))
+                filter1 = create_exclusion_filter(excluded_map, max_docs=10)
+                rm3 = pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
+                # Second pass: request K2 = min(1000 + max_ex, 3000), filter excluded, slice to 1000
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=min(1000 + max_ex, 3000))
+                filter2 = create_exclusion_filter(excluded_map, max_docs=1000)
+                return pass1 >> filter1 >> rm3 >> pass2 >> filter2
+            else:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=10)
+                rm3 = pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=1000)
+                return pass1 >> rm3 >> pass2
+
+        elif pipeline_name == "BM25_Bo1_Terrier_Default":
+            if excluded_map:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=min(max(100, 10 + max_ex), 300))
+                filter1 = create_exclusion_filter(excluded_map, max_docs=10)
+                bo1 = pt.rewrite.Bo1QueryExpansion(self.index_default, fb_terms=10, fb_docs=10)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=min(1000 + max_ex, 3000))
+                filter2 = create_exclusion_filter(excluded_map, max_docs=1000)
+                return pass1 >> filter1 >> bo1 >> pass2 >> filter2
+            else:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=10)
+                bo1 = pt.rewrite.Bo1QueryExpansion(self.index_default, fb_terms=10, fb_docs=10)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=1000)
+                return pass1 >> bo1 >> pass2
+
+        elif pipeline_name == "DPH_Bo1_Terrier_Default":
+            if excluded_map:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=min(max(100, 10 + max_ex), 300))
+                filter1 = create_exclusion_filter(excluded_map, max_docs=10)
+                bo1 = pt.rewrite.Bo1QueryExpansion(self.index_default, fb_terms=10, fb_docs=10)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=min(1000 + max_ex, 3000))
+                filter2 = create_exclusion_filter(excluded_map, max_docs=1000)
+                return pass1 >> filter1 >> bo1 >> pass2 >> filter2
+            else:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=10)
+                bo1 = pt.rewrite.Bo1QueryExpansion(self.index_default, fb_terms=10, fb_docs=10)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=1000)
+                return pass1 >> bo1 >> pass2
+
+        elif pipeline_name == "DPH_RM3_Terrier_Default":
+            if excluded_map:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=min(max(100, 10 + max_ex), 300))
+                filter1 = create_exclusion_filter(excluded_map, max_docs=10)
+                rm3 = pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=min(1000 + max_ex, 3000))
+                filter2 = create_exclusion_filter(excluded_map, max_docs=1000)
+                return pass1 >> filter1 >> rm3 >> pass2 >> filter2
+            else:
+                pass1 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=10)
+                rm3 = pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
+                pass2 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=1000)
+                return pass1 >> rm3 >> pass2
+
+        elif hasattr(self, "pipelines") and pipeline_name in self.pipelines:
+            base = self.pipelines[pipeline_name]
+            if excluded_map:
+                filter_tf = create_exclusion_filter(excluded_map, max_docs=1000)
+                class _FilteredWrapper:
+                    def transform(self, df):
+                        return filter_tf.transform(base.transform(df))
+                return _FilteredWrapper()
+            return base
+
+        else:
+            raise ValueError(f"Unknown pipeline: {pipeline_name}")
 
     def evaluate_pipeline(
         self,
@@ -517,102 +410,94 @@ class PyTerrierBaselineHarness:
         qrels_ir: List[ir_measures.Qrel],
         gold_map: Dict[str, Dict[str, float]],
         chunk_size: int = 200,
+        save_runs_dir: Optional[str] = None,
+        dataset_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Runs retrieval and computes IR measures and latency in bounded query chunks.
-        Never materializes millions of candidate records in memory simultaneously.
+        Runs retrieval and computes standard IR measures, candidate-funnel diagnostics,
+        and latency in bounded query chunks.
         """
         t0 = time.perf_counter()
 
-        # 1. Standard IR Measures (with pinned BEIR exponential gains)
-        measures = [
-            nDCG(gains=BEIR_EXP_GAINS) @ 10,
-            nDCG(gains=BEIR_EXP_GAINS) @ 50,
-            RR @ 10,
-            R @ 10,
-            R @ 50,
-            P @ 10,
+        # 1. Query formatting & exclusion extraction
+        excluded_map = {str(q["query_id"]): set(q.get("excluded_doc_ids", [])) for q in queries if q.get("excluded_doc_ids")}
+        formatted_queries = [
+            {"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])}
+            for q in queries
         ]
 
-        # 2. Configure Pipeline Dispatch
-        if pipeline_name == "BM25_Default":
-            transformer = self.bm25_default
-            is_transformer = True
-            formatted_queries = [{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])} for q in queries]
-        elif pipeline_name == "BM25_Analyzed":
-            transformer = self.bm25_analyzed
-            is_transformer = True
-            encoded = []
-            for q in queries:
-                tokens = self.analyzer.analyze(q["question"])
-                if not tokens:
-                    tokens = [w for w in q["question"].lower().split() if w.strip()]
-                q_enc = " ".join([pt.terrier.Retriever.matchop(t) for t in tokens if t.strip()])
-                encoded.append({"qid": str(q["query_id"]), "query": q_enc})
-            formatted_queries = encoded
-        elif pipeline_name == "BM25_RM3_Terrier_Default":
-            transformer = self.bm25_rm3_native
-            is_transformer = True
-            formatted_queries = [{"qid": str(q["query_id"]), "query": sanitize_default_query(q["question"])} for q in queries]
-        elif pipeline_name == "BM25_RM3_Unified_Default":
-            retriever_obj = self.unified_rm3_default
-            is_transformer = False
-        elif pipeline_name == "BM25_RM3_Unified_Analyzed":
-            retriever_obj = self.unified_rm3_analyzed
-            is_transformer = False
-        elif hasattr(self, "pipelines") and pipeline_name in self.pipelines:
-            transformer = self.pipelines[pipeline_name]
-            is_transformer = True
-            formatted_queries = [{"qid": str(q["query_id"]), "query": q.get("question", "")} for q in queries]
-        else:
-            raise ValueError(f"Unknown pipeline: {pipeline_name}")
+        # 2. Build Pipeline
+        transformer = self.build_pipeline(pipeline_name, excluded_map=excluded_map)
 
         # 3. Stream & Accumulate Metrics in Bounded Query Chunks
         total_queries = len(queries)
-        metric_sums = {m: 0.0 for m in measures}
+        metric_sums = {m: 0.0 for m in PRIMARY_MEASURES}
         strict_10_hits = 0
         strict_50_hits = 0
+        strict_100_hits = 0
+        strict_1000_hits = 0
+        completeness_100_hits = 0
+        completeness_500_hits = 0
+        completeness_1000_hits = 0
+        oracle_ndcg_sum = 0.0
+        total_retrieval_time_s = 0.0
 
-        # Pre-group qrels by qid for fast chunk filtering
+        # Pre-group qrels by qid for fast chunk lookup
         qrels_by_qid: Dict[str, List[ir_measures.Qrel]] = {}
         for qrel in qrels_ir:
             qrels_by_qid.setdefault(str(qrel.query_id), []).append(qrel)
 
+        persisted_chunks = []
+
         for i in range(0, total_queries, chunk_size):
             chunk_queries = queries[i : i + chunk_size]
+            chunk_df_q = pd.DataFrame(formatted_queries[i : i + chunk_size])
 
-            # Retrieve chunk results
-            if is_transformer:
-                chunk_df_q = pd.DataFrame(formatted_queries[i : i + chunk_size])
-                res_c = transformer.transform(chunk_df_q)
-            else:
-                res_c = retriever_obj.search_queries(chunk_queries, num_results=1000)
+            t_ret_c0 = time.perf_counter()
+            res_c = transformer.transform(chunk_df_q)
+            total_retrieval_time_s += (time.perf_counter() - t_ret_c0)
 
-            # Check for excluded document IDs (e.g. BRIGHT protocol)
-            excluded_map = {str(q["query_id"]): set(q.get("excluded_doc_ids", [])) for q in chunk_queries if q.get("excluded_doc_ids")}
-
-            # Build chunk ScoredDoc list & check strict hits
+            # Build chunk ScoredDoc list & retrieved candidate map
             chunk_run_ir = []
             chunk_retrieved_by_qid: Dict[str, List[str]] = {}
             for _, row in res_c.iterrows():
                 qid = str(row["qid"])
                 docno = str(row["docno"])
+                # Defensive check against exclusions
                 if qid in excluded_map and docno in excluded_map[qid]:
                     continue
                 score = float(row["score"])
                 chunk_run_ir.append(ir_measures.ScoredDoc(qid, docno, score))
                 chunk_retrieved_by_qid.setdefault(qid, []).append(docno)
 
-            # Check Strict@10 and Strict@50 for queries in this chunk
+            # Compute custom candidate-funnel metrics for queries in this chunk
             for q in chunk_queries:
                 qid = str(q["query_id"])
                 ret_list = chunk_retrieved_by_qid.get(qid, [])
                 golds = gold_map.get(qid, {})
                 gold_set = {did for did, s in golds.items() if s > 0}
+
+                # Strict@K hits
                 if any(doc in gold_set for doc in ret_list[:10]):
                     strict_10_hits += 1
                 if any(doc in gold_set for doc in ret_list[:50]):
                     strict_50_hits += 1
+                if any(doc in gold_set for doc in ret_list[:100]):
+                    strict_100_hits += 1
+                if any(doc in gold_set for doc in ret_list[:1000]):
+                    strict_1000_hits += 1
+
+                # Completeness@K hits (100% of gold docs in top K)
+                if gold_set:
+                    if gold_set.issubset(set(ret_list[:100])):
+                        completeness_100_hits += 1
+                    if gold_set.issubset(set(ret_list[:500])):
+                        completeness_500_hits += 1
+                    if gold_set.issubset(set(ret_list[:1000])):
+                        completeness_1000_hits += 1
+
+                # Oracle-nDCG@10 (linear gain against full-qrel IDCG)
+                oracle_ndcg_sum += calc_oracle_ndcg_10(ret_list[:1000], golds)
 
             # Build chunk qrels
             chunk_qrels = []
@@ -620,39 +505,94 @@ class PyTerrierBaselineHarness:
                 qid = str(q["query_id"])
                 chunk_qrels.extend(qrels_by_qid.get(qid, []))
 
-            # Compute chunk IR metrics via iter_calc (exact additive per-query computation)
+            # Compute chunk IR metrics via iter_calc
             if chunk_run_ir and chunk_qrels:
-                for mv in ir_measures.iter_calc(measures, chunk_qrels, chunk_run_ir):
+                for mv in ir_measures.iter_calc(PRIMARY_MEASURES, chunk_qrels, chunk_run_ir):
                     metric_sums[mv.measure] += float(mv.value)
 
-            # Immediately release chunk memory
+            if save_runs_dir and dataset_name:
+                persisted_chunks.append(res_c[["qid", "docno", "score", "rank"]].copy())
+
+            # Release chunk memory
             del res_c, chunk_run_ir, chunk_retrieved_by_qid, chunk_qrels
 
             if total_queries > 500 and (min(i + chunk_size, total_queries) % 1000 < chunk_size or (i + chunk_size) >= total_queries):
                 print(f"  [{pipeline_name}] Progress: {min(i + chunk_size, total_queries)}/{total_queries} queries evaluated...", flush=True)
 
-        total_latency_s = time.perf_counter() - t0
-        avg_latency_ms = (total_latency_s / max(1, total_queries)) * 1000.0
+        # Optional: persist candidate run as compressed Parquet
+        if save_runs_dir and dataset_name and persisted_chunks:
+            os.makedirs(save_runs_dir, exist_ok=True)
+            run_df = pd.concat(persisted_chunks, ignore_index=True)
+            safe_ds = dataset_name.lower().replace("-", "_")
+            parquet_path = os.path.join(save_runs_dir, f"{safe_ds}_{pipeline_name}.parquet")
+            run_df.to_parquet(parquet_path, compression="snappy", index=False)
+            print(f"  [{pipeline_name}] Persisted candidate run -> {parquet_path}", flush=True)
+            del run_df, persisted_chunks
 
+        # 4. Benchmark PyTerrier Single-Query API Latency
+        latency_metrics = benchmark_single_query_api_latency(
+            transformer,
+            queries,
+            sample_size=1000,
+            warmup_size=30,
+            seed=42,
+        )
+
+        total_wall_time_s = time.perf_counter() - t0
         total_q = max(1, total_queries)
-        strict_at_10 = strict_10_hits / total_q
-        strict_at_50 = strict_50_hits / total_q
+        harness_per_query_ms = round((total_wall_time_s / total_q) * 1000.0, 2)
+        batch_throughput_qps = round(total_queries / max(0.001, total_retrieval_time_s), 2)
+        host_ram_mb = round(psutil.Process().memory_info().rss / (1024.0 * 1024.0), 2)
 
         return {
             "pipeline": pipeline_name,
-            "ndcg_10": metric_sums[measures[0]] / total_q,
-            "ndcg_50": metric_sums[measures[1]] / total_q,
-            "mrr_10": metric_sums[measures[2]] / total_q,
-            "recall_10": metric_sums[measures[3]] / total_q,
-            "recall_50": metric_sums[measures[4]] / total_q,
-            "p_10": metric_sums[measures[5]] / total_q,
-            "strict_10": strict_at_10,
-            "strict_50": strict_at_50,
-            "avg_latency_ms": avg_latency_ms,
+            # Primary quality (linear gains)
+            "ndcg_10": round(metric_sums[PRIMARY_MEASURES[0]] / total_q, 4),
+            "ndcg_50": round(metric_sums[PRIMARY_MEASURES[1]] / total_q, 4),
+            "exp_ndcg_10": round(metric_sums[PRIMARY_MEASURES[13]] / total_q, 4),
+            "ndcg_100": round(metric_sums[PRIMARY_MEASURES[2]] / total_q, 4),
+            "map_100": round(metric_sums[PRIMARY_MEASURES[3]] / total_q, 4),
+            "mrr_10": round(metric_sums[PRIMARY_MEASURES[4]] / total_q, 4),
+            "p_10": round(metric_sums[PRIMARY_MEASURES[11]] / total_q, 4),
+            "p_100": round(metric_sums[PRIMARY_MEASURES[12]] / total_q, 4),
+            "strict_10": round(strict_10_hits / total_q, 4),
+            "strict_50": round(strict_50_hits / total_q, 4),
+            # Candidate funnel
+            "recall_10": round(metric_sums[PRIMARY_MEASURES[5]] / total_q, 4),
+            "recall_50": round(metric_sums[PRIMARY_MEASURES[6]] / total_q, 4),
+            "recall_100": round(metric_sums[PRIMARY_MEASURES[7]] / total_q, 4),
+            "recall_200": round(metric_sums[PRIMARY_MEASURES[8]] / total_q, 4),
+            "recall_500": round(metric_sums[PRIMARY_MEASURES[9]] / total_q, 4),
+            "recall_1000": round(metric_sums[PRIMARY_MEASURES[10]] / total_q, 4),
+            "completeness_100": round(completeness_100_hits / total_q, 4),
+            "completeness_500": round(completeness_500_hits / total_q, 4),
+            "completeness_1000": round(completeness_1000_hits / total_q, 4),
+            "strict_100": round(strict_100_hits / total_q, 4),
+            "strict_1000": round(strict_1000_hits / total_q, 4),
+            "oracle_ndcg_10": round(oracle_ndcg_sum / total_q, 4),
+            # Latency & Throughput
+            "retrieval_api_p50_ms": latency_metrics["retrieval_api_p50_ms"],
+            "retrieval_api_p90_ms": latency_metrics["retrieval_api_p90_ms"],
+            "retrieval_api_p99_ms": latency_metrics["retrieval_api_p99_ms"],
+            "retrieval_api_mean_ms": latency_metrics["retrieval_api_mean_ms"],
+            "batch_throughput_qps": batch_throughput_qps,
+            "harness_per_query_ms": harness_per_query_ms,
+            # Resources
+            "index_disk_mb": self.default_disk_mb,
+            "host_ram_peak_mb": host_ram_mb,
+            "index_build_s": round(self.timing.get("default_build_time_s", 0.0), 2),
+            "cache_load_s": round(self.timing.get("default_load_time_s", 0.0), 2),
         }
 
-    def run_all(self, queries: List[Dict[str, Any]], chunk_size: int = 200) -> pd.DataFrame:
-        """Runs and evaluates all 5 baselines across the query set."""
+    def run_all(
+        self,
+        queries: List[Dict[str, Any]],
+        chunk_size: int = 200,
+        save_runs_dir: Optional[str] = None,
+        dataset_name: Optional[str] = None,
+        pipelines: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """Runs and evaluates the specified baselines across the query set."""
         # Convert queries and gold qrels to ir_measures Qrel list
         qrels_ir = []
         gold_map = {}
@@ -666,18 +606,28 @@ class PyTerrierBaselineHarness:
         # Warm up
         self.warmup(num_queries=10)
 
-        pipelines = [
-            "BM25_Default",
-            "BM25_Analyzed",
-            "BM25_RM3_Terrier_Default",
-            "BM25_RM3_Unified_Default",
-            "BM25_RM3_Unified_Analyzed",
-        ]
+        if pipelines is None:
+            pipelines = [
+                "BM25_Default",
+                "BM25_RM3_Terrier_Default",
+                "BM25_Bo1_Terrier_Default",
+                "DPH",
+            ]
 
         results = []
         for p in pipelines:
-            print(f"[PyTerrier] Evaluating {p}...")
-            res_dict = self.evaluate_pipeline(p, queries, qrels_ir, gold_map, chunk_size=chunk_size)
+            print(f"[PyTerrier] Evaluating {p}...", flush=True)
+            res_dict = self.evaluate_pipeline(
+                p,
+                queries,
+                qrels_ir,
+                gold_map,
+                chunk_size=chunk_size,
+                save_runs_dir=save_runs_dir,
+                dataset_name=dataset_name,
+            )
             results.append(res_dict)
+            import gc
+            gc.collect()
 
         return pd.DataFrame(results)

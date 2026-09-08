@@ -400,7 +400,7 @@ Edge-RAG stores benchmarks under `data/benchmarks/`. There are two primary schem
 ## 7.1 Active Evaluation Suites
 
 ### Track A: Active Core 10-Benchmark Evaluation Suite (337,425 Docs, 5,362 Queries)
-The primary benchmark suite for automated ablation sweeps and side-by-side model comparison (`scripts/run_v7_vs_baselines_comparison.py`, `scripts/profile_v7_10_benchmarks.py`), ingested directly via [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py):
+The primary benchmark suite for automated ablation sweeps and side-by-side model comparison (`scripts/legacy/v7_legacy/run_v7_vs_baselines_comparison.py`, `scripts/legacy/v7_legacy/profile_v7_10_benchmarks.py`), ingested directly via [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py):
 1. `enterpriserag_doc_level` (50,000 docs, 470 Qs) — Standardized 50k seed-42 subset
 2. `liverag_doc_level` (970 docs, 895 Qs) — Unchunked supporting docs & multi-session queries
 3. `beir_scifact_doc_level` (5,183 docs, 300 Qs) — Raw BEIR, standard title-text concatenation
