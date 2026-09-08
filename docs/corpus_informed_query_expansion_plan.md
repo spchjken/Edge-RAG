@@ -1,378 +1,451 @@
-# Edge-RAG: Corpus-Informed Query Expansion — Research and Refactor Plan
+# Capacity-Bounded Corpus-Informed Query Expansion — Research Plan
 
-> Status: revised research proposal, 2026-09-07. Formerly `expansion_platform_plan.md`.
-> V7 in Pipeline V2 is the existing implementation and experimental control.
-> This proposal broadens the research direction; it does not describe a completed refactor or
-> supersede [the current implementation architecture](ARCHITECTURE.md).
+> Status: revised research proposal, 2026-09-09. Formerly
+> `expansion_platform_plan.md` and then `corpus_informed_query_expansion_plan.md`.
+> Pipeline V2 V7 is an archived implementation and experimental control, not an active experiment.
+> This document proposes future research; it does not describe an implemented system or supersede
+> [the current architecture](ARCHITECTURE.md).
 
-## 1. Research objective and positioning
+## 1. Research objective and deployment setting
 
-Investigate how compact corpus representations can improve query expansion for BM25 without
-additional task-specific model training, under explicit indexing, memory, and query-latency budgets.
+Investigate whether a compact, reusable representation of how selected corpus terms are used can
+improve BM25 query expansion without task-specific training, a first-pass document retrieval, or a
+dense document index. The primary proposed method is a capacity-bounded term-context memory:
 
-The name **Corpus-Informed Query Expansion** describes the research focus without committing to
-a general-purpose software platform or a particular vocabulary representation. V7 is one instance:
-a corpus vocabulary, frozen dense term representations, anchor-to-term similarity, and bounded
-weighted expansion.
+`stream corpus -> select vocabulary -> store representative term contexts -> generate and rerank expansion terms -> one BM25 retrieval`
 
-The primary comparison family is expansion over BM25. Learned sparse and dense retrievers remain
-valid reference systems for effectiveness and resource tradeoffs. Different training regimes must
-be reported; they do not make comparisons invalid. Describe the method as requiring **no additional
-task-specific training**, rather than claiming no learned components or zero total training cost.
-Any use of target-dataset relevance labels for parameter tuning must also be disclosed.
+The target is not universal superiority over learned dense or sparse retrieval. The research question
+is whether corpus-informed lexical expansion offers a useful effectiveness/resource trade-off when
+corpora must become searchable quickly under a 15 GiB host-memory ceiling.
 
-Separate two deployment settings:
+Report two deployment settings separately:
 
-- **Ephemeral collections:** measure full time to usable retrieval, including representation
-  construction and embedding. Expensive offline structures may be unsuitable.
-- **Persistent large collections:** measure amortized construction, index size, updates, and
-  query latency under the same memory ceiling.
+- **Rapidly onboarded or ephemeral collections:** measure total time to usable retrieval, including
+  every corpus pass, vocabulary construction and context encoding.
+- **Persistent collections:** additionally measure amortized preparation, representation size,
+  startup, updates and query latency.
 
-A technique may succeed in one setting and fail in the other. A broad source interface alone is
-not the research contribution; the experiments must show which corpus evidence helps, when it
-helps, and what it costs.
+The method uses a pretrained encoder, so the correct claim is **no additional task-specific training**,
+not “untrained” or “learning-free.” Any use of relevance labels for selection or tuning must be
+restricted to declared development data.
 
-## 2. Current implementation and evidence
+## 2. Positioning and novelty boundary
 
-V7 analyzes the query into distinct content anchors, assigns POS-based weights, probes a corpus
-vocabulary using frozen BGE-small embeddings, and compiles a sparse weighted query for BM25.
-The default vocabulary design has a 1,000-term probing pool and up to 50,000 stored terms for
-out-of-pool rescue. In-memory and streaming retrieval currently have separate construction paths.
+Query expansion can use three evidence sources:
 
-Recorded results motivate improvement but do not establish universal expansion gains:
-
-| Recorded evaluation | Analyzed BM25 | V7 | Interpretation |
-|---|---|---|---|
-| Ten-corpus macro Strict@10 | 61.17% | 63.05% | Modest average improvement, with dataset regressions |
-| Ten-corpus macro DocRec@10 | 48.21% | 49.54% | Improvement needs attribution to weighting versus expansion |
-| Ten-corpus mean query latency | 0.96 ms | 14.41 ms | Expansion adds material overhead |
-| Five large corpora, mean query latency | 27.63–84.89 ms | 1,191.29–8,112.08 ms | Severe scaling problem |
-
-Sources: [V7 comparison, 2026-09-04](../results/legacy/v7_vs_baselines/v7_vs_baselines_summary.md)
-and [streaming comparison, 2026-09-06](../results/legacy/v7_large_scale/v7_streaming_large_summary.md).
-These are archived observations, not fresh measurements of the current checkout. The large-scale
-quality changes are mixed; for example, DBpedia nDCG@10 falls from 0.2850 to 0.2793, while
-Climate-FEVER improves from 0.1303 to 0.1429.
-
-The [PyTerrier results](../results/pyterrier_baselines/pyterrier_baselines_summary.md) provide BM25
-and RM3 controls. They are a separate evaluation artifact: dataset versions, query subsets,
-scoring, retrieval depth, and timing boundaries must be aligned before combining comparisons.
-
-## 3. Organizing the design space
-
-Expansion can obtain evidence in three ways. These categories describe the source of evidence,
-not mutually exclusive algorithm families.
-
-| Evidence source | Query-time behavior | Examples and role |
+| Evidence source | Query-time behavior | Representative family |
 |---|---|---|
-| Query and external knowledge | Propose alternatives without consulting the target corpus | Lexical resources or generated terms/pseudo-documents |
-| Query-dependent corpus documents | Retrieve documents and extract feedback | PRF, with RM3 as the primary classical comparator |
-| Reusable corpus representation | Select relevant parts of a structure built before the query | V7 vocabulary, graphs, phrases, context prototypes, topic summaries |
+| Query or external knowledge | Propose text without consulting the target corpus | WordNet, LLM synonyms, Query2doc |
+| Query-dependent corpus documents | Retrieve documents and extract feedback | RM3, Bo1, CEQE |
+| Reusable corpus representation | Select from a structure built before the query | Global vocabulary or term-context memory |
 
-Hybrid designs are allowed: query-only generation can be validated using corpus structures, and
-PRF can use a static representation to interpret its feedback.
+The individual ingredients are established: global corpus analysis, embedding-based vocabulary QE,
+whole-query similarity, multi-term agreement, contextual word representations, two-stage candidate
+ranking and query-model interpolation. In particular:
 
-The research has three independent axes:
+- [Qiu and Frei](https://doi.org/10.1145/160688.160713) expanded toward a corpus-derived query
+  concept rather than independent query terms.
+- [Zamani and Croft](https://doi.org/10.1145/2970398.2970405) evaluated average-query-vector
+  expansion and multiplicative compatibility with all query terms.
+- [CEQE](https://arxiv.org/abs/2103.05256) scores contextualized term occurrences from
+  pseudo-relevant documents.
+- [Query2doc](https://aclanthology.org/2023.emnlp-main.585/) and related methods use generated
+  pseudo-documents; corpus-steered variants such as
+  [CSQE](https://aclanthology.org/2024.eacl-short.34/) use initially retrieved documents.
 
-1. **Representation:** what reusable corpus knowledge is stored?
-2. **Relation:** how is that knowledge related to an anchor, phrase, or whole query?
-3. **Action:** how does selected evidence propose, validate, or weight expansion terms?
+The proposed contribution must therefore be stated narrowly:
 
-Selecting a centroid is not itself query expansion. Any centroid-based proposal here must define
-a subsequent mapping into lexical query terms. A resemblance to an indexing component of another
-retriever is not sufficient to identify the resulting method with that retriever.
+> A capacity-bounded, target-corpus term-context memory constructed during streaming preparation and
+> used to rerank embedding-generated lexical expansion candidates, without task-specific training,
+> first-pass document retrieval, or document-level neural indexing.
 
-## 4. Candidate corpus representations
+This is a plausible method-and-systems contribution, not a proven priority claim. A wider literature
+audit is required before using “first.” The paper must not claim the first contextual QE method, the
+first two-stage QE method, or a new embedding model.
 
-The following are proposed designs and hypotheses, not established performance claims.
+## 3. Archived V7 evidence and lessons
 
-| Representation | Query relation and lexical output | Hypothesis | Main cost or risk |
-|---|---|---|---|
-| Vocabulary vectors: V7 control | Anchor-to-term similarity produces weighted terms | Isolated semantic neighbors bridge vocabulary gaps | Ambiguity and generic neighbors |
-| Phrase/entity inventory | Match query spans or the whole query to corpus phrases and aliases | Better lexical units preserve technical meaning | Extraction errors, phrase matching and tokenization |
-| Multiple context prototypes per term | Select a term sense using query context; emit vocabulary associated with that sense | Corpus usage resolves ambiguity better than isolated term embeddings | Context collection, embedding and storage |
-| Term association graph | Find supported neighbors or connections among query concepts | Joint evidence rejects unrelated single-anchor expansions | Graph size, noisy edges and frequent-term bias |
-| Topic/cluster summaries | Select topic prototypes, then terms characteristic of their clusters | Topic context identifies useful vocabulary missed by global term similarity | Construction cost and wrong-topic selection |
-| Compressed passage representatives | Match query context to representative sentences/passages; select terms from them | Small contextual units capture relations absent from word vectors | Coverage, redundancy and setup time |
-| Relation/event inventory | Match patterns such as cause, treatment or comparison; emit lexical realizations | Relation evidence preserves what the query asks about | Extraction quality and substantial complexity |
+V7 uses analyzed query anchors, POS weights, frozen BGE-small term embeddings, a 1,000-term salience
+pool, a 50,000-term bailout store, IDF damping and weighted lexical retrieval. Its results are
+development evidence for the new design, not ongoing experiments or directly reusable final numbers.
 
-For context prototypes, begin with bounded context samples and a small number of prototypes for
-selected ambiguous terms or technical phrases. For topics, store a term distribution or explicit
-representative terms alongside the prototype: a vector alone cannot define the expansion output.
+### 3.1 Large vocabulary tail
 
-PMI/co-occurrence can supply graph edges or direct candidate scores. Alias dictionaries can supply
-phrase/entity entries. Their preprocessing and update costs must be measured rather than labeled
-universally cheap.
+The archived [bailout grid](../results/legacy/v7_legacy/v7_calibration/v7_bailout_grid_summary.md)
+compared the 1,000-term pool with gated access to a 50,000-term store across ten document-level
+benchmarks:
 
-## 5. Query-to-representation relations and expansion actions
+| Condition | Strict@10 | DocRec@10 | Mean latency |
+|---|---:|---:|---:|
+| 1k pool, bailout off | 62.34% | 48.83% | 11.39 ms |
+| Selected bailout, similarity 0.80 and IDF 3.0 | 62.94% | 49.35% | 28.55 ms |
 
-### 5.1 Relation experiments
+The mechanism-specific gain was about 0.6 percentage points while latency was about 2.5 times higher.
+This supports diminishing value in the tail and argues against another 50k semantic sidecar. It does
+not prove that every 10k or 15k pool is optimal: bailout used particular gates and allocation rules.
 
-Start with the existing vocabulary matrix so relation changes can be isolated from representation
-changes:
+### 3.2 Salience versus coverage
 
-- **Independent anchors:** frozen V7 relation.
-- **Whole query:** query-to-vocabulary similarity, as a separate experimental condition.
-- **Agreement across anchors:** support from one anchor plus compatibility with other query concepts,
-  or support from multiple anchors.
-- **Query spans/aspects:** match coherent phrases or subquestions independently.
-- **Contextual matching:** query context selects corpus contexts, senses or topics.
+The archived [pool-selection study](../results/legacy/v7_legacy/v7_calibration/coverage_vs_salience_pool_summary.md)
+found at pool size 1,000:
 
-For example, an expansion for “battery degradation in cold weather” should have support from the
-battery/cold context, rather than merely being associated with weather. Requiring every anchor to
-agree would wrongly suppress useful terms in queries containing independent subquestions.
-Agreement policies should permit support from coherent subsets and account for redundant anchors.
+| Selection | Strict@10 | DocRec@10 | Strict@50 | Mean latency |
+|---|---:|---:|---:|---:|
+| Semantic coverage/FPS | 62.73% | 49.54% | 74.79% | 8.10 ms |
+| Salience | 63.16% | 49.80% | 74.54% | 10.12 ms |
 
-Compare these policies at matched candidate and weight budgets. Otherwise, apparent gains may
-come from adding fewer terms rather than using better evidence.
+Salience was slightly stronger for direct expansion at rank 10; coverage was competitive, slightly
+stronger at Strict@50 and faster. The new cascade changes the first stage from final term selection to
+high-recall candidate generation, so coverage deserves reconsideration. The identical reported
+“In-Pool Hit” value across all strategies and sizes is not discriminative evidence and must be audited
+before reuse.
 
-### 5.2 Actions beyond candidate generation
+### 3.3 Scaling lesson
 
-**Validate proposals.** An external generator may propose terms while corpus contexts or a graph
-assess their compatibility with the query. Corpus-vocabulary projection guarantees only that a term
-is in the indexed vocabulary; it does not guarantee semantic correctness or eliminate hallucination.
+Archived [large-corpus results](../results/legacy/v7_legacy/v7_large_scale/v7_streaming_large_summary.md)
+show severe V7 latency on multi-million-document collections. Profiling identified corpus-sized score
+accumulation in the legacy streaming scorer as a likely contributor, but expansion fan-out and postings
+touched also matter. A small expansion weight still triggers a posting list. The new method must bound
+both semantic computation and final lexical work.
 
-**Allocate effort to lexical gaps.** Test whether expansion is more useful for concepts with weak
-lexical coverage: absent terms, missing phrases, or low co-occurrence among constituent terms.
-These are hypotheses, not relevance guarantees. Rare exact terms may still need aliases.
+## 4. Primary proposed method
 
-**Preserve the original query.** Store original weights separately from expansion increments.
-An expansion candidate that coincides with another original anchor must have an explicit collision
-policy and remain charged to the expansion budget.
+Call the working method **Context-Reranked Vocabulary Expansion (CRVE)** until naming is revisited.
 
-## 6. Shared architecture and simplification
+### 4.1 Index-time phase
 
-Proposed flow:
+1. Stream the corpus into the standard lexical index and collect term statistics.
+2. Construct an eligible vocabulary and select at most 10,000–15,000 terms.
+3. Collect bounded, document-diverse usage contexts for each selected term.
+4. Select up to 20 representative samples or prototypes per term.
+5. Encode selected terms and contexts once with a frozen encoder and store a versioned sidecar.
 
-`query analysis → evidence source → candidate validation → budget allocation → weighted BM25`
+### 4.2 Query-time phase
 
-Keep the shared policy understandable: evidence selection, admission, and budget allocation.
-This is not a claim that every source has only three parameters. Freeze and report source-local
-presets such as PRF feedback depth, graph neighborhoods, prototype count, or generator settings.
+1. Analyze the query and encode its anchors and/or whole-query representation once.
+2. Search the capped term matrix and retain only the top candidate set, initially 50–100 terms.
+3. Gather precomputed contexts for those candidates; do not load or encode raw sample text.
+4. Rerank candidates using term similarity and query-to-context compatibility.
+5. Admit only 3–10 final expansion terms under weight and postings-cost budgets.
+6. Retrieve once with standard weighted BM25.
 
-A source adapter should provide:
+This is a reranking cascade *inside QE*. It is not PRF because it does not retrieve query-dependent
+documents before expansion.
 
-| Field | Contract |
-|---|---|
-| Indexed term or explicit phrase mapping | Final scoring terms use the retrieval analyzer; phrase splitting must account for every emitted term |
-| Raw score and score semantics | Identify cosine, association statistic, feedback weight, etc. |
-| Admission value/policy | Source-specific gate, or a documented calibrated common scale |
-| Support attribution | Anchor, span, or whole-query support and any responsibilities used for allocation |
-| Provenance | Source, representation version and supporting evidence |
-| Cost metadata | Candidate DF/posting count where available, plus source construction/query cost |
+## 5. Capacity-bounded vocabulary construction
 
-Cosine, PMI and feedback weights are not interchangeable. Merely mapping values into [0,1] does
-not make them calibrated confidence probabilities. Initially use documented source-specific gates
-and nonnegative normalized allocation weights; require evidence before adopting a common threshold.
+Set a hard semantic vocabulary ceiling rather than a corpus-size-dependent fraction:
 
-Query-level sources may use a direct global allocator. If an anchor-based guarantee is claimed,
-their attribution to anchors must be explicitly defined. Keep native RM3 as a baseline even if
-an RM3-derived candidate source is also evaluated through the shared allocator.
+`V_cap in {1k, 5k, 10k, 15k}`
 
-Shelve legacy gate/allocation variants from the primary method while retaining named ablation
-controls. Treat uniform anchor weights as a simplification control against frozen POS priors.
-Renaming POS weights “salience” does not remove their parameters or establish a better estimator.
+The final value must be selected on development data using a preregistered plateau rule. If 10k is
+within the declared tolerance of 15k, prefer 10k.
 
-Introduce a minimal retrieval interface for both existing backends: analyze, expose corpus
-statistics, and retrieve weighted terms. PRF additionally needs access to feedback document terms;
-do not assume that the streaming backend's document IDs and scores supply this capability.
-Any source requiring embeddings should declare that dependency rather than forcing all sources
-to construct a dense vocabulary matrix.
+Before ranking, enforce eligibility conditions that can provide reliable lexical output and context:
 
-## 7. Expansion budgets and the scope of the guarantee
+- exact compatibility with the retrieval analyzer and a canonical surface form;
+- minimum distinct-document support and enough valid occurrences for context collection;
+- removal of stopwords, malformed tokens, boilerplate and obvious extraction artifacts;
+- declared handling for compounds, acronyms, entities and versioned identifiers;
+- an optional maximum-DF filter or explicit posting-cost penalty for extremely common terms.
 
-### 7.1 What needs testing
+Compare three pool constructors:
 
-V7 applies a query-dependent multiplier separately to each anchor. With one normalized candidate
-channel, total added weight is bounded by μ(Q) times the sum of anchor weights. More anchors thus
-allow more absolute expansion, but the relative expansion budget does not automatically grow.
-Whether long queries benefit from less expansion is an empirical question, not a proven flaw.
+1. **Salience:** the frozen V7 control, based on IDF and document frequency.
+2. **Coverage:** semantic coverage/FPS after eligibility filtering.
+3. **Hybrid weighted coverage:** retain a salient core, then cover the residual semantic space while
+   weighting represented terms by corpus importance.
 
-Activating the existing η specificity multiplier rescales per-anchor allocations; it does not
-implement a fixed or saturating global budget. Maximum query IDF is also sensitive to an isolated
-rare term or typo. Compare it with direct lexical-coverage signals and a constant-budget control.
+Pure coverage may waste slots on embedding outliers, while pure salience may omit domain-specific
+vocabulary. The hybrid is a hypothesis, not the assumed winner. Pool construction and query-time
+candidate scoring are separate ablations.
 
-### 7.2 Explicit global budget proposal
+## 6. Collecting representative term contexts
 
-Let original anchor weights be w_a ≥ 0 and A(Q) = Σ_a w_a. Define a candidate global budget in
-**query-weight units**, before IDF damping:
+### 6.1 What a sample represents
 
-`B(Q) = μ · f(Q) · min(A(Q), A_cap)`
+For a selected term `t`, a raw sample is a short occurrence window centered on an exact analyzed-term
+match, initially up to 50 tokens before and 50 tokens after the target. Preserve sentence and document
+boundaries; never cross documents. Compare fixed windows with sentence-bounded and +/-16 or +/-32
+token alternatives because a 101-token passage may dilute the target term.
 
-Here 0 ≤ μ ≤ 1, 0 ≤ f(Q) ≤ 1, and A_cap is a declared saturation scale in the same units as
-A(Q). Fix the anchor-weight convention so this scale is meaningful.
+A BGE embedding of the whole window is a **context-window** or **usage-context embedding**. It is not
+technically a contextualized term embedding: the latter is the hidden state of the target token after a
+Transformer processes its context. Use precise terminology.
 
-- A_cap = infinity and f(Q) = 1 recover proportional total budgeting.
-- A finite A_cap makes total expansion saturate as anchor mass grows.
-- Test f(Q) = 1 before introducing specificity or coverage damping.
+The primary representation should make the target explicit in natural language, for example:
 
-Allocate anchor budgets b_a with Σ_a b_a ≤ B(Q) and b_a ≤ μ f(Q) w_a. Uniform/proportional shares
-and salience-based shares are separate ablations; cap and redistribute shares when necessary.
-If an anchor has no admitted candidates, allow its budget to remain unused. Redistribution is
-optional and must respect all caps.
+`Target term: garbage. Usage context: The garbage collector reclaims unused JVM heap objects.`
 
-For candidate s supported by anchor a, use a normalized nonnegative allocation p(s|a):
+Compare this with an unmarked window. Do not introduce special target tokens unless the frozen encoder
+is known to understand them.
 
-`Δw(s|a) = b_a · p(s|a) · min(1, IDF(a)/IDF(s))`
+### 6.2 Deterministic collection
 
-This defines both the units and the per-anchor limits. Lower expansion per anchor on long queries
-is a predicted behavior of the saturating policy, not the metric used to select a winner.
+Vocabulary selection depends on complete corpus statistics, so the simplest exact design uses two
+streaming passes:
 
-### 7.3 Precise mathematical claim
+1. **Pass 1:** build lexical statistics and select the capped vocabulary.
+2. **Pass 2:** collect contexts only for selected terms.
 
-With positive, identical IDF values in allocation and retrieval, and Σ_s p(s|a) ≤ 1:
+The second pass is memory-safe but not free; include it in time to usable retrieval. A later one-pass
+approximation may maintain reservoirs for provisional terms, but it must be compared for missed terms,
+memory and preparation time rather than assumed equivalent.
 
-`Σ_s Δw(s|a) ≤ b_a`
+During context collection:
 
-`Σ_s Δw(s|a) · IDF(s) ≤ b_a · IDF(a)`
+- accept at most one occurrence of a term per document;
+- normalize and hash windows to reject exact or near duplicates;
+- reject windows with insufficient natural-language content or excessive markup;
+- use a fixed seed and deterministic reservoir sampling;
+- record occurrence count, distinct-document count and rejection reasons;
+- never retain an unbounded list of occurrences.
 
-These bound query weights and IDF-weighted coefficients for any support size. They do **not**
-unconditionally bound actual expansion BM25 scores by the original anchor's score in a document:
-term frequencies and length normalization affect contributions, and the anchor may be absent.
-For the implemented BM25 TF factor, an absolute bound can additionally use its upper bound k1+1.
-Any stronger document-score or ranking claim must state and justify further assumptions.
+### 6.3 Choosing up to 20 samples
 
-Normalized association scores are allocation weights; they need not be calibrated probabilities.
-The bound alone does not establish semantic correctness, ranking safety, or information-theoretic
-optimality. Reconcile the existing theory documentation before promoting a stronger claim.
+Use “up to 20,” not exactly 20. Rare or semantically consistent terms may require only one to three
+samples; polysemous frequent terms may justify more.
 
-### 7.4 Multiple channels, aliases and numerical integrity
+Compare progressively more expensive selectors:
 
-The current V7 code normalizes bailout and main-pool candidates separately and gives each channel
-a μ-scaled allocation before adding their weights. When both channels contribute, their combined
-budget can exceed the intended single-channel limit. This is a code-level issue independent of
-the long-query hypothesis.
+1. **First valid occurrences:** diagnostic lower bound with ordering bias.
+2. **Document-diverse reservoir:** primary low-preparation-cost baseline, capped directly at 20.
+3. **Cheap diverse reservoir:** maintain or collect a slightly larger bounded pool and select contexts
+   using lexical/Jaccard or hashed-vector diversity before neural encoding.
+4. **Semantic representative selection:** encode a bounded temporary reservoir, cluster it and retain
+   medoids or use a facility-location objective. This is conditional on its preparation cost.
 
-All channels must share one budget or receive explicit shares whose sum respects the cap.
-Deduplicate indexed terms and retain attribution before final collision summation. Verify the
-bound after phrase decomposition, source merging and numerical rounding; rounding upward can
-violate a strict mathematical inequality.
+For temporary occurrence set R_t and retained samples S_t, a representative objective is:
 
-Alias expansion may use a reserved share exempt from specificity damping, but it still consumes
-a declared total budget and posting-cost allowance. Never provide an unlimited alias exemption.
-Exact canonicalization is a separate analyzer decision requiring retrieval-parity validation.
+`argmax_{|S_t| <= 20} sum_{c in R_t} max_{s in S_t} cosine(E(c), E(s))`
 
-## 8. Large-corpus latency: evidence, diagnosis and repair
+Store each retained sample's represented cluster fraction pi_tj. Pure farthest-point selection is a
+diversity baseline, not automatically the best selector: it can overrepresent rare noise and malformed
+outliers.
 
-The current streaming index already memory-maps postings and document lengths. Adding mmap is
-therefore not a new fix. The implementation also allocates a float64 score vector of length N and,
-for each active term, adds `np.bincount(..., minlength=N)`. This creates repeated corpus-sized
-allocation and memory traffic even for short posting lists.
+Evaluate sample capacities `R in {1, 3, 5, 10, 20}`. Report the realized mean and distribution because
+many terms will not use the maximum.
 
-At roughly 5.4M documents, one such float64 vector is about 43 MB. The scorer consequently has
-O(TN) dense accumulation work in addition to posting traversal, where T is the active term count.
-This is a concrete candidate bottleneck, not proof of the measured latency breakdown.
-Page faults, common-term postings, array conversions, top-K selection and ID lookup also need
-measurement. See [streaming scorer](../src/pipeline_v2/indexer/streaming_posting_index.py).
+## 7. Measuring sample and reranker quality
 
-Required diagnostic:
+“Sample quality” has three distinct levels. Do not collapse them into one cosine score.
 
-1. Replay identical original and expanded term vectors on the same index; separate source,
-   encoding, admission, allocation, scoring, top-K and result-materialization time.
-2. Record active terms, summed DF, postings touched, logical bytes accessed, temporary allocations,
-   CPU time, page faults and physical I/O where measurable. Logical bytes are not physical reads.
-3. Compare repeated-query warm-cache behavior and documented cold/cache-constrained conditions,
-   under the same RAM ceiling. Record disk and filesystem placement.
-4. Include original-query, V7-anchor-only and full-V7 controls; do not infer fan-out from a guessed
-   30–80 terms or use the in-memory orchestrator as a proxy for streaming measurements.
+### 7.1 Corpus-representation quality
 
-Repair candidates, selected by profiling:
+Measure how faithfully retained samples cover held-out occurrences of the same term:
 
-- Remove corpus-sized per-term temporaries using touched-document accumulation or an equivalent
-  strategy that preserves weighted scores and exact top-K.
-- Evaluate an optimized retrieval backend where justified, checking analyzer, IDF, weighting and
-  ranking parity rather than assuming identical BM25 implementations.
-- Add bounded caching only when measured page faults or repeated I/O justify it. Common posting
-  lists are large; caching them must compete with other memory needs.
-- Evaluate explicit posting-cost limits after establishing the unmodified quality control.
+`Coverage(t) = mean_{h in H_t} max_{s in S_t} cosine(E(h), E(s))`
 
-A small expansion weight still triggers posting traversal in the current scorer. Weight budgets
-and computational budgets are therefore separate constraints. A budget change reduces cost only
-when terms are actually pruned or the retrieval algorithm can safely skip their work.
+Also report distinct-document coverage, duplicate rate, mean pairwise similarity, uncovered-context
+distance, cluster support, sample count and preparation cost. These are representation diagnostics,
+not relevance guarantees. If the same encoder selects and evaluates samples, disclose the circularity
+and include lexical or human-audit checks on a declared subset.
 
-Do not promise restoration to small-corpus latency. Report corpus-specific p50/p95, throughput and
-quality tradeoffs after repair.
+### 7.2 Query-conditioned context compatibility
 
-## 9. Evaluation design
+For query Q and samples S_t, start with:
 
-### 9.1 Initial suite and later extensions
+`C_max(t,Q) = max_{s in S_t} cosine(E(Q), E(s))`
 
-Initial controls:
+This performs latent sense selection: one compatible corpus usage can validate a polysemous term. It is
+also vulnerable to one accidentally similar context. Compare:
 
-- Standard BM25 and analyzed BM25 on pinned corpora and queries.
-- Analyzed BM25 with V7's anchor weighting but no expansion.
-- Frozen V7, including its effective configuration.
-- Native RM3 and the existing analyzed/unified RM3 condition, clearly distinguished.
-- Proposed variants changing one representation, relation or allocation policy at a time.
+`C_top2(t,Q) = mean of the two largest query-sample similarities`
 
-Later extensions include lexical-resource candidates, corpus association candidates, other PRF
-variants, topic representations and generated expansion. Each is a separate named condition.
-A generated pseudo-document projected into vocabulary terms must be labeled as that adaptation,
-rather than assumed equivalent to the original generative retrieval method.
+`C_support(t,Q) = max_j [cosine(E(Q), E(s_tj)) + lambda * log(pi_tj)]`
 
-Report feasible frozen dense/learned-sparse references for system context. Keep published numbers
-separate from local measurements; do not compute a “gap closed” percentage across incompatible
-corpora, splits, analyzers, metrics or protocols.
+The support-aware score penalizes a context representing a single anomalous occurrence. Define behavior
+for terms with only one valid sample. Softmax/log-sum-exp aggregation is optional because it introduces
+a temperature parameter.
 
-### 9.2 Attribution and acceptance
+### 7.3 Actual expansion-term utility
 
-Predeclare development and held-out evaluation partitions, tuning budgets, model versions and
-resource limits. Do not tune on all benchmark queries and then describe the same results as
-unseen evaluation. Existing calibration results are development evidence where labels influenced
-selection.
+A topically relevant window does not prove that its target term improves retrieval. On development
+queries, issue each candidate separately at a fixed declared weight and measure:
 
-Measure:
+`U(t,Q) = Metric(Q + {t}) - Metric(Q)`
 
-- nDCG@10 as the primary general ranking metric, Recall@10/50/1000, MRR@10, and Strict@10 as a
-  hit metric rather than a substitute for precision.
-- Per-dataset and macro results, per-query paired differences and uncertainty intervals.
-- Query buckets: short/verbose, ambiguous/precise, exact entity, compound/phrase, lexical gap,
-  and multiple subquestions. Length and specificity should be measured separately.
-- Expansion count, support attribution, realized weight/IDF mass, unused budget and postings touched.
-- Construction time, cold/warm startup, disk size, process and system memory, GPU peak memory,
-  and p50/p95 end-to-end and component latency.
+Label terms as helpful, neutral or harmful under a predeclared tolerance. This follows the intrinsic
+term evaluation used by CEQE and enables candidate-ranking precision@5/10, utility-nDCG, harmful-term
+rate and correlation with measured utility. Do not use these labels to train or tune on the final test
+queries.
 
-Preserve retrieval depth K=1,000 when using the existing evaluation harness. Chunk queries to
-control memory rather than truncating rankings. Source cost includes the first retrieval round
-for PRF and generation/projection for generated candidates.
+An optional blinded human audit should judge whether the selected sample expresses the candidate's
+query-compatible sense and whether the candidate is a reasonable lexical expansion. Record agreement
+and adjudication rules.
 
-For each source, compare the same candidate set under native/simple normalized weighting and
-the proposed allocator. For each relation, match candidate and computational budgets where
-possible. This separates candidate quality, original-query weighting and mass control.
+## 8. Candidate reranking
 
-Promote a variant only after a preregistered held-out effectiveness/resource criterion is met.
-Choose the numerical improvement, regression tolerance and latency ceilings before running its
-selection sweep, using the repaired baseline and intended deployment setting. Evidence of reduced
-drift or better efficiency at comparable quality is also valid; universal wins are not required.
+Let G(t,Q) be the first-stage term score and C(t,Q) a context score. BGE query-to-window similarity is
+the mandatory default because it reuses the query representation and precomputed context vectors. It
+measures topical compatibility, not expansion utility, and is not assumed optimal.
 
-## 10. Implementation sequence and decision gates
+Compare:
 
-This document authorizes a research direction for review; the stages below describe future work.
+1. `G(t,Q)` only: simple dense-vocabulary QE control.
+2. `C(t,Q)` only: determines whether context can rank the fixed candidate set.
+3. `alpha * norm(G) + (1-alpha) * norm(C)`: joint ranking.
+4. `G * gate(C)`: context validation rather than unrestricted rescoring.
+
+Scores from different sources require documented normalization; mapping to [0,1] does not create a
+calibrated probability. The primary design should retain term evidence because a candidate can occur
+incidentally in a query-relevant passage.
+
+Accuracy-oriented conditional references may include:
+
+- target-token contextual embeddings extracted from the same window;
+- a cross-encoder over query, candidate and sample;
+- an LLM judgment on a small declared subset.
+
+These are upper-bound or diagnostic comparisons, not mandatory edge configurations. A raw token hidden
+state is not automatically compatible with a pooled BGE query vector, and a cross-encoder invocation
+per candidate can invalidate the latency objective.
+
+## 9. Weight, term-count and posting-cost budgets
+
+Reranking many candidates in a small dense matrix is cheap; executing many additional BM25 posting
+lists is not. Initially retain 50–100 candidates for context reranking but emit only 3–10 terms.
+
+Let original anchor weights be w_a >= 0 and A(Q) = sum_a w_a. Define a global expansion budget in
+query-weight units:
+
+`B(Q) = mu * f(Q) * min(A(Q), A_cap)`
+
+Allocate nonnegative anchor budgets b_a whose sum is at most B(Q). For normalized candidate allocation
+p(t|a):
+
+`delta_w(t|a) = b_a * p(t|a) * min(1, IDF(a)/IDF(t))`
+
+Under identical positive IDF values in allocation and retrieval and sum_t p(t|a) <= 1:
+
+`sum_t delta_w(t|a) <= b_a`
+
+`sum_t delta_w(t|a) * IDF(t) <= b_a * IDF(a)`
+
+These bound query coefficients, not actual per-document BM25 scores. They do not establish semantic
+correctness, ranking safety or information-theoretic optimality.
+
+Add an independent computational constraint:
+
+`sum_{t in expansion(Q)} DF(t) <= B_postings`
+
+Compare term-count-only, weight-only and posting-aware selection. All candidate channels, collisions,
+aliases and decomposed phrases must share declared budgets.
+
+## 10. Resource model and latency gate
+
+For V selected terms, R samples, dimension d and b bytes per coordinate, context-vector storage is:
+
+`M_context = V * R * d * b`
+
+At V=15,000, d=384 and FP16:
+
+| Samples per term | Maximum context-vector storage |
+|---:|---:|
+| 5 | 57.6 MB |
+| 10 | 115.2 MB |
+| 20 | 230.4 MB |
+
+The 15k term matrix adds about 11.5 MB. Metadata, raw audit samples, allocator state and runtime
+overheads must be measured separately. The neural sidecar is capacity-bounded even as document count
+grows; lexical indexing and corpus scanning are not.
+
+With 100 retained candidates and 20 contexts each, query-time context scoring uses only 2,000 vectors,
+or 768,000 coordinate multiplications plus reductions, after one query encoding. It should be batched
+over a contiguous tensor. Never encode individual sample text or invoke a cross-encoder in the
+mandatory query path.
+
+Predeclare an incremental p95 context-reranking latency ceiling on the target hardware, initially 2 ms
+on a warm GPU, plus an end-to-end tolerance relative to simple vocabulary QE. Synchronize CUDA before
+timing, report warm and declared cold conditions, and profile encoding, term search, gather, aggregation,
+allocation and BM25 separately. Treat the 2 ms value as an acceptance target, not a performance claim.
+
+## 11. Evaluation design
+
+### 11.1 Baselines and references
+
+Mandatory local controls:
+
+- `BM25_Default`;
+- `BM25_RM3_Terrier_Default` and `BM25_Bo1_Terrier_Default`;
+- `DPH`, `DPH_RM3_Terrier_Default` and `DPH_Bo1_Terrier_Default`;
+- simple frozen-BGE vocabulary QE at the same vocabulary, candidate, final-term and weight budgets.
+
+Conditional references:
+
+- local-model LLM synonym or Query2doc-style lexical expansion with generation latency;
+- a CEQE-like contextual PRF reference on selected feasible corpora;
+- published or locally feasible dense and learned-sparse systems, with training and index costs;
+- HyDE only as a cross-paradigm reference unless its dense index and generation path are measured;
+- frozen archived V7 only where its historical analyzer and protocol can be reproduced and clearly
+  separated from the standard-Terrier comparison.
+
+Do not restore analyzed BM25 or unified custom RM3 merely as future baseline requirements. Any proposed
+method using a custom analyzer needs its own matched BM25 attribution control.
+
+### 11.2 Factorial ablations
+
+Change one factor at a time before joint confirmation:
+
+- vocabulary size: 1k, 5k, 10k, 15k;
+- pool selection: salience, coverage, hybrid;
+- samples per term: 1, 3, 5, 10, 20;
+- sample selection: first, reservoir, cheap diversity, semantic representative;
+- context: unmarked, target-marked, sentence-bounded and fixed-window variants;
+- aggregation: max, top-2 mean, support-aware max;
+- reranking: term-only, context-only, joint score, context gate;
+- final expansion count and posting budget.
+
+Reuse identical candidate sets when comparing rerankers. Otherwise candidate recall and ranking quality
+are confounded.
+
+### 11.3 Metrics and corpus-type claims
+
+Follow [the canonical metric contract](EVALUATION_METRICS.md), including both declared standard and
+exponential-gain nDCG fields where required, rather than redefining gains inside this plan. Preserve
+retrieval depth 1,000 and control memory by query chunking, not candidate truncation.
+
+Report per-dataset and macro effectiveness, paired per-query uncertainty, term-utility ranking,
+harmful-term rate, expansion count, unused weight, postings touched, construction time, each corpus
+pass, cache size, startup, process/system memory, GPU peak memory, throughput and component p50/p95.
+
+Universal improvement is not required. “Works on some corpora” is publishable only if the collection
+class and mechanism are declared and tested rather than selected after seeing results. Candidate
+properties include:
+
+- high query-document vocabulary mismatch;
+- technical or domain-specific terminology;
+- polysemous terms with repeated stable corpus usages;
+- sufficient occurrence support for representative contexts;
+- concentrated rather than highly heterogeneous domain language.
+
+Also predeclare likely weak settings: exact-entity queries, very small corpora, insufficient term
+contexts and collections where baseline BM25 already has high lexical overlap.
+
+Use development and held-out evaluation partitions. Existing V7 calibration results are development
+evidence because labels influenced previous choices.
+
+## 12. Implementation and decision gates
 
 | Stage | Work | Required result before proceeding |
 |---|---|---|
-| 0. Establish the control | Audit effective config, entry points, analyzer/index parity and channel budgets; preserve archived runs | Reproducible frozen V7 plus separately labeled correctness repairs |
-| 1. Resolve scaling | Profile and repair streaming scoring using replayed fixed query vectors | Score/top-K parity and measured component latency under the memory cap |
-| 2. Minimal shared contracts | Separate evidence, allocation and retrieval; support V7 and PRF without mandatory dense initialization | Same frozen behavior through the new interfaces and explicit source dependencies |
-| 3. Relation experiments | Anchor, whole-query and anchor-agreement policies over the existing vocabulary | Controlled evidence about query use before changing stored representations |
-| 4. Better lexical units | Phrase/entity inventory with explicit mapping into indexed terms | Measured gain attributable to representation, including construction cost |
-| 5. Context representations | Bounded sense/context prototypes; then topic or passage prototypes if justified | Effectiveness/setup/memory tradeoff supports further complexity |
-| 6. Budget and integration | Proportional versus saturating budgets, coverage signals, bounded aliases and selected source validation | Held-out query-bucket results; final joint confirmation with frozen choices |
+| 0. Freeze contracts | Pin datasets, analyzer, metrics, hardware, simple BGE-Vocab-QE and current Terrier baselines | Reproducible controls and resolved configurations |
+| 1. Vocabulary study | Audit salience/coverage evidence and compare 1k–15k pools | Candidate coverage/resource plateau supports a capped pool |
+| 2. Context collector | Implement deterministic two-pass collection, filters, reservoirs and cache identity | Repeatable samples, bounded memory and measured preparation time |
+| 3. Minimal reranker | Target-marked windows, frozen embeddings, max and top-2 scoring over a fixed candidate set | Score parity, component timing and term-utility improvement over term-only ranking |
+| 4. Sample-quality study | Capacity, selection, coverage, support-aware and window ablations | Held-out evidence justifies complexity beyond direct reservoir sampling |
+| 5. Retrieval integration | Global weight, final-term and posting-cost budgets with standard weighted BM25 | Bounds hold and latency remains within predeclared tolerance |
+| 6. Corpus-type evaluation | Run the frozen method across the intended suite and query/corpus buckets | Reproducible benefit or cost-equivalent quality in a defined setting |
+| 7. Conditional extensions | LLM proposals validated by the same context memory, CEQE-like reference or richer lexical units | Added contribution justifies preparation and query cost |
 
-Fix demonstrable budget violations in Stage 0; keep heuristic budget-policy tuning distinct until
-source/relation controls are established. Staged experiments may interact, so confirm the selected
-combination jointly before freezing it.
+Every implementation must use deterministic seeds, a versioned cache identity, invariant checks and
+timestamped results. Any new Pipeline V2 variant requires its co-located `pathway_*.md`. Synchronize
+`ARCHITECTURE.md`, the results-to-scripts mapping and the manuscript evidence map only after empirical
+implementation and verification.
 
-Specific prerequisites already visible in the checkout:
+## 13. Later extensions, not primary scope
 
-- YAML sets `mass_floor: 0.005`, but the normal orchestrator does not forward it to the extractor.
-- Bailout thresholds, allocation/gate options and effective defaults differ across configuration,
-  constructor paths and documentation. Log the fully resolved runtime configuration.
-- The normal orchestrator consumes an in-memory corpus; streaming retrieval has a separate path.
-- Bailout and pool allocation need combined accounting.
-- Archived result generators and dataset manifests must be located and pinned; references to a
-  results-to-scripts mapping do not establish reproducibility when that file is absent.
-
-Each implemented variant must include its co-located pathway specification, resolved configuration,
-representation/cache identity, deterministic seeds, invariant checks and timestamped evidence.
-Synchronize architecture and result documentation after verified implementation changes.
+Phrase/entity inventories, term-association graphs, topic summaries, compressed passage representatives,
+relation/event inventories and static validation of LLM proposals remain legitimate follow-up ideas.
+They are not parallel mandatory implementations. Promote one only after the bounded term-context method
+passes its decision gates and the extension addresses a measured failure mode.
