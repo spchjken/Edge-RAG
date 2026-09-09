@@ -285,6 +285,103 @@ class PyTerrierIndexManager:
             "timing": timing,
         }
 
+    def get_dense_index_path(self, dataset_name: str, model_tag: str = "bge_small") -> str:
+        """Returns path to the FlexIndex dense index."""
+        safe_name = dataset_name.lower().replace("-", "_")
+        return os.path.abspath(os.path.join("data/cache/dense_indices", f"{safe_name}_{model_tag}"))
+
+    def get_splade_index_path(self, dataset_name: str, model_tag: str = "splade_v3") -> str:
+        """Returns path to the PisaIndex SPLADE index."""
+        safe_name = dataset_name.lower().replace("-", "_")
+        return os.path.abspath(os.path.join("data/cache/splade_indices", f"{safe_name}_{model_tag}"))
+
+    def build_or_load_dense_index(
+        self,
+        dataset_name: str,
+        model_name: str = "BAAI/bge-small-en-v1.5",
+        batch_size: int = 64,
+        overwrite: bool = False,
+    ) -> Dict[str, Any]:
+        """Builds or loads disk-backed FlexIndex for dense BGE retrieval."""
+        import pyterrier_dr as pt_dr
+        dense_path = self.get_dense_index_path(dataset_name)
+        timing = {"dense_build_time_s": 0.0, "dense_load_time_s": 0.0}
+        bge_model = pt_dr.HgfBiEncoder.from_pretrained(model_name, device="cuda", batch_size=batch_size)
+        dense_indexer = pt_dr.FlexIndex(dense_path)
+
+        if not overwrite and dense_indexer.built():
+            print(f"[PyTerrier-DR] Loading cached FlexIndex -> {dense_path}")
+            return {
+                "bge_model": bge_model,
+                "dense_indexer": dense_indexer,
+                "dense_path": dense_path,
+                "dense_disk_mb": get_directory_size_mb(dense_path),
+                "timing": timing,
+            }
+
+        from src.evaluation.benchmark_loader import BenchmarkLoader
+        print(f"[PyTerrier-DR] Building FlexIndex via stream -> {dense_path}")
+        t0 = time.perf_counter()
+
+        def stream_dict():
+            for did, text in BenchmarkLoader.stream_corpus(dataset_name):
+                yield {"docno": str(did), "text": str(text)}
+
+        mode = "overwrite" if (overwrite or os.path.exists(dense_path)) else "create"
+        (bge_model >> dense_indexer.indexer(mode=mode)).index(stream_dict())
+        timing["dense_build_time_s"] = round(time.perf_counter() - t0, 2)
+        return {
+            "bge_model": bge_model,
+            "dense_indexer": dense_indexer,
+            "dense_path": dense_path,
+            "dense_disk_mb": get_directory_size_mb(dense_path),
+            "timing": timing,
+        }
+
+    def build_or_load_splade_index(
+        self,
+        dataset_name: str,
+        model_name: str = "naver/splade-v3-distilbert",
+        batch_size: int = 64,
+        overwrite: bool = False,
+    ) -> Dict[str, Any]:
+        """Builds or loads disk-backed PisaIndex for neural sparse SPLADE retrieval."""
+        import pyterrier_splade as pt_splade
+        from pyterrier_pisa import PisaIndex
+        splade_path = self.get_splade_index_path(dataset_name)
+        timing = {"splade_build_time_s": 0.0, "splade_load_time_s": 0.0}
+        splade_model = pt_splade.Splade(model=model_name, device="cuda")
+        splade_index = PisaIndex(splade_path, stemmer="none")
+
+        if not overwrite and splade_index.built():
+            print(f"[PyTerrier-SPLADE] Loading cached PisaIndex -> {splade_path}")
+            return {
+                "splade_model": splade_model,
+                "splade_index": splade_index,
+                "splade_path": splade_path,
+                "splade_disk_mb": get_directory_size_mb(splade_path),
+                "timing": timing,
+            }
+
+        from src.evaluation.benchmark_loader import BenchmarkLoader
+        print(f"[PyTerrier-SPLADE] Building PisaIndex via stream -> {splade_path}")
+        t0 = time.perf_counter()
+
+        def stream_dict():
+            for did, text in BenchmarkLoader.stream_corpus(dataset_name):
+                yield {"docno": str(did), "text": str(text)}
+
+        mode = "overwrite" if (overwrite or os.path.exists(splade_path)) else "create"
+        (splade_model.doc_encoder(batch_size=batch_size) >> splade_index.toks_indexer(mode=mode)).index(stream_dict())
+        timing["splade_build_time_s"] = round(time.perf_counter() - t0, 2)
+        return {
+            "splade_model": splade_model,
+            "splade_index": splade_index,
+            "splade_path": splade_path,
+            "splade_disk_mb": get_directory_size_mb(splade_path),
+            "timing": timing,
+        }
+
 
 class PyTerrierBaselineHarness:
     """
@@ -297,9 +394,16 @@ class PyTerrierBaselineHarness:
 
     def __init__(self, index_dict: Optional[Dict[str, Any]] = None):
         index_dict = index_dict or {}
+        self.index_dict = index_dict
         self.index_default = index_dict.get("index_default")
+        self.bge_model = index_dict.get("bge_model")
+        self.dense_indexer = index_dict.get("dense_indexer")
+        self.splade_model = index_dict.get("splade_model")
+        self.splade_index = index_dict.get("splade_index")
         self.timing = index_dict.get("timing", {})
         self.default_disk_mb = index_dict.get("default_disk_mb", 0.0)
+        self.dense_disk_mb = index_dict.get("dense_disk_mb", 0.0)
+        self.splade_disk_mb = index_dict.get("splade_disk_mb", 0.0)
 
     def warmup(self, num_queries: int = 10):
         """Warm up JVM JIT compiler with dummy queries before measurement."""
@@ -390,6 +494,26 @@ class PyTerrierBaselineHarness:
                 rm3 = pt.rewrite.RM3(self.index_default, fb_terms=10, fb_docs=10, fb_lambda=0.5)
                 pass2 = pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=1000)
                 return pass1 >> rm3 >> pass2
+
+        elif pipeline_name == "BGE_Small_Dense":
+            if self.bge_model is None or self.dense_indexer is None:
+                raise ValueError("BGE_Small_Dense requires bge_model and dense_indexer in index_dict")
+            k = min(1000 + max_ex, 3000) if excluded_map else 1000
+            retr = self.bge_model.query_encoder() >> self.dense_indexer.retriever(num_results=k)
+            if excluded_map:
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retr >> filter_post
+            return retr
+
+        elif pipeline_name == "SPLADE_v3_PISA":
+            if self.splade_model is None or self.splade_index is None:
+                raise ValueError("SPLADE_v3_PISA requires splade_model and splade_index in index_dict")
+            k = min(1000 + max_ex, 3000) if excluded_map else 1000
+            retr = self.splade_model.query_encoder() >> self.splade_index.quantized(num_results=k)
+            if excluded_map:
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retr >> filter_post
+            return retr
 
         elif hasattr(self, "pipelines") and pipeline_name in self.pipelines:
             base = self.pipelines[pipeline_name]
@@ -531,11 +655,12 @@ class PyTerrierBaselineHarness:
             del run_df, persisted_chunks
 
         # 4. Benchmark PyTerrier Single-Query API Latency
+        is_neural = pipeline_name in ("BGE_Small_Dense", "SPLADE_v3_PISA")
         latency_metrics = benchmark_single_query_api_latency(
             transformer,
             queries,
-            sample_size=1000,
-            warmup_size=30,
+            sample_size=100 if is_neural else 1000,
+            warmup_size=5 if is_neural else 30,
             seed=42,
         )
 
@@ -579,10 +704,24 @@ class PyTerrierBaselineHarness:
             "batch_throughput_qps": batch_throughput_qps,
             "harness_per_query_ms": harness_per_query_ms,
             # Resources
-            "index_disk_mb": self.default_disk_mb,
+            "index_disk_mb": (
+                self.dense_disk_mb if pipeline_name == "BGE_Small_Dense"
+                else self.splade_disk_mb if pipeline_name == "SPLADE_v3_PISA"
+                else self.default_disk_mb
+            ),
             "host_ram_peak_mb": host_ram_mb,
-            "index_build_s": round(self.timing.get("default_build_time_s", 0.0), 2),
-            "cache_load_s": round(self.timing.get("default_load_time_s", 0.0), 2),
+            "index_build_s": round(
+                self.timing.get("dense_build_time_s", 0.0) if pipeline_name == "BGE_Small_Dense"
+                else self.timing.get("splade_build_time_s", 0.0) if pipeline_name == "SPLADE_v3_PISA"
+                else self.timing.get("default_build_time_s", 0.0),
+                2
+            ),
+            "cache_load_s": round(
+                self.timing.get("dense_load_time_s", 0.0) if pipeline_name == "BGE_Small_Dense"
+                else self.timing.get("splade_load_time_s", 0.0) if pipeline_name == "SPLADE_v3_PISA"
+                else self.timing.get("default_load_time_s", 0.0),
+                2
+            ),
         }
 
     def run_all(

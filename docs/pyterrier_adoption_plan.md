@@ -97,7 +97,7 @@ These are the *correct* ways to report v7's contribution, independent of which f
 
 1. **Phase 0 — Metrics (no refactor).** Swap metric computation to `ir_measures`/`pytrec_eval`; confirm our recall/MRR/nDCG match trec_eval semantics. Cheapest, highest-value.
 2. **Phase 1 — Baseline anchor.** Add one Terrier-BM25 row (`pt.BatchRetrieve`) as an external reference, keeping `AnalyzedLuceneBM25` as the primary same-analyzer control. This doubles as a tokenization ablation (Terrier/Porter vs. our KStem analyzer).
-3. **Phase 2 — Dense + SPLADE plugins.** Adopt `pyterrier_dr` (bge-small) and `pyterrier_splade` as standard harnesses, cross-checked against our `DenseRAGBaseline`/`SPLADEBaseline`.
+3. **Phase 2 — Dense + SPLADE plugins (COMPLETED).** Adopted standard PyTerrier ecosystem extensions: `pyterrier-dr` (`BAAI/bge-small-en-v1.5` on CUDA FP16 with disk-backed `FlexIndex`) and `pyterrier-splade` + `pyterrier-pisa` (`naver/splade-v3-distilbert` with C++ SIMD block-compressed `PisaIndex`), fully integrated into `PyTerrierBaselineHarness` with streaming zero-RAM ingestion and candidate parquet persistence.
 4. **Phase 3 — v7 as a transformer.** Wrap v7 in `TransformerBase`, keeping the pre-tokenized `EdgeRAGAnalyzer` pipeline; evaluate with `pt.Experiment` side-by-side with the above.
 5. **Phase 4 — Edge-memory layer.** Keep the custom TTI/VRAM/RAM harness as an outer layer around PyTerrier (it is not a PyTerrier feature).
 
