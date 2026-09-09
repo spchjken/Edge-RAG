@@ -2,6 +2,8 @@
 
 > Status: revised research proposal, 2026-09-09. Formerly
 > `expansion_platform_plan.md` and then `corpus_informed_query_expansion_plan.md`.
+> This document also subsumes the scope of the former documentation-revision
+> implementation plan.
 > Pipeline V2 V7 is an archived implementation and experimental control, not an active experiment.
 > This document proposes future research; it does not describe an implemented system or supersede
 > [the current architecture](ARCHITECTURE.md).
