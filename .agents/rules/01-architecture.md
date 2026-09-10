@@ -5,6 +5,7 @@ trigger: always_on
 # 🏗️ MODULE BOUNDARIES & ARCHITECTURE RULES (Edge-RAG)
 
 ## 1. System Documentation Hierarchy
+- **Canonical Reconciliation**: Each architectural decision has one canonical owner. Derivative documents may summarize or link to that owner but must not silently diverge. When Tier 0, Tier 1, or Tier 2 sources conflict, the higher tier governs; reconcile the lower-tier source and all affected references before dependent implementation proceeds.
 - **Tier 0 (Current System Description — `docs/ARCHITECTURE.md`)**: Canonical system blueprint describing the active High-Speed Anchored Lexical-Semantic Retriever. Must read first to understand system design.
 - **Tier 1 (High-Level Rules & Module Boundaries — This File)**: Defines active pipeline boundaries, isolation constraints, hardware caps ($N_{max}$), and configuration contracts.
 - **Tier 2 (Decentralized Pathway Specs — `pathway_*.md` in Sub-modules)**: Co-located algorithm specifications (e.g., `src/pipeline_v2/expansion/pathway_bm25_dense_aspect.md`). Any new retrieval variant added to `src/pipeline_v2/` MUST include a co-located `pathway_<name>.md`.

@@ -26,10 +26,20 @@ trigger: always_on
 | Results-to-Scripts Mapping | `scripts/results_scripts_mapping.md` | Authoritative mapping from all result files to scripts/tests |
 
 ## 3. Pre-Task Actions
+
+### 3.1 Authority, Evidence, and Conflicts
+- **Authority Hierarchy**: For scope and product decisions, follow the newest clear user instruction, then the canonical architecture and metric documents, then project rules, then existing implementation. This hierarchy does not make a factual claim true; factual claims require evidence.
+- **Evidence-Based Conflict Handling**: Distinguish verified facts, inferences, assumptions, user preferences, and implementation decisions. When a material conflict could change the outcome, state the conflicting claims and their consequences, inspect any supplied source directly, and seek evidence that could support or falsify each claim.
+- **Unresolved Premises**: Do not make a state-changing implementation decision that depends on an unresolved disputed premise. Read-only investigation, source review, and analysis may continue while the premise is resolved.
+- **Documentation Consistency**: When authoritative documents conflict, identify the conflict and reconcile affected dependent documents. Never silently choose one source and leave the repository inconsistent.
+
 Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
 
 ## 4. Security & Safety
 - **Destructive Action Safety**: Never use `--force` or recursive force deletions (`rm -rf`) on broad directories. Read-Before-Write on critical files.
+- **Secrets and Sensitive Data**: Never place credentials, access tokens, personal data, production data, or other sensitive material in prompts, source code, logs, result artifacts, screenshots, or commits. Use placeholders or sanitized fixtures instead.
+- **External Effects**: Deployment, publication, external data transmission, account or external-system changes, and actions that may incur cost require explicit user approval. Before seeking approval, state the scope, expected effect, potential cost, and recovery path.
+- **Risk-Proportional Rollback**: Before a significant or difficult-to-reverse change, identify a recovery path such as a branch/commit, backup, feature flag, or documented reversal procedure. Do not test against live systems, accounts, or production data unless explicitly authorized.
 - **Terminal & Tool Safety**: NEVER use `cat >>`, `nano`, `vim`, or any interactive commands in the bash terminal. It will permanently hang your terminal waiting for `stdin`. ALWAYS use native file editing tools (`replace_file_content` or `write_to_file`) to modify code.
 - **Process & Terminal Hang Prevention**:
   - **Fresh Ephemeral Subshells**: ALWAYS use non-persistent terminals (`RunPersistent: false`) for benchmark, test, or evaluation runs. Never reuse a shared persistent terminal that can deadlock on unreturned shell prompts (`PS1`) or background jobs.
@@ -57,7 +67,12 @@ Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
 - A task or feature is officially concluded **only** when:
   1. The code or test harness changes pass empirical execution and verification.
   2. Applicable documentation or evidence artifacts ([`report.md`](file:///home/donghv/Projects/Edge-RAG/report.md) or [`docs/manuscript_evidence_map.md`](file:///home/donghv/Projects/Edge-RAG/docs/manuscript_evidence_map.md)) have been synchronized.
+  3. The handoff states the changed scope, validation method and result, known limitations, and the rollback path when it is relevant. A missing validation is reported as `Not verified`, never as success.
 
-## 10. Git Conventions
+## 10. Rule-Change Governance
+- A substantive change to `.agents/rules/` requires a decision record under `.agents/decisions/` describing the problem, alternatives, decision, affected files or workflows, evidence, effective date, and any migration impact. Typographical or formatting-only fixes are exempt.
+- Before declaring a rule change complete, verify only the affected scope unless a documented dependency requires wider verification. Do not silently impose a new rule retroactively on existing artifacts without recording its scope and rationale.
+
+## 11. Git Conventions
 - Single `main` branch. Auto-push FORBIDDEN.
 - Commit format: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.

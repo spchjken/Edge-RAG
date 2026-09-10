@@ -26,6 +26,8 @@ trigger: always_on
 ## 5. Results Integrity
 - Raw results → results/ as timestamped CSVs / JSONs.
 - Never overwrite previous results.
+- **Validation Status**: Record each material validation as `Pass`, `Fail`, or `Not verified`. `Pass` requires directly inspectable evidence. `Fail` means the required evidence was checked and did not meet the condition. `Not verified` means evidence or access is unavailable; record what is missing, who or what must provide it, and the precise re-verification scope. Both `Fail` and `Not verified` block a claim of successful validation.
+- **Claim-to-Evidence Traceability**: Every material benchmark, result, or manuscript claim MUST identify its generating script or command, exact result artifact, configuration and environment, and verification scope. Keep these links synchronized with `scripts/results_scripts_mapping.md` and `docs/manuscript_evidence_map.md` where applicable.
 - Results directory structure:
   - `results/v2_ablation/` — Multi-corpus evaluation sweeps & schema ablations for Pipeline V2
   - `results/pipeline_combinations/` — Full combination matrix runs
@@ -37,3 +39,8 @@ trigger: always_on
 ## 6. Reporting
 - `report.md` in project root serves as the weekly progress artifact.
 - `docs/manuscript_evidence_map.md` links paper claims to empirical data files.
+
+## 7. Currency of External Facts
+- Claims about external APIs, models, dependencies, pricing, hardware, policies, or tools that can change over time MUST cite a primary source and record the checked date and relevant version where available.
+- Separate durable technical principles from version-specific instructions so volatile material can be updated independently.
+- If current information cannot be verified, state the limitation and mark the claim `Not verified`; do not present an inference as a fact.

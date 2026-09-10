@@ -22,3 +22,42 @@ architecture or the broader research plan.
 ## Intended Artifact
 
 - `docs/crve_design_refinement_notes.md`
+
+---
+
+# Implementation Plan — Agent Rule Adoption
+
+## Status
+
+Completed and verified on 2026-09-10.
+
+## Scope
+
+Adopt the ten transferable governance, evidence, safety, reproducibility, and
+documentation-consistency rules proposed from `.agents/template rules/`.
+Do not import curriculum-specific requirements or modify production code,
+architecture, benchmarks, or results.
+
+## Steps
+
+1. Add core rules for evidence-based conflict handling, external effects and
+   secrets, risk-proportional rollback, authority and documentation
+   consistency, rule-change decision records, and evidence-bearing completion.
+2. Add the Tier 0/1/2 canonical-document reconciliation rule to the
+   architecture rules.
+3. Add `Pass` / `Fail` / `Not verified` semantics, claim-to-evidence
+   traceability, and currency requirements to the reproducibility rules.
+4. Verify that the final rules are internally consistent, preserve existing
+   Edge-RAG safety constraints, and contain no learning-specific policy.
+
+## Intended Artifacts
+
+- `.agents/rules/00-agent-core.md`
+- `.agents/rules/01-architecture.md`
+- `.agents/rules/02-reproducibility.md`
+
+## Verification
+
+- Confirmed all ten adopted rule topics appear in the three target rule files.
+- Confirmed the rule-change decision record exists under `.agents/decisions/`.
+- Ran `git diff --check` successfully; no whitespace errors were reported.
