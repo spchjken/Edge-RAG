@@ -647,12 +647,25 @@ class PyTerrierBaselineHarness:
         # Optional: persist candidate run as compressed Parquet
         if save_runs_dir and dataset_name and persisted_chunks:
             os.makedirs(save_runs_dir, exist_ok=True)
-            run_df = pd.concat(persisted_chunks, ignore_index=True)
             safe_ds = dataset_name.lower().replace("-", "_")
             parquet_path = os.path.join(save_runs_dir, f"{safe_ds}_{pipeline_name}.parquet")
-            run_df.to_parquet(parquet_path, compression="snappy", index=False)
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+                writer = None
+                for chunk_df in persisted_chunks:
+                    table = pa.Table.from_pandas(chunk_df, preserve_index=False)
+                    if writer is None:
+                        writer = pq.ParquetWriter(parquet_path, table.schema, compression="snappy")
+                    writer.write_table(table)
+                if writer is not None:
+                    writer.close()
+            except Exception:
+                run_df = pd.concat(persisted_chunks, ignore_index=True)
+                run_df.to_parquet(parquet_path, compression="snappy", index=False)
+                del run_df
             print(f"  [{pipeline_name}] Persisted candidate run -> {parquet_path}", flush=True)
-            del run_df, persisted_chunks
+            del persisted_chunks
 
         # 4. Benchmark PyTerrier Single-Query API Latency
         is_neural = pipeline_name in ("BGE_Small_Dense", "SPLADE_v3_PISA")
