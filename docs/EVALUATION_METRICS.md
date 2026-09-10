@@ -15,7 +15,7 @@ The evaluation framework evaluates retrieval systems under the **ephemeral edge 
    - `torch.cuda.reset_peak_memory_stats()` is called at the beginning of each run.
    - `torch.cuda.empty_cache()` is called between benchmark iterations.
    - Host RAM is monitored via `psutil.Process().memory_info().rss`.
-4. **Subprocess Execution Isolation:** Each `(dataset, model)` evaluation executes inside a dedicated, isolated subprocess worker (`subprocess.run`) to guarantee 0% CUDA memory fragmentation and eliminate cross-model cache contamination.
+4. **Subprocess Execution Isolation:** Each `(dataset, model)` evaluation should execute inside a dedicated, isolated subprocess worker (`subprocess.run`) to prevent cross-model process-state accumulation. The supervisor used for the completed classical PyTerrier artifact is not retained in the current checkout, so historical compliance is **Not verified**; process isolation also cannot literally guarantee zero CUDA fragmentation.
 5. **Direct Raw Streaming (`BenchmarkLoader`):** Documents and queries are streamed directly from official raw archives (`corpus.jsonl`, `qrels/test.tsv`, parquets) using [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py), ensuring uniform text concatenation (`f"{title} {text}".strip()`) and zero loss of graded relevance.
 6. **Warm-Boot Assumption:** Model loading time from disk into GPU memory is excluded from per-query retrieval latency.
 
@@ -149,7 +149,7 @@ In the BRIGHT reasoning benchmark, each query specifies a set of excluded docume
 2. **Pass 2 Candidate Funnel Depth Clamping:**
    To ensure that the candidate ranking preserves full depth ($K = 1,000$) after post-filtering:
    $$K_2 = \min(1000 + \text{max\_ex}, 3000)$$
-   Post-exclusion filtering removes disqualified documents and slices to `.head(1000)`. Because the maximum observed excluded document count within the top-3,000 for any BRIGHT query is 1,130, $\min(1000 + \text{max\_ex}, 3000)$ guarantees that $\ge 1,870$ eligible candidates remain, ensuring 100% candidate completeness without truncation.
+   Post-exclusion filtering removes disqualified documents and slices to `.head(1000)`. The bounded padding is intended to preserve 1,000 eligible candidates. However, the current aggregate result artifact does not retain per-query requested/realized depths or the raw candidate runs needed to verify a universal guarantee. Treat full-depth preservation as **Not verified** until those traces are regenerated or recovered; see [`docs/pyterrier_classical_baselines_plan.md`](pyterrier_classical_baselines_plan.md).
 
 ---
 
@@ -280,7 +280,7 @@ Evaluated by `src/evaluation/pyterrier_harness.py` under two distinct operationa
 
 4. **Resource Footprint Diagnostics:**
    - `index_disk_mb`: Total disk storage size of the cached Terrier index.
-   - `host_ram_peak_mb`: Peak resident host RAM during retrieval execution.
+   - `host_ram_peak_mb`: Historical field name. In the retained PyTerrier harness this is one process-RSS observation taken after evaluation, not a sampled maximum; report it as post-evaluation RSS and do not use it as a peak-memory claim.
    - `index_build_s`: Wall-clock seconds to build index from streamed raw corpus.
    - `cache_load_s`: Wall-clock seconds to load cached index from disk via `pt.IndexFactory.of()`.
 

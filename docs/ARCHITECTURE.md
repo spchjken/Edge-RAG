@@ -155,7 +155,11 @@ src/pipeline_v2/
 | **Edge-RAG V7 (GPU-Sparse Bailout)** | **62.82%** | **49.35%** | **74.18%** | **60.54%** | **0.4731** | **15.61 ms** | **14.56 s** | **1.06 GB** |
 | **SPLADE-v3 (DistilBERT)** | 66.40% | 50.68% | 77.47% | 63.04% | 0.4985 | 46.50 ms | 197.84 s | 5.00 GB |
 
-### 4.2 PyTerrier Baseline Evaluation Suite (`src/evaluation/pyterrier_harness.py`, `scripts/run_pyterrier_baselines.py`)
+### 4.2 PyTerrier Baseline Evaluation Suite (`src/evaluation/pyterrier_harness.py`)
+
+The exact classical six-system protocol, historical evidence status, known
+artifact limitations, and recommended paper labels are documented in
+[`docs/pyterrier_classical_baselines_plan.md`](pyterrier_classical_baselines_plan.md).
 
 To establish rigorous external baseline anchors adhering to standard TREC and BEIR protocols across small and multi-million-document corpora (up to 5.4M+ docs), Edge-RAG integrates a canonical disk-backed PyTerrier evaluation suite:
 - **Canonical 8-Baseline Evaluation Suite (`all8`):**
@@ -183,7 +187,7 @@ To establish rigorous external baseline anchors adhering to standard TREC and BE
 
 - **BRIGHT Pre/Post PRF Exclusion Dynamics & Candidate Depth Safety:**
   - **Pass 1 Feedback Protection:** Clamped to $\min(\max(100, 10 + \text{max\_ex}), 300)$ followed by exclusion filtering and `.head(10)` to eliminate prompt contamination from query-source documents.
-  - **Pass 2 Candidate Funnel Depth:** Clamped to $\min(1000 + \text{max\_ex}, 3000)$ followed by exclusion filtering and `.head(1000)`, guaranteeing that even on math/reasoning datasets with $>1,100$ excluded distractors per query (e.g. `theoremqa_questions`), 100% of queries retain the full $K=1,000$ eligible candidates without truncation.
+  - **Pass 2 Candidate Funnel Depth:** Clamped to $\min(1000 + \text{max\_ex}, 3000)$ followed by exclusion filtering and `.head(1000)`. This bounded padding is designed to preserve the full $K=1,000$ eligible pool, but the retained aggregate CSV does not contain per-query post-filter counts; a universal full-depth guarantee is therefore not independently verified from current artifacts.
 
 - **Output Artifacts & Compressed Run Persistence:**
   - **Results Matrix:** Appended non-destructively into [`results/pyterrier_baselines/pyterrier_baselines_results.csv`](file:///home/donghv/Projects/Edge-RAG/results/pyterrier_baselines/pyterrier_baselines_results.csv) across 25 datasets.
