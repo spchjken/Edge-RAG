@@ -65,6 +65,9 @@ models/
 .gemini/
 .claude/
 
+# Keep local agent decision records out of version control
+.agents/decisions/
+
 # Ignore temp
 tmp_test_ai/
 scratch/
