@@ -371,11 +371,16 @@ Mandatory local controls:
 - `BM25_Default`;
 - `BM25_RM3_Terrier_Default` and `BM25_Bo1_Terrier_Default`;
 - `DPH`, `DPH_RM3_Terrier_Default` and `DPH_Bo1_Terrier_Default`;
-- simple frozen-BGE vocabulary QE at the same vocabulary, candidate, final-term and weight budgets.
+- the fixed `BGE_Vocab_QE` term-neighbour baseline and local-model
+  `LLM_Q2E_ZS` keyword baseline defined in
+  [the dedicated testing plan](bgeqe_llmqe_testing_plan.md). These retain their
+  literature-aligned mechanics rather than being rewritten to share CRVE's
+  candidate, final-term, or weighting budgets.
 
 Conditional references:
 
-- local-model LLM synonym or Query2doc-style lexical expansion with generation latency;
+- restricted LLM synonym generation, few-shot/CoT keyword generation, or
+  Query2doc-style expansion with generation latency;
 - a CEQE-like contextual PRF reference on selected feasible corpora;
 - published or locally feasible dense and learned-sparse systems, with training and index costs;
 - HyDE only as a cross-paradigm reference unless its dense index and generation path are measured;
@@ -431,7 +436,7 @@ evidence because labels influenced previous choices.
 
 | Stage | Work | Required result before proceeding |
 |---|---|---|
-| 0. Freeze contracts | Pin datasets, analyzer, metrics, hardware, simple BGE-Vocab-QE and current Terrier baselines | Reproducible controls and resolved configurations |
+| 0. Freeze contracts | Pin datasets, analyzer, metrics, hardware, the fixed BGE-Vocab-QE and LLM-Q2E/ZS baselines, and current Terrier baselines | Reproducible controls and resolved configurations |
 | 1. Vocabulary study | Audit salience/coverage evidence and compare 1k–15k pools | Candidate coverage/resource plateau supports a capped pool |
 | 2. Context collector | Implement deterministic two-pass collection, filters, reservoirs and cache identity | Repeatable samples, bounded memory and measured preparation time |
 | 3. Minimal reranker | Target-marked windows, frozen embeddings, max and top-2 scoring over a fixed candidate set | Score parity, component timing and term-utility improvement over term-only ranking |
