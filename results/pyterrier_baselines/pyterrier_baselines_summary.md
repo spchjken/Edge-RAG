@@ -1,6 +1,6 @@
 # PyTerrier Baseline Evaluation Summary (Default Baselines Suite)
 
-Generated on 2026-09-09 08:35:43
+Generated on 2026-09-10 14:42:46
 
 ### 1. Headline Retrieval Quality (Linear nDCG@10, Supplemental Exp-nDCG, MRR@10, P@10)
 
@@ -196,6 +196,10 @@ Generated on 2026-09-09 08:35:43
 | bright_leetcode            | SPLADE_v3_PISA           |    0.2757 |        0.2757 |     0.3168 |    0.2295 |   0.3208 | 0.069  |      0.4859 |
 | quora                      | BGE_Small_Dense          |    0.8834 |        0.8834 |     0.8955 |    0.8523 |   0.8759 | 0.1338 |      0.9789 |
 | quora                      | SPLADE_v3_PISA           |    0.8172 |        0.8172 |     0.8362 |    0.7774 |   0.8077 | 0.1247 |      0.9492 |
+| nq                         | BGE_Small_Dense          |    0.4181 |        0.4181 |     0.4743 |    0.3579 |   0.37   | 0.0735 |      0.6567 |
+| nq                         | SPLADE_v3_PISA           |    0.5499 |        0.5499 |     0.5935 |    0.488  |   0.5022 | 0.0884 |      0.7775 |
+| dbpedia_entity             | BGE_Small_Dense          |    0.3832 |        0.3696 |     0.4245 |    0.2458 |   0.7301 | 0.2958 |      0.88   |
+| dbpedia_entity             | SPLADE_v3_PISA           |    0.4254 |        0.4099 |     0.4782 |    0.2972 |   0.7274 | 0.3497 |      0.8975 |
 
 ### 2. Candidate Funnel Ceiling Diagnostics (Recall@K, Completeness@K, Oracle-nDCG@10)
 
@@ -391,6 +395,10 @@ Generated on 2026-09-09 08:35:43
 | bright_leetcode            | SPLADE_v3_PISA           |       0.5171 |       0.7277 |        0.8207 |             0.3873 |             0.5915 |              0.7113 |           0.8426 |
 | quora                      | BGE_Small_Dense          |       0.9949 |       0.9993 |        0.9997 |             0.9872 |             0.9973 |              0.9985 |           0.9998 |
 | quora                      | SPLADE_v3_PISA           |       0.9813 |       0.9952 |        0.9971 |             0.9637 |             0.9878 |              0.9917 |           0.9978 |
+| nq                         | BGE_Small_Dense          |       0.8699 |       0.9457 |        0.9631 |             0.8517 |             0.936  |              0.9563 |           0.9645 |
+| nq                         | SPLADE_v3_PISA           |       0.9323 |       0.9745 |        0.982  |             0.92   |             0.9684 |              0.9771 |           0.983  |
+| dbpedia_entity             | BGE_Small_Dense          |       0.4788 |       0.6516 |        0.7203 |             0.0875 |             0.175  |              0.215  |           0.8851 |
+| dbpedia_entity             | SPLADE_v3_PISA           |       0.5568 |       0.7168 |        0.7771 |             0.13   |             0.2475 |              0.3075 |           0.906  |
 
 ### 3. Retrieval Efficiency & Resource Footprint
 
@@ -586,3 +594,7 @@ Generated on 2026-09-09 08:35:43
 | bright_leetcode            | SPLADE_v3_PISA           |                1508.96 |                2816.7  |                   0.63 |                2774.2  |          897.57 |            4936.65 |         2295.82 |           0    |
 | quora                      | BGE_Small_Dense          |                  46.75 |                 137.31 |                  85.87 |                  28.82 |          771.41 |            2852.21 |            0    |           0    |
 | quora                      | SPLADE_v3_PISA           |                  24.91 |                  64.95 |                  41.18 |                  41.17 |          124.83 |            2927.67 |          831.16 |           0    |
+| nq                         | BGE_Small_Dense          |                 193.74 |                 248.9  |                  20.26 |                  71.03 |         3927.93 |            7565.98 |            0    |           0    |
+| nq                         | SPLADE_v3_PISA           |                  84.64 |                 288.87 |                  10.33 |                 118.3  |         4464.61 |            9214.15 |        13692.9  |           0    |
+| dbpedia_entity             | BGE_Small_Dense          |                 350.13 |                 479.21 |                   5.88 |                 280.71 |         7623.98 |            9364.37 |            0    |           0    |
+| dbpedia_entity             | SPLADE_v3_PISA           |                 114.4  |                 446.38 |                   7.66 |                 228.65 |         5552.93 |            5342.04 |        14912.8  |           0    |
