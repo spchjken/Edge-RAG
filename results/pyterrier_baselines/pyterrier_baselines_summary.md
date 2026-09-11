@@ -1,6 +1,6 @@
 # PyTerrier Baseline Evaluation Summary (Default Baselines Suite)
 
-Generated on 2026-09-10 14:42:46
+Generated on 2026-09-11 10:36:19
 
 ### 1. Headline Retrieval Quality (Linear nDCG@10, Supplemental Exp-nDCG, MRR@10, P@10)
 
@@ -200,6 +200,8 @@ Generated on 2026-09-10 14:42:46
 | nq                         | SPLADE_v3_PISA           |    0.5499 |        0.5499 |     0.5935 |    0.488  |   0.5022 | 0.0884 |      0.7775 |
 | dbpedia_entity             | BGE_Small_Dense          |    0.3832 |        0.3696 |     0.4245 |    0.2458 |   0.7301 | 0.2958 |      0.88   |
 | dbpedia_entity             | SPLADE_v3_PISA           |    0.4254 |        0.4099 |     0.4782 |    0.2972 |   0.7274 | 0.3497 |      0.8975 |
+| hotpotqa                   | BGE_Small_Dense          |    0.654  |        0.654  |     0.6878 |    0.5774 |   0.7958 | 0.1377 |      0.9114 |
+| hotpotqa                   | SPLADE_v3_PISA           |    0.6759 |        0.6759 |     0.7057 |    0.5915 |   0.8601 | 0.1379 |      0.9495 |
 
 ### 2. Candidate Funnel Ceiling Diagnostics (Recall@K, Completeness@K, Oracle-nDCG@10)
 
@@ -399,6 +401,8 @@ Generated on 2026-09-10 14:42:46
 | nq                         | SPLADE_v3_PISA           |       0.9323 |       0.9745 |        0.982  |             0.92   |             0.9684 |              0.9771 |           0.983  |
 | dbpedia_entity             | BGE_Small_Dense          |       0.4788 |       0.6516 |        0.7203 |             0.0875 |             0.175  |              0.215  |           0.8851 |
 | dbpedia_entity             | SPLADE_v3_PISA           |       0.5568 |       0.7168 |        0.7771 |             0.13   |             0.2475 |              0.3075 |           0.906  |
+| hotpotqa                   | BGE_Small_Dense          |       0.8208 |       0.8833 |        0.9084 |             0.6729 |             0.7814 |              0.8269 |           0.9269 |
+| hotpotqa                   | SPLADE_v3_PISA           |       0.8052 |       0.8666 |        0.887  |             0.6273 |             0.7392 |              0.7789 |           0.9114 |
 
 ### 3. Retrieval Efficiency & Resource Footprint
 
@@ -598,3 +602,5 @@ Generated on 2026-09-10 14:42:46
 | nq                         | SPLADE_v3_PISA           |                  84.64 |                 288.87 |                  10.33 |                 118.3  |         4464.61 |            9214.15 |        13692.9  |           0    |
 | dbpedia_entity             | BGE_Small_Dense          |                 350.13 |                 479.21 |                   5.88 |                 280.71 |         7623.98 |            9364.37 |            0    |           0    |
 | dbpedia_entity             | SPLADE_v3_PISA           |                 114.4  |                 446.38 |                   7.66 |                 228.65 |         5552.93 |            5342.04 |        14912.8  |           0    |
+| hotpotqa                   | BGE_Small_Dense          |                 329.06 |                 514.83 |                  11.21 |                 110.87 |         7736.52 |           10176.8  |         7395.08 |           0    |
+| hotpotqa                   | SPLADE_v3_PISA           |                 254.26 |                3721.51 |                   1.92 |                 550.16 |         5838.86 |            5839.92 |        21057.6  |           0    |
