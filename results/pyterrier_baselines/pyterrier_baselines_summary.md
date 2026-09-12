@@ -1,6 +1,6 @@
 # PyTerrier Baseline Evaluation Summary (Default Baselines Suite)
 
-Generated on 2026-09-11 10:36:19
+Generated on 2026-09-12 15:04:57
 
 ### 1. Headline Retrieval Quality (Linear nDCG@10, Supplemental Exp-nDCG, MRR@10, P@10)
 
@@ -202,6 +202,10 @@ Generated on 2026-09-11 10:36:19
 | dbpedia_entity             | SPLADE_v3_PISA           |    0.4254 |        0.4099 |     0.4782 |    0.2972 |   0.7274 | 0.3497 |      0.8975 |
 | hotpotqa                   | BGE_Small_Dense          |    0.654  |        0.654  |     0.6878 |    0.5774 |   0.7958 | 0.1377 |      0.9114 |
 | hotpotqa                   | SPLADE_v3_PISA           |    0.6759 |        0.6759 |     0.7057 |    0.5915 |   0.8601 | 0.1379 |      0.9495 |
+| climate_fever              | BGE_Small_Dense          |    0.2786 |        0.2786 |     0.351  |    0.2149 |   0.3721 | 0.088  |      0.6352 |
+| climate_fever              | SPLADE_v3_PISA           |    0.2091 |        0.2091 |     0.277  |    0.159  |   0.2847 | 0.0655 |      0.5101 |
+| fever                      | BGE_Small_Dense          |    0.8194 |        0.8194 |     0.8294 |    0.7765 |   0.8216 | 0.1007 |      0.9598 |
+| fever                      | SPLADE_v3_PISA           |    0.7684 |        0.7684 |     0.7858 |    0.7257 |   0.7648 | 0.0964 |      0.9167 |
 
 ### 2. Candidate Funnel Ceiling Diagnostics (Recall@K, Completeness@K, Oracle-nDCG@10)
 
@@ -403,6 +407,10 @@ Generated on 2026-09-11 10:36:19
 | dbpedia_entity             | SPLADE_v3_PISA           |       0.5568 |       0.7168 |        0.7771 |             0.13   |             0.2475 |              0.3075 |           0.906  |
 | hotpotqa                   | BGE_Small_Dense          |       0.8208 |       0.8833 |        0.9084 |             0.6729 |             0.7814 |              0.8269 |           0.9269 |
 | hotpotqa                   | SPLADE_v3_PISA           |       0.8052 |       0.8666 |        0.887  |             0.6273 |             0.7392 |              0.7789 |           0.9114 |
+| climate_fever              | BGE_Small_Dense          |       0.5877 |       0.7261 |        0.7808 |             0.3049 |             0.4723 |              0.5596 |           0.8227 |
+| climate_fever              | SPLADE_v3_PISA           |       0.4973 |       0.639  |        0.698  |             0.2182 |             0.3603 |              0.4332 |           0.7522 |
+| fever                      | BGE_Small_Dense          |       0.9545 |       0.9699 |        0.9745 |             0.9244 |             0.9463 |              0.9533 |           0.9793 |
+| fever                      | SPLADE_v3_PISA           |       0.9453 |       0.9667 |        0.9721 |             0.9118 |             0.9388 |              0.9469 |           0.978  |
 
 ### 3. Retrieval Efficiency & Resource Footprint
 
@@ -604,3 +612,7 @@ Generated on 2026-09-11 10:36:19
 | dbpedia_entity             | SPLADE_v3_PISA           |                 114.4  |                 446.38 |                   7.66 |                 228.65 |         5552.93 |            5342.04 |        14912.8  |           0    |
 | hotpotqa                   | BGE_Small_Dense          |                 329.06 |                 514.83 |                  11.21 |                 110.87 |         7736.52 |           10176.8  |         7395.08 |           0    |
 | hotpotqa                   | SPLADE_v3_PISA           |                 254.26 |                3721.51 |                   1.92 |                 550.16 |         5838.86 |            5839.92 |        21057.6  |           0    |
+| climate_fever              | BGE_Small_Dense          |                 413.3  |                 684.32 |                   8.43 |                 165.34 |         9029.22 |           10902.6  |            0    |           0    |
+| climate_fever              | SPLADE_v3_PISA           |                 755.86 |                5311.81 |                   0.92 |                1205.12 |         7101.39 |            5558.98 |        30443.5  |           0    |
+| fever                      | BGE_Small_Dense          |                 478.55 |                 595.46 |                   9.06 |                 135.61 |         9029.18 |           11377.3  |        22266.3  |           0    |
+| fever                      | SPLADE_v3_PISA           |                 168.5  |                 933.98 |                   4.1  |                 269.73 |         7101.33 |            5866.41 |        31763.2  |           0    |
