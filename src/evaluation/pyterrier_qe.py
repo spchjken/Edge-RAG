@@ -203,6 +203,7 @@ class BGEVocabSidecarManager:
 
         t_surf = time.perf_counter()
         doc_count = 0
+        max_surface_sample = 5000  # Match V7 design: 5k sample extracts canonical surfaces in ~1.4s
         for doc_id, text in BenchmarkLoader.stream_corpus(dataset_name):
             doc_count += 1
             if not text:
@@ -211,11 +212,11 @@ class BGEVocabSidecarManager:
             for t, s in zip(terms, surfs):
                 if t in surface_counts:
                     surface_counts[t][s.lower()] += 1
-            if doc_count % 1000000 == 0:
-                print(f"    Surface recovery pass: {doc_count:,} docs streamed...", flush=True)
+            if doc_count >= max_surface_sample:
+                break
 
         timing["qe_surface_recovery_s"] = round(time.perf_counter() - t_surf, 2)
-        print(f"  [Surface Recovery] Streamed {doc_count:,} docs in {timing['qe_surface_recovery_s']}s")
+        print(f"  [Surface Recovery] Sampled {doc_count:,} docs in {timing['qe_surface_recovery_s']}s")
 
         # Step 3: Retain top vocab_cap (15,000) valid terms with recovered surfaces
         valid_vocab = []

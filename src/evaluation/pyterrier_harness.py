@@ -535,11 +535,31 @@ class PyTerrierBaselineHarness:
                 return retr >> filter_post
             return retr
 
+        elif pipeline_name == "DPH_BGE_Vocab_QE":
+            if not hasattr(self, "bge_vocab_rewriter") or self.bge_vocab_rewriter is None:
+                raise ValueError("DPH_BGE_Vocab_QE requires bge_vocab_rewriter to be registered on harness")
+            k = min(1000 + max_ex, 3000) if excluded_map else 1000
+            retr = self.bge_vocab_rewriter >> pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=k)
+            if excluded_map:
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retr >> filter_post
+            return retr
+
         elif pipeline_name == "LLM_Q2E_ZS":
             if not hasattr(self, "llm_qe_rewriter") or self.llm_qe_rewriter is None:
                 raise ValueError("LLM_Q2E_ZS requires llm_qe_rewriter to be registered on harness")
             k = min(1000 + max_ex, 3000) if excluded_map else 1000
             retr = self.llm_qe_rewriter >> pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=k)
+            if excluded_map:
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retr >> filter_post
+            return retr
+
+        elif pipeline_name == "DPH_LLM_Q2E_ZS":
+            if not hasattr(self, "llm_qe_rewriter") or self.llm_qe_rewriter is None:
+                raise ValueError("DPH_LLM_Q2E_ZS requires llm_qe_rewriter to be registered on harness")
+            k = min(1000 + max_ex, 3000) if excluded_map else 1000
+            retr = self.llm_qe_rewriter >> pt.terrier.Retriever(self.index_default, wmodel="DPH", num_results=k)
             if excluded_map:
                 filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
                 return retr >> filter_post
@@ -698,8 +718,8 @@ class PyTerrierBaselineHarness:
             print(f"  [{pipeline_name}] Persisted candidate run -> {parquet_path}", flush=True)
             del persisted_chunks
 
-        is_neural = pipeline_name in ("BGE_Small_Dense", "SPLADE_v3_PISA", "LLM_Q2E_ZS")
-        llm_rewriter = getattr(self, "llm_qe_rewriter", None) if pipeline_name == "LLM_Q2E_ZS" else None
+        is_neural = pipeline_name in ("BGE_Small_Dense", "SPLADE_v3_PISA", "LLM_Q2E_ZS", "DPH_LLM_Q2E_ZS")
+        llm_rewriter = getattr(self, "llm_qe_rewriter", None) if pipeline_name in ("LLM_Q2E_ZS", "DPH_LLM_Q2E_ZS") else None
         latency_metrics = benchmark_single_query_api_latency(
             transformer,
             queries,
