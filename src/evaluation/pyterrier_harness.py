@@ -154,11 +154,13 @@ def benchmark_single_query_api_latency(
     sample_size: int = 1000,
     warmup_size: int = 30,
     seed: int = 42,
+    llm_rewriter: Optional[Any] = None,
 ) -> Dict[str, float]:
     """
     Measures PyTerrier single-query API latency (P50, P90, P99, mean in ms).
     Evaluates on all queries if len(queries) <= sample_size, or a seeded sample of sample_size.
     Directly benchmarks the online API path: Python DataFrame -> JNI -> JVM -> index matching -> DataFrame.
+    If llm_rewriter is provided, adds per-query generation latency for true end-to-end measurement.
     """
     if not queries:
         return {
@@ -190,10 +192,18 @@ def benchmark_single_query_api_latency(
 
     # Timed individual queries
     latencies_ms = []
-    for q_df in single_dfs:
+    for q, q_df in zip(eval_queries, single_dfs):
+        q_gen_ms = 0.0
+        if llm_rewriter is not None and hasattr(llm_rewriter, "get_query_gen_time_ms"):
+            q_text = q_df["query"].iloc[0] if "query" in q_df.columns else (q.get("question") or q.get("query", ""))
+            q_gen_ms = llm_rewriter.get_query_gen_time_ms(q_text)
+            if q_gen_ms == 0.0:
+                raw_text = q.get("question") or q.get("query", "")
+                q_gen_ms = llm_rewriter.get_query_gen_time_ms(raw_text)
+
         t0 = time.perf_counter()
         _ = transformer.transform(q_df)
-        latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+        latencies_ms.append(((time.perf_counter() - t0) * 1000.0) + q_gen_ms)
 
     return {
         "retrieval_api_p50_ms": round(float(np.percentile(latencies_ms, 50)), 2),
@@ -515,6 +525,26 @@ class PyTerrierBaselineHarness:
                 return retr >> filter_post
             return retr
 
+        elif pipeline_name == "BGE_Vocab_QE":
+            if not hasattr(self, "bge_vocab_rewriter") or self.bge_vocab_rewriter is None:
+                raise ValueError("BGE_Vocab_QE requires bge_vocab_rewriter to be registered on harness")
+            k = min(1000 + max_ex, 3000) if excluded_map else 1000
+            retr = self.bge_vocab_rewriter >> pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=k)
+            if excluded_map:
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retr >> filter_post
+            return retr
+
+        elif pipeline_name == "LLM_Q2E_ZS":
+            if not hasattr(self, "llm_qe_rewriter") or self.llm_qe_rewriter is None:
+                raise ValueError("LLM_Q2E_ZS requires llm_qe_rewriter to be registered on harness")
+            k = min(1000 + max_ex, 3000) if excluded_map else 1000
+            retr = self.llm_qe_rewriter >> pt.terrier.Retriever(self.index_default, wmodel="BM25", num_results=k)
+            if excluded_map:
+                filter_post = create_exclusion_filter(excluded_map, max_docs=1000)
+                return retr >> filter_post
+            return retr
+
         elif hasattr(self, "pipelines") and pipeline_name in self.pipelines:
             base = self.pipelines[pipeline_name]
             if excluded_map:
@@ -524,6 +554,7 @@ class PyTerrierBaselineHarness:
                         return filter_tf.transform(base.transform(df))
                 return _FilteredWrapper()
             return base
+
 
         else:
             raise ValueError(f"Unknown pipeline: {pipeline_name}")
@@ -667,17 +698,23 @@ class PyTerrierBaselineHarness:
             print(f"  [{pipeline_name}] Persisted candidate run -> {parquet_path}", flush=True)
             del persisted_chunks
 
-        # 4. Benchmark PyTerrier Single-Query API Latency
-        is_neural = pipeline_name in ("BGE_Small_Dense", "SPLADE_v3_PISA")
+        is_neural = pipeline_name in ("BGE_Small_Dense", "SPLADE_v3_PISA", "LLM_Q2E_ZS")
+        llm_rewriter = getattr(self, "llm_qe_rewriter", None) if pipeline_name == "LLM_Q2E_ZS" else None
         latency_metrics = benchmark_single_query_api_latency(
             transformer,
             queries,
             sample_size=100 if is_neural else 1000,
             warmup_size=5 if is_neural else 30,
             seed=42,
+            llm_rewriter=llm_rewriter,
         )
 
         total_wall_time_s = time.perf_counter() - t0
+        if llm_rewriter is not None and hasattr(llm_rewriter, "get_query_gen_time_ms"):
+            total_wall_time_s += sum(
+                llm_rewriter.get_query_gen_time_ms(q.get("question") or q.get("query", "")) / 1000.0
+                for q in queries
+            )
         total_q = max(1, total_queries)
         harness_per_query_ms = round((total_wall_time_s / total_q) * 1000.0, 2)
         batch_throughput_qps = round(total_queries / max(0.001, total_retrieval_time_s), 2)
