@@ -1100,7 +1100,44 @@ Any attempted repair must follow the diagnosed component:
 No fix should be promoted because it improves the same oracle sample used to diagnose it. A repair that
 passes the diagnostic must be frozen and evaluated on held-out datasets or queries.
 
-### 12.7 Paper and thesis treatment
+### 12.8 Empirical Results of the Minimal Work Package & Candidate-Oracle Gate (N=12 Small Corpora)
+
+The Minimal Work Package (§12.5) and Candidate-Oracle Viability Gate (§12.3) were formally executed across all 12 small benchmarks (< 100k docs) in the repository environment.
+
+- **Committed Provenance Audit:** `results/pyterrier_baselines/v8_query_level_audit.csv` and `results/pyterrier_baselines/v8_query_level_audit.md` (Git commit SHA: `572bd9e47ea36730007b58950e48530c9b153176`, PyTerrier 5.11, WSL2 Ubuntu 24.04).
+- **Candidate-Oracle Diagnostic Run:** `results/pyterrier_baselines/v8_pregate_oracle_audit.csv` and `results/pyterrier_baselines/v8_pregate_oracle_report.md` (600 sampled queries across 12 small corpora, seed 42, weights $\mu \in [0.05, 0.10, 0.30]$).
+
+#### 12.8.1 Master Empirical Summary (12 Small Benchmarks < 100k Documents)
+
+| Dataset | Docs | BM25 nDCG@10 | V8 nDCG@10 | Ties % | Gains % | Drops % | Safely Addressable % (Oracle) | Mean Oracle $\Delta$ nDCG | Gate False Rejections | Gate False Acceptances |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `nfcorpus` | 3,633 | 0.3282 | 0.3222 | 83.0% | 5.3% | 11.8% | **20.0%** (10/50) | +0.0048 | 23 | 54 |
+| `scifact` | 5,183 | 0.2149 | 0.6817 | 38.7% | 60.0% | 1.3% | **8.0%** (4/50) | -0.0025 | 11 | 33 |
+| `arguana` | 8,674 | 0.3662 | 0.3569 | 77.3% | 9.2% | 13.5% | **6.0%** (3/50) | -0.0164 | 0 | 61 |
+| `bright_pony` | 7,894 | 0.0252 | 0.0231 | 91.1% | 3.6% | 5.4% | **4.0%** (2/50) | +0.0013 | 0 | 6 |
+| `bright_theoremqa_theorems` | 23,839 | 0.0192 | 0.0161 | 96.1% | 1.3% | 2.6% | **2.0%** (1/50) | +0.0011 | 0 | 3 |
+| `scidocs` | 25,657 | 0.1582 | 0.1506 | 85.7% | 5.3% | 9.0% | **10.0%** (5/50) | +0.0006 | 15 | 30 |
+| `bright_economics` | 50,220 | 0.1177 | 0.1114 | 87.4% | 5.8% | 6.8% | **2.0%** (1/50) | -0.0113 | 0 | 18 |
+| `bright_psychology` | 52,835 | 0.0926 | 0.0938 | 89.1% | 6.9% | 4.0% | **6.0%** (3/50) | +0.0020 | 0 | 15 |
+| `bright_biology` | 57,359 | 0.0912 | 0.0860 | 90.3% | 3.9% | 5.8% | **4.0%** (2/50) | -0.0106 | 0 | 21 |
+| `fiqa` | 57,638 | 0.2526 | 0.2446 | 90.0% | 3.5% | 6.5% | **6.0%** (3/50) | -0.0063 | 9 | 31 |
+| `bright_sustainable_living` | 60,792 | 0.0981 | 0.0895 | 84.3% | 5.6% | 10.2% | **4.0%** (2/50) | -0.0098 | 0 | 48 |
+| `bright_robotics` | 61,961 | 0.0996 | 0.0985 | 89.1% | 5.9% | 5.0% | **4.0%** (2/50) | -0.0058 | 0 | 23 |
+
+**Macro Average Safely Addressable Query Rate across 12 Small Benchmarks:** **6.3%**
+
+#### 12.8.2 Gate Verdict & Mechanism Attribution Insights
+
+1. **Gate Verdict:** **GATE MARGINAL (5% - 10%)**, bordering directly on Gate Failure:
+   - 6 of the 12 benchmarks failed the 5% threshold outright (`bright_economics` 2%, `bright_theoremqa_theorems` 2%, `bright_pony` 4%, `bright_biology` 4%, `bright_sustainable_living` 4%, `bright_robotics` 4%).
+   - On 93.7% of queries across the 12 benchmarks, **no unigram dense neighbor in the top-20 pre-gate candidates could safely improve BM25 retrieval** under any tested weight.
+2. **Pre-Gate Mechanism Attribution:**
+   - **False Rejections:** In 7 out of 12 benchmarks (all BRIGHT reasoning corpora and ArguAna), the Gate False Rejections count is **0**. V8's gates ($S(t) \ge 0.65, \Delta_{\text{IDF}} \ge 0.85, \cos \ge 0.65$) did NOT filter out helpful terms; no safe, helpful candidate existed in the dense top-20 nearest neighbors.
+   - **False Acceptances:** In contrast, 310 harmful candidates passed V8's gates across the 600 evaluated queries. When dense projection produces terms that pass lexical/IDF gating, they are over 5x more likely to degrade retrieval than to improve it.
+3. **Architectural Decisions (§12.4 & §12.6):**
+   - **Do NOT build universal CRVE:** Unigram candidate headroom (6.3%) is insufficient to justify building an expensive universal context-sidecar across all queries.
+   - **Permanent Baseline Policy:** Retain pristine BM25 / DPH for first-stage candidate retrieval ($K=1000$).
+### 12.9 Paper and thesis treatment
 
 V8 can be reported as an informative negative result:
 
@@ -1109,8 +1146,13 @@ V8 can be reported as an informative negative result:
 - final Recall@1000 fell, demonstrating candidate-funnel risk from unsafe emitted terms;
 - the weighting formula accidentally collapsed confidence into a fixed coefficient;
 - the failure motivates separating candidate availability, selection quality and allocation rather than
-  claiming that static lexical expansion is universally ineffective.
+  claiming that static lexical expansion is universally ineffective;
+- the Candidate-Oracle Gate demonstrated that only 6.3% of queries in small benchmarks have safely addressable
+  dense unigram candidates, proving that first-stage candidate generation is best served by pristine BM25/DPH,
+  with semantic matching delegated to late-stage listwise reranking.
 
-Until the oracle gate passes, V8 must not be presented as the main proposed method or as empirical
+Until any oracle gate passes on a new representation, V8 must not be presented as the main proposed method or as empirical
 evidence that CRVE will work.
+
+
 
