@@ -15,8 +15,10 @@ This document separates four things that must not be conflated:
 4. the decision test for whether Context-Reranked Vocabulary Expansion (CRVE) has real headroom.
 
 This is a diagnostic protocol, not a commitment to V9 or CRVE. The core experiment resources and raw
-runs are on another machine, so runtime claims remain unverified here unless they follow directly from
-the recorded aggregate results.
+runs were generated on the WSL2 Linux edge testbed under `/home/donghv/Projects/Edge-RAG/`. They are
+excluded from the clean Windows Git checkout by `.gitignore`. Runtime claims remain unverified in the
+shared repository unless they follow directly from committed results or are exported from that testbed
+with reproducible provenance.
 
 ## 2. Evidence currently available
 
@@ -474,10 +476,12 @@ the candidate set directly.
 
 For each query in an unbiased, stratified sample:
 
-1. generate the top 20 to 50 candidates without contextual reranking;
-2. inject each candidate separately at the same small weight;
-3. measure its marginal effect on nDCG@10, Recall@100, and Recall@1000;
-4. compare V8's selected candidate with the best available candidate under each declared objective.
+1. enumerate every original analyzed anchor before V8 anchor filtering;
+2. generate the top 20 to 50 dense candidates per anchor before V8 candidate filtering;
+3. annotate which anchors and candidates each V8 gate accepts or rejects and why;
+4. inject a seeded subset of accepted and rejected candidates under the declared weight grid;
+5. measure marginal effects on nDCG@10, Recall@100, and Recall@1000;
+6. compare V8's selected anchor/candidate with the best alternatives before and after gating.
 
 For metric `m`, define candidate utility:
 
@@ -597,11 +601,13 @@ The tests should proceed from cheapest and most decisive to more expensive:
 2. **Rewriter trace:** confirm weight saturation, anchor selection, OOV rates and selected-term
    distributions without retrieval.
 3. **Activation-conditioned audit:** use cached runs and qrels to quantify ties, gains and drops.
-4. **Candidate-oracle sample:** determine whether useful terms exist in the current candidate sets.
-5. **Fixed-candidate weight sweep:** separate selection failure from allocation failure.
-6. **Selector ablations:** cosine-only, bounded IDF and OOV/rare-anchor freeze.
-7. **Fixed-candidate contextual reranking:** test the central CRVE hypothesis.
-8. **Full evaluation:** run across all eligible datasets only after a targeted variant demonstrates
+4. **Pre-gate mechanism audit:** measure whether anchor and candidate gates reject harmful items while
+   retaining useful ones.
+5. **Candidate-oracle sample:** determine whether useful terms exist before and after V8 gating.
+6. **Fixed-candidate weight sweep:** separate selection failure from allocation failure.
+7. **Selector ablations:** cosine-only, bounded IDF and OOV/rare-anchor freeze.
+8. **Fixed-candidate contextual reranking:** test the central CRVE hypothesis.
+9. **Full evaluation:** run across all eligible datasets only after a targeted variant demonstrates
    credible headroom and acceptable latency.
 
 This order prevents spending substantial time implementing context memory before establishing that the
@@ -618,7 +624,8 @@ machine should provide:
 2. the dataset-level sidecar manifests and realized V8 pool counts;
 3. the all-query activation/gain/drop/tie summary for the six initial datasets;
 4. structured traces for the largest drops, largest gains, and a seeded sample of ties;
-5. top-candidate traces for a seeded candidate-oracle sample.
+5. pre-gate anchor and candidate traces, including every acceptance/rejection reason;
+6. accepted and rejected candidate traces for a seeded candidate-oracle sample.
 
 Raw corpus copies are not required for the first diagnostic round if the worker can access the existing
 indices, qrels and cached depth-1,000 runs.
@@ -649,40 +656,72 @@ The next method should be chosen from evidence rather than by automatically incr
 5. What minimum candidate-oracle headroom justifies building the context sidecar?
 6. On which query types should the system abstain from expansion entirely?
 
-## 11. Empirical Counter-Analysis and Forensic Critique
+## 11. Reconciled Counter-Analysis and V8 Disposition
 
-This section systematically evaluates and counters the premises, hypotheses, and architectural assumptions in Sections 1–10 using empirical evidence from the 20-corpus benchmark runs, query-level parquet caches (`data/cache/runs/`), and forensic trace audits (`scratch/audit_low_scoring_corpora.py` and `scratch/verify_hypotheses_with_hard_data.py`).
+This section reconciles the initial hypotheses with the worker's counter-analysis. It distinguishes
+useful corrections from conclusions that remain unproved. Sections 1–10 define the tests; this section
+sets the immediate decision for V8.
 
-### 11.1 Rebuttal to the "Unverified / Remote Machine" Premise (Sections 1, 2, and 8)
+### 11.1 Evidence location and provenance
 
-The premise that raw runs, query-level tie rates, and causal drop mechanisms remain unverified because experiment resources reside on "another machine" is **factually invalidated**:
+There is no contradiction between the two reported environments:
 
-1. **Local Raw Candidate Runs:** Full depth-1,000 candidate rankings (all 1,000 retrieved document IDs and float scores per query) exist locally in `data/cache/runs/` (*e.g.* `bright_sustainable_living_V8_BM25.parquet`, `trec_covid_V8_BM25.parquet`, `quora_V8_BM25.parquet`).
-2. **Local Indices and Harnesses:** The underlying PyTerrier indices reside in `data/cache/terrier_indices/`, and query-level evaluators are fully operational.
-3. **Pre-computed Forensic Audits:** Exact query distributions (ties, gains, drops, and gold document top-10 presence) across all 20 corpora are already calculated and logged in `scratch/audit_low_scoring_corpora.py`. These metrics are documented empirical facts in this workspace.
+1. Full runs, indices and forensic scripts exist on the WSL2 Linux experiment testbed.
+2. `data/cache/` is excluded from Git, and `scratch/` is an uncommitted local workspace.
+3. Those artifacts do not exist in the clean Windows checkout used for this review.
 
-### 11.2 Counter to Hypothesis H1: The Weight-Saturation Fallacy vs. Additive Scoring Invariant
+Therefore, worker-reported query-level figures are useful provisional evidence, but they become shared
+scientific evidence only after export to `results/pyterrier_baselines/`. The export must record the Git
+commit, pipeline configuration, dataset, retrieval model, metric definition, tie tolerance (reported as
+`epsilon=0.001`), script name and seed where applicable. Ephemeral task-log identifiers must not be
+cited as reproducible evidence.
 
-Hypothesis H1 attributes V8's ranking losses primarily to an **allocation failure** (the flat saturated $0.30 w_a$ weight) and hypothesizes that sweeping weights downward ($0.03 \le \alpha \le 0.10$) will eliminate false-positive intruders and rescue performance. This reasoning is flawed due to the structural mechanics of inverted indices:
+### 11.2 H1 reconciliation: calibration defect, probably not the primary cause
+
+The counter-analysis correctly emphasizes the structural risk of independent additive scoring:
 
 1. **Independent Additive Scoring:** Standard BM25 computes document scores as an uncoordinated linear sum:
    $$\text{Score}(D, Q) = \sum_{t \in Q} w_t \cdot \text{BM25}(t, D)$$
-2. **High-IDF Intruder Score Mass:** Because V8 selects rare, discriminative terms ($G_{V8}(e, a)$ explicitly rewards $\text{IDF}(e) / \text{IDF}(a)$), the expansion term $e$ typically possesses a high IDF ($7.0 \le \text{IDF} \le 10.5$). Even at a damped weight of $\alpha = 0.05$ or $0.10$:
-   $$\Delta \text{Score} = \alpha \times \text{IDF}(e) \times \frac{(k_1 + 1) \cdot \text{TF}}{K + \text{TF}} \approx 0.10 \times 8.5 \times 2.0 = +1.70$$
-3. **The Razor-Thin Top-10 Margin:** Across competitive retrieval benchmarks, the score margin between Rank 8, Rank 9, Rank 10, and Rank 11 is frequently smaller than $0.50$ points. An off-topic document matching *only* the expansion term $e$ (with zero hits on original query terms) will jump into the Top 10 with just a $+0.80$ point boost.
-4. **The Top-10 Truncation Cliff:** Displacing even a single gold document from Rank 10 down to Rank 11 causes that document's nDCG contribution to drop from $0.289$ to $0.000$ instantaneously. Lowering the scalar weight does not prevent displacement; it merely shifts the term frequency threshold required for an intruder to break into the Top 10.
-5. **The Missing Invariant:** True synonymy requires a **disjunctive operator** (such as Indri's `#syn(a e)` or Terrier's synonym group), where $e$ only contributes when substituting for $a$. Additive BM25 treats $e$ as an independent retrieval channel. Scalar weight tuning cannot correct this structural mismatch.
+2. **High-IDF intruder score mass:** Because V8 explicitly rewards
+   `IDF(candidate) / IDF(anchor)`, an emitted term can retain meaningful score contribution even at a
+   smaller query coefficient. The worker's illustrative calculation uses IDF `8.5` and a saturated TF
+   factor near `2.0`, giving a contribution near `1.70` at weight `0.10`. The actual candidate-IDF and
+   TF distributions must be exported before this is treated as representative.
+3. **Thin top-rank margins:** Small score additions can cross a rank boundary. The worker reports
+   sub-`0.50` margins near ranks 8–11 and a `0.80` intruder contribution in examined cases; these are
+   trace-level claims pending a committed audit, not universal benchmark constants.
+4. **The Top-10 Truncation Cliff:** Displacing even one relevant document from Rank 10 to Rank 11
+   removes its nDCG@10 contribution.
 
-### 11.3 Counter to Section 3.7: The Misleading Comparison with LLM Zero-Shot Expansion
+These observations do not invalidate H1. They show why weight tuning cannot turn a semantically invalid
+candidate into a valid one. For a finite run, reducing a coefficient can still prevent particular rank
+crossings, and weight zero returns to the lexical baseline. A two-sided sweep remains useful to measure
+sensitivity; it is not presumed to rescue V8.
+
+A synonym/disjunction operator is also not a word-sense guarantee. It may change term-statistics and
+double-counting behavior, but a document containing only the incorrect alternative can still match.
+Candidate validity remains the primary issue; saturated `0.30` weighting is a confirmed secondary
+calibration defect.
+
+### 11.3 LLM QE reconciliation: existence evidence, not an edge-feasibility proof
 
 Section 3.7 cites the positive macro deltas of `LLM_Q2E_ZS` ($+0.00246$ on BM25, $+0.00312$ on DPH) to argue that sparse lexical expansion into inverted indices has viable headroom. This argument conflates two fundamentally incompatible paradigms:
 
-1. **Compositional Context vs. Isolated Unigram Lookup:** A 7B LLM (`Qwen2.5-7B` / `Llama-3-8B`) performs multi-head self-attention over the *entire* query sentence, resolving syntactic dependencies, negatives, and multi-word semantic constraints. In contrast, V8 and static sidecars perform unigram cosine matching against an isolated anchor token.
-2. **Negligible Return at Extreme Latency:** Achieving a macro gain of $+0.0025$ via an LLM required $1,500\text{--}2,500\text{ ms}$ of GPU compute per query. In Edge-RAG, where retrieval must execute on consumer CPU/edge hardware within $<10\text{ ms}$, citing a $+0.0025$ gain from a 7B LLM as justification for a fast dictionary sidecar actually proves the inverse: even under generative semantic reasoning, unconstrained additive lexical expansion into BM25 yields near-zero net benefit.
+1. **Compositional context versus isolated unigram lookup:** A generative LLM processes the complete
+   query and can condition generated terms on relations, negatives and multi-word constraints. V8
+   compares isolated anchor and candidate surfaces. The exact model used in the completed LLM-QE run
+   must be taken from its committed runtime manifest rather than inferred from a default or worker note.
+2. **Cost mismatch:** If the reported `1,500–2,500 ms` generation latency is confirmed by committed
+   logs, the method is not a deployable low-latency substitute for V8.
 
-### 11.4 Counter to Hypothesis H7: Pool Expansion Degrades Deep Candidate Recall
+The positive LLM QE result establishes only that query-contextualized lexical additions can sometimes
+help sparse retrieval. It does not show that a static unigram sidecar can reproduce the gain, nor that
+the gain justifies LLM latency. Exact model identity and generation latency must be exported before the
+cost claim is treated as verified.
 
-Hypothesis H7 assumes that "Increasing pool size raises candidate recall but also raises false-neighbour risk," framing the failure as one of selection precision over an enlarged, higher-recall candidate set. **This assumption is directly refuted by empirical evidence across 20 corpora:**
+### 11.4 H7 reconciliation: enlarged hypothesis space coupled with selector error
+
+The completed runs establish that terms emitted by V8 reduce final retrieval Recall@1000:
 
 | Model Comparison | Delta Recall@1000 | Win / Loss / Tie Record |
 |---|:---:|:---:|
@@ -691,74 +730,387 @@ Hypothesis H7 assumes that "Increasing pool size raises candidate recall but als
 | **V8_BM25 vs V7_BM25** | **-0.0130** | Candidate Recall Degraded |
 | **V8_DPH vs V7_DPH** | **-0.0125** | Candidate Recall Degraded |
 
-#### The Finite-Heap Eviction Mechanism
-In any production search engine, candidate retrieval is bounded by a finite priority queue (heap depth $K=1,000$). When 15,000 vocabulary terms are made eligible, queries receive expansion terms with broader collection occurrences. Thousands of off-topic documents in the corpus match these terms and enter the heap at ranks 200–900. Consequently, marginally-matching gold documents that pure BM25 retrieved at ranks 800–990 are **actively evicted from the 1,000-candidate heap** (pushed to rank 1001+). 
+#### The finite-heap eviction mechanism
 
-Enlarging the vocabulary pool without joint term coordination does not raise candidate recall; it mathematically and empirically guarantees lower candidate recall via heap eviction.
+At retrieval depth `K=1,000`, off-topic documents matching an emitted expansion can enter the heap and
+push marginal relevant documents below the cutoff. This is a plausible mechanism and is consistent
+with the aggregate Recall@1000 regression.
 
-### 11.5 Counter to Section 5 and H4: The Headroom Delusion of CRVE
+However, storing 15,000 terms does not itself affect retrieval, and V8 emits at most one or two terms.
+The accurate causal chain is:
 
-The proposal to develop **Context-Reranked Vocabulary Expansion (CRVE)** (storing passage contexts for tens of thousands of vocabulary terms and running neural reranking over 20–50 candidate terms prior to first-stage retrieval) is undermined by empirical data and architectural design constraints:
+\[
+\text{larger candidate space}
+\rightarrow \text{more possible rare/lateral neighbours}
+\rightarrow \text{selector emits an unsafe term}
+\rightarrow \text{heap eviction}
+\rightarrow \text{Recall@1000 loss}.
+\]
 
-#### A. Empirical Evidence: The 85%–99% Tie Reality
-The table below reports the query-level distribution computed directly from depth-1,000 cached runs across 19 corpora (`scratch/audit_low_scoring_corpora.py`, `task-7128.log`):
+The larger pool may still contain useful alternatives. Only a candidate-oracle comparison can measure
+candidate availability separately from selected-term quality. No mathematical guarantee of lower
+recall follows from pool size alone.
+
+### 11.5 H4 and CRVE reconciliation: high-risk, conditional research direction
+
+The worker-reported audit materially raises the bar for CRVE. It does not yet prove that CRVE has no
+headroom.
+
+#### Provisional query-level evidence
+
+The table below is a representative subset of the worker-reported nDCG@10 audit. It must be regenerated
+as a committed result before publication or a final architectural decision:
 
 | Dataset | BM25 Base | V8_BM25 | Gold in Top 10 % | **Ties %** | Gains % | **Drops %** | Dominant Outcome |
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | `bright_aops` | 0.0604 | 0.0610 | 20.7% | **99.1%** | 0.9% | 0.0% | G > D (▲) |
 | `bright_theoremqa_questions` | 0.0700 | 0.0731 | 11.3% | **96.4%** | 2.1% | 1.5% | G > D (▲) |
-| `bright_theoremqa_theorems` | 0.0192 | 0.0161 | 6.6% | **96.1%** | 1.3% | 2.6% | D > G (▼) |
 | `quora` | 0.7676 | 0.7450 | 91.1% | **94.1%** | 1.0% | 4.9% | D > G (▼) |
-| `bright_pony` | 0.0252 | 0.0231 | 21.4% | **91.1%** | 3.6% | 5.4% | D > G (▼) |
-| `bright_biology` | 0.0912 | 0.0860 | 28.2% | **90.3%** | 3.9% | 5.8% | D > G (▼) |
-| `fiqa` | 0.2526 | 0.2446 | 49.1% | **90.0%** | 3.5% | 6.5% | D > G (▼) |
-| `bright_robotics` | 0.0996 | 0.0985 | 28.7% | **89.1%** | 5.9% | 5.0% | G > D (▲) |
-| `bright_leetcode` | 0.2496 | 0.2370 | 41.5% | **88.7%** | 2.8% | 8.5% | D > G (▼) |
-| `bright_economics` | 0.1177 | 0.1114 | 26.2% | **87.4%** | 5.8% | 6.8% | D > G (▼) |
 | `bright_stackoverflow` | 0.1561 | 0.1515 | 32.5% | **87.2%** | 4.3% | 8.5% | D > G (▼) |
-| `scidocs` | 0.1582 | 0.1506 | 49.8% | **85.7%** | 5.3% | 9.0% | D > G (▼) |
-| `bright_sustainable_living` | 0.0981 | 0.0895 | 30.6% | **84.3%** | 5.6% | 10.2% | D > G (▼) |
-| `nfcorpus` | 0.3282 | 0.3222 | 70.0% | **83.0%** | 5.3% | 11.8% | D > G (▼) |
 | `bright_earth_science` | 0.1201 | 0.1183 | 31.9% | **81.9%** | 9.5% | 8.6% | G > D (▲) |
-| `arguana` | 0.3662 | 0.3569 | 76.3% | **77.3%** | 9.2% | 13.5% | D > G (▼) |
 | `webis_touche2020` | 0.2979 | 0.2781 | 91.8% | **71.4%** | 6.1% | 22.4% | D > G (▼) |
 | `trec_covid` | 0.6295 | 0.5981 | 100.0% | **66.0%** | 6.0% | 28.0% | D > G (▼) |
 
-Key takeaways from the empirical distribution:
-1. **The Dormant Zone:** Across reasoning corpora (BRIGHT), 85% to 99% of queries result in exact ties ($0 \to 0$). Single-word lexical substitutions cannot bridge complex multi-step reasoning, constraints, or code logic.
-2. **The High-Drop Active Zone:** On keyword-matching benchmarks (TREC-COVID, Touche, Quora), where 90%–100% of queries already hit gold documents via BM25, ranking changes are dominated by drops (drops outnumber gains by 3:1 to 5:1).
-3. **Negligible Headroom:** The addressable query headroom where lexical expansion could conceivably improve retrieval without causing false-positive displacement is $<3\%$.
+This supports two conclusions:
 
-#### B. Violation of Edge-RAG Hardware and Latency Budgets
-- **Storage and I/O:** Maintaining passage contexts for 15,000–25,000 terms requires hundreds of megabytes of disk and RAM footprint.
-- **Latency Inflation:** Neural scoring (bi-encoder or cross-encoder) over 20–50 candidate passage contexts adds $25\text{--}50\text{ ms}$ of latency per query, violating Edge-RAG's sub-millisecond expansion design ($<0.15\text{ ms}$).
-- **Architectural Redundancy:** Edge-RAG already defines Stage 3 (Cascade Routing) and Stage 4 (Listwise LLM Reranker) in `docs/ARCHITECTURE.md`. Attempting pre-retrieval context reranking on *isolated terms* duplicates downstream passage reranking at strictly inferior accuracy.
+1. V8 has a large dormant zone, especially on several reasoning corpora.
+2. Where baseline top-10 coverage is already high, V8's changed-query subset is often dominated by
+   drops.
 
-### 11.6 Counter to Hypothesis H3: Misattributing Drops to OOV and Ultra-Rare Anchors
+It does not establish that addressable headroom is below 3%. A tie under V8 can mean no activation,
+wrong selection, inadequate weight, no top-10 change despite a recall change, or genuinely absent
+lexical headroom. The audit measures V8's realized policy, not the best available candidate in its
+pool.
 
-Hypothesis H3 posits that expanding high-IDF or out-of-vocabulary (`DF=1`) anchors is the primary driver of catastrophic drops, recommending an OOV-freeze as a solution. Forensic traces on actual query drops disprove this:
+#### Resource and architectural consequences
 
-1. **Orthographic Filters are Already Active:** In `src/evaluation/pyterrier_v8.py`, `_is_frozen()` already freezes compound version numbers (`nav2`), alphanumeric tokens (`5mmol`), uppercase acronyms, and punctuated strings.
-2. **Drops Occur on Common In-Lexicon Domain Terms:** Forensic analysis of large drops in SciFact, Touche, and Quora demonstrates that losses occur on well-represented vocabulary terms:
-   - *Case Study (SciFact Drop):*
+- Twenty FP16 context vectors for each of 15,000–25,000 terms require approximately 220–366 MiB
+  before metadata. This is material but not automatically disqualifying under the 15 GiB ceiling.
+- CRVE's primary design uses precomputed context vectors. Scoring 100 candidates with 20 contexts each
+  requires about 768,000 scalar multiply-adds, not 2,000 independent encoder calls. The main online
+  cost is query encoding plus memory movement. The asserted `25–50 ms` latency is therefore unverified
+  and must be measured on the target CPU/GPU. A cross-encoder is not part of the minimal pilot.
+- The cascade router and listwise reranker are marked as future extensions in `docs/ARCHITECTURE.md`.
+  Even when implemented, a post-retrieval reranker cannot recover documents missing below depth 1,000.
+  CRVE is not functionally identical, although it is unjustified if candidate-oracle recall headroom is
+  negligible.
+
+### 11.6 H3 reconciliation: OOV handling is a guard, not the solution
+
+The SciFact case demonstrates that in-lexicon semantic drift can be severe:
+
+1. **Case study:**
      - Query: *"Leuko-increased blood increases infectious complications in red blood cell transfusion."*
-     - Anchors selected: `transfusion`, `infectious`, `blood`.
      - Injected expansion: `hemoperfus` (weight $0.30$).
-     - All terms are common in-lexicon medical vocabulary.
      - Outcome: Six off-topic articles on hemoperfusion entered ranks 3–8 due to high term frequency on `hemoperfus`, displacing the pristine gold document from **Rank 1 down to Rank 10**.
-   - The failure was driven by unconstrained additive semantic matching across in-vocabulary terms, not OOV or rare-token representation fragility. An OOV freeze would have had zero effect on this failure.
 
-### 11.7 Architectural Decision Summary
+An OOV freeze would not prevent this example, so it cannot be the main repair. One example does not
+falsify the aggregate hypothesis that rare/OOV anchors form another harmful subgroup; the stratified
+test remains valid.
 
-| Hypothesis / Section | Original Proposition | Empirical / Theoretical Counter-Proof | Status |
-|---|---|---|:---:|
-| **Sections 1, 2, 8** | Raw runs and query traces remain unverified on this machine | Full depth-1,000 parquet runs, indices, and audit scripts exist locally and are verified | **INVALID** |
-| **Hypothesis H1** | Saturated 0.30 weight is the main culprit; weight sweeps can rescue it | Inverted indices score additively; high-IDF terms cause Top-10 displacement even at $\alpha=0.05$ | **INVALID** |
-| **Section 3.7** | LLM QE gains prove sparse lexical expansion has viable headroom | LLM QE yields only $+0.0025$ at 2,000 ms GPU latency; unigram sidecars cannot match LLM rewriting | **INVALID** |
-| **Hypothesis H7** | Increasing pool size raises candidate recall | Recall@1000 dropped across 16 of 20 corpora due to finite-heap ($K=1000$) eviction | **INVALID** |
-| **Section 5 (CRVE)** | Context reranking over candidate pools is the primary path forward | Query headroom is $<3\%$ (85%–99% ties); latency increases by $30\text{ ms}$; duplicates Stage 4 reranker | **INVALID** |
-| **Hypothesis H3** | Large drops are driven by OOV and ultra-rare anchors | Drops occur on common in-lexicon domain terms (e.g. `transfusion` $\to$ `hemoperfus`) | **INVALID** |
+The effective orthographic behavior must also be stated accurately:
 
-**Strategic Directive for Edge-RAG:**
-First-stage retrieval should maintain pristine BM25/DPH lexical scoring to prevent false-positive displacement and heap eviction. Semantic compute should be reserved for **Stage 3 (Cascade Routing)** and **Stage 4 (Listwise LLM Reranking)**, where document passages are evaluated in their complete, multi-word context.
+- tokens containing digits, tokens of length at most two, and selected punctuated compounds are frozen;
+- because freezing is checked first, two-character acronyms are frozen;
+- uppercase alphabetic acronyms of length three to five are subsequently made eligible;
+- V8 expands at most one anchor for shorter queries and two for queries with at least six distinct
+  analyzed terms.
+
+Any trace reporting three actually expanded anchors must be reconciled with the executed source revision
+or relabeled as three eligible/candidate-analysis anchors.
+
+### 11.7 Reconciled status of the hypotheses
+
+| Item | Reconciled status | Consequence |
+|---|---|---|
+| V8 effectiveness | **Failed as a general first-stage method** | Do not use V8 as the production/default retriever |
+| H1: fixed `0.30` saturation | **Confirmed defect; causal size unknown** | Measure sensitivity, but do not attempt a broad tuning campaign before the oracle gate |
+| H2: unbounded IDF preference | **Active leading hypothesis** | Compare selected-term utility under current, cosine-only and bounded-IDF ranking |
+| H3: rare/OOV anchors | **Plausible subgroup, not primary explanation** | Retain a cheap stratified audit; an OOV freeze alone is insufficient |
+| H4: missing query-compatible sense | **Leading conceptual explanation** | Candidate/context validation is relevant only if useful candidates exist |
+| H5: inherited sidecar mismatch | **Code/design mismatch; causal effect unknown** | Record the realized pool, but do not rebuild it before establishing oracle headroom |
+| H6: dormant versus harmful active zones | **Provisionally supported** | Commit the per-query audit and report activation-conditioned results |
+| H7: pool-size/selector interaction | **Plausible coupled mechanism** | Do not infer pool quality from final Recall@1000 alone |
+| H8: reasoning-query limitation | **Provisionally supported** | Consider abstention or query-type routing rather than universal QE |
+| LLM QE relevance | **Positive existence evidence only** | Not proof of a low-latency edge solution |
+| CRVE | **Conditional on candidate-oracle gate** | Do not implement the context sidecar yet |
+
+## 12. Decision: what to do with V8
+
+### 12.1 Immediate disposition
+
+V8 should be **retired as a candidate production method and frozen as a diagnostic ablation**. This
+means:
+
+1. keep standard BM25 and DPH as the operational first-stage defaults;
+2. do not run another full V8 sweep or tune V8 globally;
+3. preserve the current V8 source, configuration and results for negative-result analysis;
+4. use V8's existing pool and top-candidate generator only to test whether useful lexical bridges were
+   available but incorrectly selected;
+5. do not describe V8 as entropy-guaranteed, SPLADE-equivalent, or retrieval-safe in a paper.
+
+This decision recognizes that the complete V8 policy has failed while avoiding the unsupported
+conclusion that every term in its candidate pool is useless.
+
+### 12.2 V7-to-V8 mechanism attribution
+
+The central V8 question is not merely whether its final run loses to BM25/DPH. V8 was designed to
+improve V7 through two interventions:
+
+1. reject anchors that should not be expanded;
+2. reject expansion candidates that are inappropriate for those anchors and queries.
+
+The validation must therefore measure both **what V8 removed** and **what V8 retained**. Auditing only
+the final emitted term cannot determine whether the gates worked.
+
+#### A. Anchor-gate audit
+
+Start from every distinct analyzed content term in each sampled query, before V8 anchor eligibility and
+top-anchor selection. For each anchor, record:
+
+```text
+eligible_under_v8
+rejection_reason
+relative_idf
+df
+in_lexicon
+orthographic_class
+v8_anchor_rank
+actually_selected_for_expansion
+```
+
+Do not label an anchor useful merely because V8's selected candidate helped. For each anchor, inspect a
+fixed pre-gate candidate set and estimate whether **any** candidate offers safe retrieval utility. This
+separates anchor potential from V8 candidate-selection error.
+
+Label an anchor provisionally as:
+
+- **useful-capable:** at least one candidate passes the safe-utility definition in Section 12.3;
+- **harm-only:** tested candidates produce losses but no safe gain;
+- **dormant:** tested candidates cause no measured change;
+- **mixed:** beneficial and harmful candidates both exist, making selection quality decisive.
+
+Report:
+
+\[
+\text{useful-anchor retention}
+=
+\frac{\#\text{ useful-capable anchors accepted by V8}}
+{\#\text{ useful-capable anchors}},
+\]
+
+\[
+\text{harmful-anchor rejection}
+=
+\frac{\#\text{ harm-only anchors rejected by V8}}
+{\#\text{ harm-only anchors}},
+\]
+
+and the useful-capable rate among accepted and actually selected anchors.
+
+This distinguishes three possible anchor failures:
+
+1. **under-filtering:** V8 still expands anchors with no useful candidates;
+2. **over-filtering:** V8 rejects anchors that possess useful candidates;
+3. **mis-prioritization:** useful anchors pass, but highest-relative-IDF ranking selects another anchor.
+
+#### B. Candidate-gate audit
+
+For every audited anchor, retain the dense neighbour list **before** applying V8's similarity, candidate
+DF and asymmetric-IDF filters. Annotate every candidate with:
+
+```text
+passes_similarity_gate
+passes_df_floor
+passes_asymmetric_idf_gate
+rejection_reason
+cosine
+candidate_df
+candidate_idf
+idf_ratio
+v8_selection_score
+v8_selected
+```
+
+Evaluate a seeded subset of both accepted and rejected candidates. Report:
+
+- beneficial-candidate retention: fraction of useful candidates that pass all V8 gates;
+- harmful-candidate rejection: fraction of harmful candidates rejected by at least one gate;
+- false-acceptance rate: harmful candidates among those passing all gates;
+- false-rejection rate: useful candidates among those rejected;
+- selected-candidate regret relative to the best accepted candidate;
+- gate regret relative to the best candidate before gating.
+
+This separates two questions that V8 currently conflates:
+
+1. Did the filters construct a better candidate set?
+2. Given that set, did `cosine * IDF ratio` select the right member?
+
+#### C. Conservative-policy decomposition
+
+The observed small negative macro delta can arise from very different mechanisms:
+
+\[
+E[\Delta U]
+\approx
+P(\text{active})E[\Delta U\mid\text{active}],
+\]
+
+with dataset/query weighting reported exactly rather than inferred from this approximation.
+
+Measure separately:
+
+- fraction of queries with no eligible anchor;
+- fraction with an eligible anchor but no surviving candidate;
+- fraction emitting one or two terms;
+- fraction whose top 10, 100 and 1,000 rankings change;
+- effectiveness conditional on each stage above.
+
+The interpretations are materially different:
+
+| Observed mechanism | What went wrong |
+|---|---|
+| Low activation, retained interventions mostly harmful | Gates are conservative but have poor precision |
+| Useful anchors/candidates are frequently rejected | Gates are over-conservative |
+| Useful candidates survive, but V8 selects another | Ranking rule is defective |
+| Selected candidates help at some weights but not `0.30` | Allocation is defective |
+| No tested candidate helps even before gating | The unigram pool/proposal representation lacks headroom |
+
+#### D. Minimal component counterfactuals
+
+Use the same realized sidecar, query sample and pre-gate neighbour traces. Do not rebuild the pool during
+this attribution stage. Compare:
+
+1. current V8;
+2. V8 without the anchor eligibility gate;
+3. V8 without the asymmetric-IDF candidate gate;
+4. V8 with cosine-only candidate ranking;
+5. V8 with a bounded IDF preference;
+6. current selected terms under the declared weight grid.
+
+These are diagnostic counterfactuals, not a parameter search. Add-one/remove-one comparisons are
+order-dependent, so conclusions must be checked against the direct accepted/rejected utility audit
+above.
+
+### 12.3 Candidate-oracle viability gate
+
+Run one bounded diagnostic before deciding whether to abandon the underlying static-expansion direction.
+Use a seeded, stratified sample from:
+
+- `trec_covid`, `webis_touche2020`, and `quora` as major-loss/high-baseline cases;
+- `bright_psychology` and `bright_theoremqa_questions` as small-win cases;
+- `bright_stackoverflow` as a reasoning-heavy case.
+
+For each sampled query, retain the top 20–50 dense candidates per original analyzed anchor **before V8
+anchor and candidate gating**, while recording whether each item would survive every V8 stage. Inject a
+seeded subset of accepted and rejected candidates separately while holding the analyzer, index, query
+and retrieval model fixed. Use a small declared weight grid such as `0.05, 0.10, 0.30, 0.50`; this
+prevents the candidate oracle from being confounded with the known `0.30` saturation defect. The oracle
+is diagnostic and must not tune the final test set.
+
+Classify a query as **safely addressable** if at least one candidate satisfies either:
+
+1. positive `Delta nDCG@10` without lower Recall@1000; or
+2. positive Recall@100 or Recall@1000 without an nDCG@10 loss beyond the declared tie tolerance.
+
+Also report candidates that trade nDCG against recall rather than silently calling them good or bad.
+
+Predeclare these operational decision bands:
+
+| Safely addressable query rate | Decision |
+|---:|---|
+| Below 5% | Retire general-purpose static first-stage QE and do not build CRVE |
+| 5% to below 10% | Consider only a cheap, reliably detectable query-type route; do not build a universal context sidecar |
+| At least 10% | CRVE may proceed to a small fixed-candidate pilot, provided oracle gains occur across multiple dataset types |
+
+These are project resource thresholds, not universal IR laws. Because any real selector will recover
+only part of oracle performance, a very small oracle-active fraction is insufficient justification for
+context-memory engineering.
+
+The rate threshold is necessary but not sufficient. Proceeding also requires:
+
+- positive oracle mean Recall@100 or Recall@1000 on at least three of the six initial datasets;
+- no dependence on one exceptional corpus;
+- enough separation between useful and harmful candidates to make selection plausible;
+- a credible path to remain within the declared preparation, memory and online-latency budgets.
+
+### 12.4 Outcomes of the gate
+
+#### Gate fails
+
+If fewer than 5% of queries are safely addressable, or oracle gains are isolated to one dataset:
+
+- stop V8-derived first-stage expansion research;
+- retain V8 only as a documented negative ablation;
+- use pristine BM25/DPH candidate generation;
+- direct semantic compute to downstream routing/reranking or investigate a fundamentally different
+  sparse unit such as phrases/entities only if separately justified.
+
+#### Gate is marginal
+
+If 5–10% of queries are safely addressable and form a detectable category:
+
+- do not revive V8 globally;
+- investigate an abstaining router that expands only that category;
+- require the router's errors and latency to be included in the end-to-end evaluation.
+
+#### Gate passes
+
+If at least 10% are safely addressable with cross-dataset oracle gains:
+
+- V8 still remains retired as a complete method;
+- reuse its candidate pool as an experimental input;
+- compare current selection, cosine-only, bounded-IDF and context validation on exactly the same
+  candidates;
+- build only the minimal CRVE sidecar needed for the pilot;
+- promote CRVE only if it captures a meaningful fraction of oracle gain while controlling harmful-term
+  rate, nDCG loss, memory and latency.
+
+### 12.5 Minimal work package on the experiment testbed
+
+Before any new retrieval experiment:
+
+1. export the existing tie/gain/drop audit as a committed CSV and Markdown summary under
+   `results/pyterrier_baselines/`;
+2. record Git revision, runtime V8 configuration, cache/sidecar manifests, realized pool sizes and exact
+   metric/tie definitions;
+3. reconcile the SciFact trace with V8's one-or-two-anchor limit;
+4. trace final weight ratios to confirm the executed run used the saturating defaults;
+5. export pre-gate anchor and candidate decisions required by the mechanism attribution audit;
+6. run the bounded candidate-oracle sample and decision gate above.
+
+No full corpus reindexing, full 20/25-dataset rerun, context-sidecar build, or broad hyperparameter sweep
+is justified before this work package is complete.
+
+### 12.6 Repair map after attribution
+
+Any attempted repair must follow the diagnosed component:
+
+| Evidence | Permitted repair direction |
+|---|---|
+| Harm-only anchors frequently pass | Add an expansion-need/abstention signal; do not merely change candidate weights |
+| Useful-capable anchors are rejected | Relax or replace relative-IDF anchor gating; evaluate more than the highest-IDF anchor |
+| Useful candidates fail the asymmetric-IDF gate | Permit frequency-asymmetric synonyms or use IDF as a bounded risk feature rather than a hard semantic rule |
+| Harmful candidates pass existing gates | Add query-compatible context validation or stronger candidate abstention |
+| Useful candidates pass but lose final ranking | Replace the unbounded IDF selector; test cosine-only, bounded IDF and CRVE on the fixed set |
+| Correct selected terms fail only at `0.30` | Calibrate weight from evidence or use a constrained allocation policy |
+| No pre-gate unigram candidate has utility | Do not repair V8; retire unigram expansion and change representation or retrieval stage |
+| Utility exists only in a detectable query type | Use an abstaining conditional route, never universal V8 |
+
+No fix should be promoted because it improves the same oracle sample used to diagnose it. A repair that
+passes the diagnostic must be frozen and evaluated on held-out datasets or queries.
+
+### 12.7 Paper and thesis treatment
+
+V8 can be reported as an informative negative result:
+
+- corpus-frequency constraints and conservative term counts did not repair context-free lexical
+  projection;
+- final Recall@1000 fell, demonstrating candidate-funnel risk from unsafe emitted terms;
+- the weighting formula accidentally collapsed confidence into a fixed coefficient;
+- the failure motivates separating candidate availability, selection quality and allocation rather than
+  claiming that static lexical expansion is universally ineffective.
+
+Until the oracle gate passes, V8 must not be presented as the main proposed method or as empirical
+evidence that CRVE will work.
 
