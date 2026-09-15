@@ -2,7 +2,7 @@
 
 ## 1. Scientific Provenance & Runtime Environment
 
-- **Git Commit SHA:** `572bd9e47ea36730007b58950e48530c9b153176`
+- **Git Commit SHA:** `d8e68e4cb3f957129da456c867d5836367192557`
 - **Host OS / Runtime:** WSL2 Linux (Ubuntu 24.04), Python 3.12 (`.venv/bin/python3`)
 - **Information Retrieval Engine:** PyTerrier 5.11 (Terrier core, JVM heap cap: 4096 MB)
 - **Sparse Index Properties:** Single-field unstemmed/Porter default index (`data/cache/terrier_indices/*_default/`)
@@ -18,7 +18,7 @@
 | Dataset | Tier | Queries | BM25 nDCG@10 | V8 nDCG@10 | $\Delta$ nDCG@10 | Gold in Top-10 % | Ties % (Count) | Gains % (Count) | Drops % (Count) | Dominant Outcome |
 |:---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|
 | `nfcorpus` | < 100k docs | 323 | 0.3282 | 0.3222 | -0.0060 | 70.0% | 83.0% (268) | 5.3% (17) | 11.8% (38) | Drops > Gains (▼) |
-| `scifact` | < 100k docs | 300 | 0.2149 | 0.6817 | +0.4668 | 26.7% | 38.7% (116) | 60.0% (180) | 1.3% (4) | Gains > Drops (▲) |
+| `scifact` | < 100k docs | 300 | 0.6839 | 0.6817 | -0.0022 | 84.3% | 86.0% (258) | 6.3% (19) | 7.7% (23) | Drops > Gains (▼) |
 | `arguana` | < 100k docs | 1406 | 0.3662 | 0.3569 | -0.0092 | 76.3% | 77.3% (1087) | 9.2% (129) | 13.5% (190) | Drops > Gains (▼) |
 | `bright_pony` | < 100k docs | 112 | 0.0252 | 0.0231 | -0.0020 | 21.4% | 91.1% (102) | 3.6% (4) | 5.4% (6) | Drops > Gains (▼) |
 | `bright_theoremqa_theorems` | < 100k docs | 76 | 0.0192 | 0.0161 | -0.0032 | 6.6% | 96.1% (73) | 1.3% (1) | 2.6% (2) | Drops > Gains (▼) |
@@ -39,6 +39,6 @@
 | `quora` | >= 100k docs | 10000 | 0.7676 | 0.7450 | -0.0226 | 91.1% | 94.1% (9411) | 1.0% (103) | 4.9% (486) | Drops > Gains (▼) |
 
 ### Small Benchmarks (< 100k docs, N=12) Averages:
-- **Mean Ties Rate:** 83.5%
-- **Mean Gains Rate:** 9.7%
-- **Mean Drops Rate:** 6.8%
+- **Mean Ties Rate:** 87.4%
+- **Mean Gains Rate:** 5.2%
+- **Mean Drops Rate:** 7.4%

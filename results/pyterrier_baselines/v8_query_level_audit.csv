@@ -1,6 +1,6 @@
 dataset,tier,queries,bm25_ndcg10,v8_bm25_ndcg10,delta_ndcg10,bm25_gold_in_top10_count,bm25_gold_in_top10_pct,ties_count,ties_pct,gains_count,gains_pct,drops_count,drops_pct,dominant_outcome
 nfcorpus,< 100k docs,323,0.3282,0.3222,-0.006,226,70.0,268,83.0,17,5.3,38,11.8,Drops > Gains (▼)
-scifact,< 100k docs,300,0.2149,0.6817,0.4668,80,26.7,116,38.7,180,60.0,4,1.3,Gains > Drops (▲)
+scifact,< 100k docs,300,0.6839,0.6817,-0.0022,253,84.3,258,86.0,19,6.3,23,7.7,Drops > Gains (▼)
 arguana,< 100k docs,1406,0.3662,0.3569,-0.0092,1073,76.3,1087,77.3,129,9.2,190,13.5,Drops > Gains (▼)
 bright_pony,< 100k docs,112,0.0252,0.0231,-0.002,24,21.4,102,91.1,4,3.6,6,5.4,Drops > Gains (▼)
 bright_theoremqa_theorems,< 100k docs,76,0.0192,0.0161,-0.0032,5,6.6,73,96.1,1,1.3,2,2.6,Drops > Gains (▼)
