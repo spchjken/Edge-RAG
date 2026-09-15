@@ -1,0 +1,5 @@
+dataset,queries,dph_baseline_ndcg,dph_oracle_ndcg,dph_oracle_delta
+scifact,50,0.6107,0.6107,0.0
+nfcorpus,50,0.3352,0.341,0.0058
+trec_covid,50,0.631,0.6588,0.0278
+bright_stackoverflow,50,0.1788,0.1788,0.0

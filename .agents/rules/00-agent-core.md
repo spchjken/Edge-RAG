@@ -46,6 +46,14 @@ Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
   - **Background Process Detachment**: Any background watcher, daemon, or async script spawned in bash MUST fully detach its file descriptors (`> /dev/null 2>&1 < /dev/null &`). Leaving child processes attached to `stdout`/`stderr` prevents EOF and indefinitely deadlocks the IDE task monitor.
   - **IPC & Named FIFO Safety**: In multi-process pipelines (e.g. PyTerrier streaming via named FIFOs to the JVM), ensure error handlers close FIFOs cleanly to prevent downstream Java/C readers from blocking on empty pipes.
   - **Unbuffered Execution & Non-Interactive stdin**: Always execute Python scripts with unbuffered I/O (`.venv/bin/python3 -u`) so error traces flush immediately, and enforce non-interactive execution (`< /dev/null` or `CI=1`) to prevent any library from blocking on `/dev/tty`.
+  - **Mandatory Watchdog Liveness Protocol (`schedule`)**: Whenever spawning an asynchronous background task via `run_command` that will run in the background, the agent MUST immediately schedule a watchdog timer using the `schedule` tool (e.g., `schedule(DurationSeconds=..., TimerCondition="<task-id>", Prompt="...")`).
+    - *Non-Destructive Heartbeat*: The watchdog timer merely wakes the agent up; it does NOT kill or interrupt the underlying OS process.
+    - *Progress Verification*: Upon timer wakeup, the agent must inspect the task status (`manage_task(Action='status')`) and read the latest log content (`view_file`). If the job is actively progressing (log file is growing, queries/epochs advancing), the agent MUST reschedule the timer and allow the job to continue running.
+    - *Deadlock Remediation*: Only if the task has produced zero output, consumed zero CPU, or remained frozen on EOF/stdin for multiple intervals should the agent terminate the task and diagnose the failure.
+    - *Automatic Cancellation*: When `TimerCondition="<task-id>"` is used, normal task completion automatically cancels the timer early.
+  - **Diagnostic Probes & Quick Command Bounds**:
+    - Quick one-liners and exploratory diagnostic probes (expected runtime $<10$s) MUST be wrapped with a hard OS `timeout` (e.g., `timeout 30s .venv/bin/python3 -u ... < /dev/null`) and use adequate synchronous wait (`WaitMsBeforeAsync: 5000` to `10000ms`) so output returns immediately in the same turn without being handed off to background tasks.
+    - Long-running benchmark or evaluation jobs MUST NOT use short OS timeouts; they rely exclusively on the non-destructive agent heartbeat watchdog above.
 
 ## 5. Three Strikes Halt
 - If a specific test, script, command, or operation fails with the exact same error 3 times consecutively: **HALT**.
