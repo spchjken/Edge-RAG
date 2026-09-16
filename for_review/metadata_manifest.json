@@ -1,0 +1,45 @@
+{
+  "git_commit": "8c854b2f618ae5cdbbb907a38bcab283b8fb39ed",
+  "datasets": [
+    "scifact",
+    "bright_aops",
+    "nfcorpus",
+    "trec_covid"
+  ],
+  "total_records": 1230704,
+  "total_queries": {
+    "bright_aops": 50,
+    "nfcorpus": 50,
+    "scifact": 50,
+    "trec_covid": 50
+  },
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "capacities": [
+    1000,
+    2500,
+    5000,
+    10000,
+    15000,
+    20000
+  ],
+  "policies": [
+    "salience",
+    "specificity",
+    "hybrid",
+    "stratified",
+    "coverage"
+  ],
+  "metric_definitions": {
+    "nDCG@10": "Official linear ir_measures.nDCG@10",
+    "R@1000": "Official ir_measures.R@1000",
+    "ranking_useful": "delta_ndcg10 > 1e-6",
+    "ranking_safe": "delta_ndcg10 > 1e-6 and delta_r1000 >= -1e-6",
+    "recall_safe": "delta_r1000 > 1e-6 and delta_ndcg10 >= -0.01"
+  }
+}
