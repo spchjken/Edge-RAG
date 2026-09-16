@@ -51,6 +51,11 @@ Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
     - *Progress Verification*: Upon timer wakeup, the agent must inspect the task status (`manage_task(Action='status')`) and read the latest log content (`view_file`). If the job is actively progressing (log file is growing, queries/epochs advancing), the agent MUST reschedule the timer and allow the job to continue running.
     - *Deadlock Remediation*: Only if the task has produced zero output, consumed zero CPU, or remained frozen on EOF/stdin for multiple intervals should the agent terminate the task and diagnose the failure.
     - *Automatic Cancellation*: When `TimerCondition="<task-id>"` is used, normal task completion automatically cancels the timer early.
+    - *Context & Token Economy (Proportional Durations)*: Watchdog timer intervals MUST be scaled proportionally to expected job duration to avoid context window inflation and unnecessary token consumption:
+      - **Short jobs** ($<5$ min expected): 60s–120s.
+      - **Medium jobs** (5–30 min expected): 5m–10m (300s–600s).
+      - **Heavy batch/sweep/oracle jobs** ($>30$ min expected or multi-hour runs): **15m–30m (900s–1800s)**, or up to **1 hour (3600s)**.
+      - NEVER use aggressive sub-5-minute polling on heavy multi-hour jobs; `TimerCondition="<task-id>"` already wakes the agent immediately upon task completion with zero delay.
   - **Diagnostic Probes & Quick Command Bounds**:
     - Quick one-liners and exploratory diagnostic probes (expected runtime $<10$s) MUST be wrapped with a hard OS `timeout` (e.g., `timeout 30s .venv/bin/python3 -u ... < /dev/null`) and use adequate synchronous wait (`WaitMsBeforeAsync: 5000` to `10000ms`) so output returns immediately in the same turn without being handed off to background tasks.
     - Long-running benchmark or evaluation jobs MUST NOT use short OS timeouts; they rely exclusively on the non-destructive agent heartbeat watchdog above.
