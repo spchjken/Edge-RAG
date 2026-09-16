@@ -88,10 +88,33 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
     else:
         df = pd.read_parquet(audit_path)
 
-    print(f"Loaded {len(df):,} records across {df['dataset'].nunique()} datasets: {df['dataset'].unique().tolist()}")
+    # Ingest dynamic eligible vocabulary sizes and document counts from run_manifest.json if present
+    audit_dir = audit_path if os.path.isdir(audit_path) else os.path.dirname(audit_path)
+    run_manifest_path = os.path.join(audit_dir, "run_manifest.json")
+    runtime_eligible_vocabs = dict(ELIGIBLE_VOCAB_SIZES)
+    runtime_doc_counts = dict(DOC_COUNTS)
+    if os.path.exists(run_manifest_path):
+        try:
+            with open(run_manifest_path, "r", encoding="utf-8") as f:
+                run_m = json.load(f)
+                if "eligible_vocab_sizes" in run_m:
+                    runtime_eligible_vocabs.update(run_m["eligible_vocab_sizes"])
+                if "document_counts" in run_m:
+                    runtime_doc_counts.update(run_m["document_counts"])
+                elif "num_docs" in run_m:
+                    runtime_doc_counts.update(run_m["num_docs"])
+                print(f"Loaded dynamic metadata from {run_manifest_path}: {list(runtime_eligible_vocabs.keys())}")
+        except Exception as e:
+            print(f"Warning: could not load {run_manifest_path}: {e}")
 
     # Ensure qid is string and check column parity
     df["qid"] = df["qid"].astype(str)
+
+    # Deduplicate raw candidate audit variants on (dataset, qid, candidate_term, weight)
+    n_before = len(df)
+    df = df.drop_duplicates(subset=["dataset", "qid", "candidate_term", "weight"])
+    if len(df) < n_before:
+        print(f"Deduplicated raw variants: {n_before:,} -> {len(df):,}")
 
     # Calculate delta metrics directly if not present
     if "delta_ndcg10" not in df.columns:
@@ -196,8 +219,8 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
 
         row = {
             "dataset": ds,
-            "num_docs": DOC_COUNTS.get(ds, 0),
-            "eligible_vocab_size": ELIGIBLE_VOCAB_SIZES.get(ds, 0),
+            "num_docs": runtime_doc_counts.get(ds, 0),
+            "eligible_vocab_size": runtime_eligible_vocabs.get(ds, 0),
             "num_queries": n_q,
             "baseline_ndcg10": base_ndcg10,
             "baseline_r100": base_r100,
@@ -262,10 +285,12 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
                 "DF1 Useful but Dominated": 0,
             }
 
+            unique_df1_gains = []
             for q in all_qids:
                 q_sub = sub_scope[sub_scope["qid"] == q]
                 if q_sub.empty:
                     bucket_counts["Neither Useful"] += 1
+                    unique_df1_gains.append(0.0)
                     continue
 
                 # Max delta for DF=1 candidates
@@ -276,9 +301,14 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
                 elig_cands = q_sub[q_sub["is_raw_only"] == False]
                 g_elig = max(elig_cands["delta_ndcg10"].max(), 0.0) if not elig_cands.empty else 0.0
 
+                # Formal mathematical definition: G_unique_df1(q) = max(0, G_1(q) - G_E(q))
+                g_unique_df1 = max(0.0, g_df1 - g_elig)
+                unique_df1_gains.append(g_unique_df1)
+
                 bucket = classify_df1_dominance_query(g_df1, g_elig, tau=TAU)
                 bucket_counts[bucket] += 1
 
+            n_unique_pos = sum(g > TAU for g in unique_df1_gains)
             dom_row = {
                 "dataset": ds,
                 "evaluation_scope": scope_label,
@@ -293,6 +323,9 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
                 "useful_tie_pct": bucket_counts["Useful Tie"] / n_q * 100.0,
                 "df1_useful_dominated_count": bucket_counts["DF1 Useful but Dominated"],
                 "df1_useful_dominated_pct": bucket_counts["DF1 Useful but Dominated"] / n_q * 100.0,
+                "mean_unique_df1_gain": float(np.mean(unique_df1_gains)),
+                "num_queries_unique_df1_pos": int(n_unique_pos),
+                "pct_queries_unique_df1_pos": float(n_unique_pos / n_q * 100.0),
             }
             dominance_rows.append(dom_row)
 
@@ -421,7 +454,7 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
         base_ndcg = q_base_ndcg.mean()
         base_r1000 = q_base_r1000.mean()
 
-        v_elig_total = ELIGIBLE_VOCAB_SIZES.get(ds, sub[sub["is_raw_only"] == False]["candidate_term"].nunique())
+        v_elig_total = runtime_eligible_vocabs.get(ds, sub[sub["is_raw_only"] == False]["candidate_term"].nunique())
 
         # Baseline eligible headroom with abstention
         elig = sub[sub["is_raw_only"] == False]
@@ -431,9 +464,9 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
             for q in all_qids:
                 if q in q_elig_max:
                     q_elig_delta[q] = max(q_elig_max[q] - q_base_ndcg[q], 0.0)
-            elig_best_delta = max(q_elig_delta.mean(), TAU)
+            elig_best_delta = q_elig_delta.mean()
         else:
-            elig_best_delta = TAU
+            elig_best_delta = 0.0
 
         for pol in POLICIES:
             rank_col = f"{pol}_rank"
@@ -441,7 +474,7 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
             # Combine Fixed capacities, Percentage capacities, and explicit 15% adaptive rule
             capacity_evaluations = []
             for cap in FIXED_CAPACITIES:
-                capacity_evaluations.append(("fixed", cap, cap, (cap / v_elig_total) * 100.0))
+                capacity_evaluations.append(("fixed", cap, cap, (cap / max(v_elig_total, 1)) * 100.0))
 
             for p in PERCENTAGE_CAPACITIES:
                 eff_cap = min(20000, max(1, int(np.floor(p * v_elig_total))))
@@ -449,7 +482,7 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
 
             # Explicit 15% adaptive rule: B = min(10000, max(2500, floor(0.15 * |V_elig|)))
             eff_adapt = min(10000, max(2500, int(np.floor(0.15 * v_elig_total))))
-            capacity_evaluations.append(("adaptive_rule_15pct", "adaptive_15pct_2.5k_10k", eff_adapt, (eff_adapt / v_elig_total) * 100.0))
+            capacity_evaluations.append(("adaptive_rule_15pct", "adaptive_15pct_2.5k_10k", eff_adapt, (eff_adapt / max(v_elig_total, 1)) * 100.0))
 
             for cap_type, req_cap, eff_cap, actual_pct in capacity_evaluations:
                 cap_sub = sub[(sub[rank_col] >= 0) & (sub[rank_col] <= eff_cap)]
@@ -466,7 +499,7 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
                         "delta_ndcg10": 0.0,
                         "oracle_r1000": base_r1000,
                         "delta_r1000": 0.0,
-                        "pct_retained_vs_eligible": 0.0,
+                        "pct_retained_vs_eligible": np.nan if elig_best_delta <= TAU else 0.0,
                         "recall_safe_query_rate": 0.0,
                         "ranking_safe_query_rate": 0.0,
                     })
@@ -506,7 +539,10 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
 
                 mean_delta_ndcg = q_delta_ndcg.mean()
                 mean_delta_r1000 = q_delta_r.mean()
-                pct_retained = min((mean_delta_ndcg / elig_best_delta) * 100.0, 100.0)
+                if elig_best_delta <= TAU:
+                    pct_retained = np.nan
+                else:
+                    pct_retained = min((mean_delta_ndcg / elig_best_delta) * 100.0, 100.0)
 
                 knee_rows.append({
                     "dataset": ds,
@@ -691,8 +727,8 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
         "datasets": df["dataset"].unique().tolist(),
         "total_executed_candidate_query_weight_variants": len(df),
         "total_queries": df.groupby("dataset")["qid"].nunique().to_dict(),
-        "document_counts": DOC_COUNTS,
-        "eligible_vocab_sizes": ELIGIBLE_VOCAB_SIZES,
+        "document_counts": runtime_doc_counts,
+        "eligible_vocab_sizes": runtime_eligible_vocabs,
         "weights": WEIGHTS,
         "fixed_capacities": FIXED_CAPACITIES,
         "percentage_capacities": PERCENTAGE_CAPACITIES,

@@ -1,0 +1,71 @@
+{
+  "git_commit": "0c78dc96a705a728146d5025ab9fe1c7668c1399",
+  "timestamp": "2026-09-16T11:35:03Z",
+  "phase": "B",
+  "datasets": [
+    "fiqa",
+    "scidocs",
+    "arguana",
+    "bright_stackoverflow"
+  ],
+  "sample_size": 50,
+  "seed": 42,
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "peak_process_tree_rss_gib": 1.506,
+  "num_docs": {
+    "fiqa": 57600,
+    "scidocs": 25657,
+    "arguana": 8674,
+    "bright_stackoverflow": 107081
+  },
+  "eligible_vocab_sizes": {
+    "fiqa": 18796,
+    "scidocs": 18151,
+    "arguana": 9841,
+    "bright_stackoverflow": 28373
+  },
+  "total_lexicon_terms": {
+    "fiqa": 51260,
+    "scidocs": 55565,
+    "arguana": 22568,
+    "bright_stackoverflow": 78012
+  },
+  "total_variants": 145838,
+  "total_retrieval_time_sec": 3958.45,
+  "baseline_parity": {
+    "fiqa": {
+      "dataset": "fiqa",
+      "checked": 5,
+      "passed": 5,
+      "max_score_diff": 0.0,
+      "status": "PASS"
+    },
+    "scidocs": {
+      "dataset": "scidocs",
+      "checked": 5,
+      "passed": 5,
+      "max_score_diff": 0.0,
+      "status": "PASS"
+    },
+    "arguana": {
+      "dataset": "arguana",
+      "checked": 5,
+      "passed": 5,
+      "max_score_diff": 0.0,
+      "status": "PASS"
+    },
+    "bright_stackoverflow": {
+      "dataset": "bright_stackoverflow",
+      "checked": 5,
+      "passed": 5,
+      "max_score_diff": 0.0,
+      "status": "PASS"
+    }
+  }
+}

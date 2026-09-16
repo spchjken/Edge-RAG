@@ -1,0 +1,17 @@
+dataset,evaluation_scope,num_queries,neither_useful_count,neither_useful_pct,df1_wins_count,df1_wins_pct,eligible_wins_df1_inactive_count,eligible_wins_df1_inactive_pct,useful_tie_count,useful_tie_pct,df1_useful_dominated_count,df1_useful_dominated_pct,mean_unique_df1_gain,num_queries_unique_df1_pos,pct_queries_unique_df1_pos
+scifact,exact_mu010,50,35,70.0,1,2.0,8,16.0,4,8.0,2,4.0,0.00738140492857085,1,2.0
+scifact,screened_multi_weight,50,27,54.0,0,0.0,16,32.0,5,10.0,2,4.0,0.0,0,0.0
+bright_aops,exact_mu010,50,49,98.0,0,0.0,1,2.0,0,0.0,0,0.0,0.0,0,0.0
+bright_aops,screened_multi_weight,50,29,57.99999999999999,0,0.0,21,42.0,0,0.0,0,0.0,0.0,0,0.0
+nfcorpus,exact_mu010,50,22,44.0,2,4.0,2,4.0,5,10.0,19,38.0,0.0011114171047382402,2,4.0
+nfcorpus,screened_multi_weight,50,9,18.0,4,8.0,5,10.0,2,4.0,30,60.0,0.029288697567760032,4,8.0
+trec_covid,exact_mu010,50,2,4.0,1,2.0,14,28.000000000000004,5,10.0,28,56.00000000000001,0.0008814815900800754,1,2.0
+trec_covid,screened_multi_weight,50,1,2.0,0,0.0,6,12.0,0,0.0,43,86.0,0.0,0,0.0
+fiqa,exact_mu010,50,31,62.0,0,0.0,15,30.0,0,0.0,4,8.0,0.0,0,0.0
+fiqa,screened_multi_weight,50,5,10.0,0,0.0,40,80.0,0,0.0,5,10.0,0.0,0,0.0
+scidocs,exact_mu010,50,26,52.0,4,8.0,12,24.0,5,10.0,3,6.0,0.0070404263500985385,4,8.0
+scidocs,screened_multi_weight,50,4,8.0,1,2.0,29,57.99999999999999,8,16.0,8,16.0,0.0006602989616966881,1,2.0
+arguana,exact_mu010,50,44,88.0,0,0.0,4,8.0,2,4.0,0,0.0,0.0,0,0.0
+arguana,screened_multi_weight,50,23,46.0,1,2.0,25,50.0,1,2.0,0,0.0,0.0013864688385321388,1,2.0
+bright_stackoverflow,exact_mu010,50,44,88.0,1,2.0,1,2.0,3,6.0,1,2.0,0.00038110747003564983,1,2.0
+bright_stackoverflow,screened_multi_weight,50,31,62.0,0,0.0,14,28.000000000000004,3,6.0,2,4.0,0.0,0,0.0

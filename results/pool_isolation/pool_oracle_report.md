@@ -37,9 +37,9 @@ This report establishes the empirical findings for **Stage 1 (Vocabulary Pool Cr
    - In NFCorpus (biomedical clinical entities), $DF=1$ wins outright in only **8.0%** of queries (4/50).
    - *Policy Conclusion:* Excluding $DF=1$ terms removes over $60\%$ of noisy vocabulary entries while losing only ~6.4% of total potential gain on clinical corpora and 0% on math/scientific fact verification. An optional rare-entity rescue channel may be preserved for high-confidence contextual matches, but default exclusion from the principal pool remains sound.
 
-3. **Deployable Pool Capacity: $B=10\text{k}$ Provisional Default & Evaluated 15% Adaptive Rule:**
+3. **Capacity-Limited Oracle Pool Capacity: $B=10\text{k}$ Provisional Default & Candidate 15% Adaptive Rule:**
    - **Fixed 10k Capacity:** Retains **100.0%** of eligible ceiling on SciFact and NFCorpus, **97.5%** on BRIGHT-AOPS ($+0.0851$ vs $+0.0872$), and **97.2%** on TREC-COVID ($+0.2953$ vs $+0.3040$). Fixed 10k serves as a strong provisional default for Stage 2 development.
-   - **Evaluated 15% Adaptive Rule:** We explicitly evaluated the proposed rule:
+   - **Evaluated 15% Candidate Adaptive Rule:** We explicitly evaluated the candidate Stage 2 development rule:
      $$B = \min(10{,}000, \max(2{,}500, \lfloor 0.15 \cdot |V_{\text{eligible}}| \rfloor))$$
      yielding exact evaluated capacities of:
      - **SciFact ($|V|=5,595$):** $B = 2,500$ terms ($44.7\%$), retaining **$88.2\% - 95.8\%$** across policies.
@@ -119,11 +119,11 @@ The five deterministic nested candidate pool sequences generated in `src/evaluat
 | **Recall-Priority Joint Safe Oracle** | **1.0000** ($+0.0200$) | **0.6179** ($+0.1589$) | **0.7665** ($+0.4106$) | **0.5263** ($+0.0776$) |
 | — 95% Bootstrap CI on $\Delta$R@1000 | $[0.0000, 0.0600]$ | $[0.1081, 0.2207]$ | $[0.3192, 0.5138]$ | $[0.0554, 0.1064]$ |
 | — Resulting $\Delta$nDCG@10 (Paired) | $+0.0000$ | $+0.0129$ | $+0.2159$ | $+0.1286$ |
-| **Deployable: Salience ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | **0.1223** ($+0.0851$) | **0.7384** ($+0.4286$) | **0.9005** ($+0.2939$) |
-| **Deployable: Specificity ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | **0.1223** ($+0.0851$) | **0.7384** ($+0.4286$) | 0.8949 ($+0.2883$) |
-| **Deployable: Hybrid ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | **0.1223** ($+0.0851$) | **0.7384** ($+0.4286$) | 0.8944 ($+0.2879$) |
-| **Deployable: Stratified ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | 0.1213 ($+0.0841$) | **0.7384** ($+0.4286$) | **0.9019** ($+0.2953$) |
-| **Deployable: Coverage ($B=10\text{k}$ Exact)** | 0.9043 ($+0.2599$) | 0.1085 ($+0.0712$) | **0.7384** ($+0.4286$) | 0.8860 ($+0.2795$) |
+| **Oracle Pool: Salience ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | **0.1223** ($+0.0851$) | **0.7384** ($+0.4286$) | **0.9005** ($+0.2939$) |
+| **Oracle Pool: Specificity ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | **0.1223** ($+0.0851$) | **0.7384** ($+0.4286$) | 0.8949 ($+0.2883$) |
+| **Oracle Pool: Hybrid ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | **0.1223** ($+0.0851$) | **0.7384** ($+0.4286$) | 0.8944 ($+0.2879$) |
+| **Oracle Pool: Stratified ($B=10\text{k}$ Exact)** | **0.9069** ($+0.2625$) | 0.1213 ($+0.0841$) | **0.7384** ($+0.4286$) | **0.9019** ($+0.2953$) |
+| **Oracle Pool: Coverage ($B=10\text{k}$ Exact)** | 0.9043 ($+0.2599$) | 0.1085 ($+0.0712$) | **0.7384** ($+0.4286$) | 0.8860 ($+0.2795$) |
 
 ---
 
@@ -296,7 +296,7 @@ The table reports **both** unconditional percentages (percentage of all candidat
 
 ---
 
-### 7.2 Nuanced Interpretation: Score Deficit vs. Inverse Specificity
+### 7.2 Diagnostic Interpretation: Score Deficit vs. Inverse Specificity
 
 The empirical data reveal two critical insights:
 
@@ -311,30 +311,30 @@ The empirical data reveal two critical insights:
    - In SciFact D10, **60.00%** require $\mu=1.00$.
    - In BRIGHT-AOPS D10, **92.59%** require $\mu=1.00$.
 
-3. **Theoretical Resolution: The Score-Deficit Model:**
-   The naive inverse-specificity hypothesis $\mu(t) \propto \frac{A(q)}{I(t)}$ assumes that high-IDF terms need smaller weights because their marginal impact is high. The data decisively reject this simplification.
-   A defensible formulation must account for the required intervention:
+3. **Diagnostic Post-Hoc Decomposition (Not a Proposed Weighting Formula):**
+   The oracle results contradict a simple monotonic assumption that higher-IDF terms always require lower weights. The observed relationship is confounded by initial document rank, query score composition, corpus domain, and required promotion distance.
+   A useful post-hoc decomposition explaining this oracle behavior is:
    $$\mu(q, t) = c(q, t) \cdot \frac{\Delta_{\mathrm{needed}}(q, t)}{I(t) + \epsilon}$$
    where:
-   - $c(q, t)$ is contextual confidence that the term expresses the intended query concept;
-   - $\Delta_{\mathrm{needed}}(q, t)$ is the score deficit between the relevant target document and the top-10 decision boundary;
+   - $c(q, t)$ represents query-concept confidence;
+   - $\Delta_{\mathrm{needed}}(q, t)$ is the score deficit between the target document and the decision boundary;
    - $I(t)$ is the estimated marginal BM25 contribution per unit weight.
    
    > [!IMPORTANT]
-   > **Core Mathematical Distinction:**
-   > IDF estimates how strongly a term can act per unit weight ($I(t)$), but it does not dictate how much intervention is needed ($\Delta_{\mathrm{needed}}$). A rare diagnostic term may have high IDF, but if the relevant document begins far down the retrieval ranking, it still requires a large weight ($\mu = 0.50 - 1.00$) to generate enough total score mass to cross into the top 10. Conversely, broad terms frequently dilute ranking unless their score deficit is small.
+   > **Diagnostic Decomposition Only (Non-Deployable):**
+   > This equation serves strictly as an interpretive explanation of oracle sensitivity, **not a deployable weighting formula**. At query time, the target relevant document and its initial score deficit $\Delta_{\mathrm{needed}}$ are unknown. Furthermore, selector confidence $c(q,t)$ must govern expected utility and abstention/rejection across noisy pools, not merely scale a positive weight. No deployment-time weighting formula is selected during Stage 1; weighting and abstention policies are deferred to Stage 2 upon observing CRVE's realistic mixture of helpful and harmful candidate terms. The five-weight grid is retained solely to calculate comparable oracle capacity and DF1-dominance measurements.
 
 ---
 
-## 8. Summary of Status & Stage 2 Transition
+## 8. Summary of Status: Four-Corpus Stage 1 Pilot Resolved
 
-1. **Stage 1 Questions Fully Resolved:**
-   - **Existence:** Latent unigram expansion headroom is confirmed across all four corpora (SciFact $+0.26$, AOPS $+0.09$, NFCorpus $+0.43$, TREC-COVID $+0.28$).
-   - **Pool Design:** `DF>=2, CF>=3` is a defensible principal eligibility rule. $DF=1$ terms are dominated and safely excluded from the main pool.
-   - **Capacity:** Fixed 10k is a strong provisional default retaining $>97\%$ headroom. Sizing via the evaluated adaptive rule $B = \min(10000, \max(2500, \lfloor 0.15 |V_{\text{elig}}| \rfloor))$ retains $90.5\% - 93.1\%$ macro headroom while preventing small-corpus starvation.
-   - **Weighting:** Expansion weight cannot be determined from IDF alone; it requires modeling contextual confidence $c(q,t)$ and score deficit $\Delta_{\mathrm{needed}}$.
+1. **Four-Corpus Stage 1 Pilot Resolved:**
+   - **Existence:** Latent unigram expansion headroom is confirmed across all four pilot corpora (SciFact $+0.26$, AOPS $+0.09$, NFCorpus $+0.43$, TREC-COVID $+0.28$).
+   - **Provisional Pool Design:** `DF>=2, CF>=3` is a defensible principal eligibility rule. $DF=1$ terms are dominated and safely excluded from the main pool.
+   - **Provisional Capacity:** Fixed 10k serves as a strong provisional Stage 2 candidate pool default retaining $>97\%$ headroom on the pilot corpora. The candidate bounded adaptive rule $B = \min(10000, \max(2500, \lfloor 0.15 |V_{\text{elig}}| \rfloor))$ retains $90.5\% - 93.1\%$ macro headroom while preventing small-corpus starvation. Both pool capacity boundaries and DF=1 exclusion remain provisional pending the four-corpus extension.
+   - **Weighting Scope:** Specificity alone cannot determine expansion weight. Actual weighting-policy development is deferred until Stage 2, where CRVE produces a realistic mixture of helpful and harmful terms.
 
 2. **The Hard Research Problem Transferred to Stage 2:**
-   - Stage 1 proves that the required lexical unigrams exist inside a 10k deployable pool.
+   - Stage 1 proves that the required lexical unigrams exist inside a 10k Stage 2 candidate pool.
    - However, having a $+0.4$ oracle ceiling does not guarantee that a query-time model can find those terms without pulling in thousands of harmful distractors.
    - **Stage 2 Direction:** Design and evaluate the contextual selector (CRVE / BGE dense gating) to discover beneficial pool terms, calibrate expansion weights, and maintain high abstention precision.

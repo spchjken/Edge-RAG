@@ -1,0 +1,9 @@
+dataset,evaluation_scope,num_queries,neither_useful_count,neither_useful_pct,df1_wins_count,df1_wins_pct,eligible_wins_df1_inactive_count,eligible_wins_df1_inactive_pct,useful_tie_count,useful_tie_pct,df1_useful_dominated_count,df1_useful_dominated_pct,mean_unique_df1_gain,num_queries_unique_df1_pos,pct_queries_unique_df1_pos
+fiqa,exact_mu010,50,31,62.0,0,0.0,15,30.0,0,0.0,4,8.0,0.0,0,0.0
+fiqa,screened_multi_weight,50,5,10.0,0,0.0,40,80.0,0,0.0,5,10.0,0.0,0,0.0
+scidocs,exact_mu010,50,26,52.0,4,8.0,12,24.0,5,10.0,3,6.0,0.0070404263500985385,4,8.0
+scidocs,screened_multi_weight,50,4,8.0,1,2.0,29,57.99999999999999,8,16.0,8,16.0,0.0006602989616966881,1,2.0
+arguana,exact_mu010,50,44,88.0,0,0.0,4,8.0,2,4.0,0,0.0,0.0,0,0.0
+arguana,screened_multi_weight,50,23,46.0,1,2.0,25,50.0,1,2.0,0,0.0,0.0013864688385321388,1,2.0
+bright_stackoverflow,exact_mu010,50,44,88.0,1,2.0,1,2.0,3,6.0,1,2.0,0.00038110747003564983,1,2.0
+bright_stackoverflow,screened_multi_weight,50,31,62.0,0,0.0,14,28.000000000000004,3,6.0,2,4.0,0.0,0,0.0

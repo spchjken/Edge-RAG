@@ -18,9 +18,11 @@ import os
 import sys
 import time
 import math
+import json
 import random
 import hashlib
 import argparse
+import subprocess
 from typing import Dict, List, Set, Tuple, Optional, Any
 import numpy as np
 import pandas as pd
@@ -53,6 +55,80 @@ from src.evaluation.pool_generators import (
 
 TAU_TOL = 1e-5
 SAFETY_EPSILON = 0.001
+
+
+def get_process_tree_rss_bytes() -> int:
+    """Calculates total RSS memory consumed by this process and all its child processes (e.g. JVM)."""
+    try:
+        parent = psutil.Process()
+        total = parent.memory_info().rss
+        for child in parent.children(recursive=True):
+            try:
+                total += child.memory_info().rss
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return total
+    except Exception:
+        return 0
+
+
+def verify_baseline_parity(
+    dataset: str,
+    sampled_queries: List[Dict[str, Any]],
+    analyzer,
+    bm25,
+    num_to_check: int = 5,
+) -> Dict[str, Any]:
+    """
+    Asserts exact executable parity between standard query-string retrieval
+    and zero-expansion query_toks retrieval on analyzed terms.
+    """
+    checked = 0
+    passed = 0
+    max_score_diff = 0.0
+    queries_checked = min(len(sampled_queries), num_to_check)
+
+    for i in range(queries_checked):
+        q = sampled_queries[i]
+        qid = str(q["query_id"])
+        q_text = q["question"]
+        terms, _ = analyzer.analyze(q_text)
+        orig_query_toks = analyzer.to_query_toks(terms)
+        query_analyzed_str = " ".join(terms)
+
+        # 1. query string from analyzed terms
+        df_str = pd.DataFrame([{"qid": qid, "query": query_analyzed_str}])
+        res_str = bm25.transform(df_str)
+
+        # 2. query_toks
+        df_toks = pd.DataFrame([{"qid": qid, "query_toks": orig_query_toks}])
+        res_toks = bm25.transform(df_toks)
+
+        checked += 1
+        s_docs = list(res_str["docno"]) if not res_str.empty else []
+        t_docs = list(res_toks["docno"]) if not res_toks.empty else []
+        s_scores = list(res_str["score"]) if not res_str.empty else []
+        t_scores = list(res_toks["score"]) if not res_toks.empty else []
+
+        doc_match = (s_docs == t_docs)
+        if doc_match and s_scores:
+            diff = float(np.max(np.abs(np.array(s_scores) - np.array(t_scores))))
+            max_score_diff = max(max_score_diff, diff)
+            if diff <= 1e-4:
+                passed += 1
+        elif doc_match and not s_scores:
+            passed += 1
+
+    is_ok = (checked > 0) and (passed == checked)
+    status = "PASS" if is_ok else "FAIL"
+    print(f"  [Baseline Parity Check] {dataset}: {passed}/{checked} queries matched perfectly (max score diff: {max_score_diff:.6e}) -> {status}")
+    return {
+        "dataset": dataset,
+        "checked": checked,
+        "passed": passed,
+        "max_score_diff": max_score_diff,
+        "status": status,
+    }
 
 
 def get_shard_path(shards_dir: str, dataset: str, qid: str) -> str:
@@ -441,6 +517,7 @@ def run_dataset_oracle_isolation(
     output_dir: str,
     resume: bool = True,
     chunk_size: int = 500,
+    check_baseline_parity: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Executes oracle isolation for a given dataset and returns the assembled DataFrame
@@ -490,7 +567,8 @@ def run_dataset_oracle_isolation(
             eligible_terms.append(t)
 
     lex_time = time.perf_counter() - t0_lex
-    print(f"Lexicon: {lex.numberOfEntries()} terms, {len(eligible_terms)} eligible ({lex_time:.2f}s)")
+    total_lex_terms = int(lex.numberOfEntries())
+    print(f"Lexicon: {total_lex_terms} terms, {len(eligible_terms)} eligible ({lex_time:.2f}s)")
 
     # Build policy sequences
     sequences, construction_times = build_policy_sequences(
@@ -518,6 +596,10 @@ def run_dataset_oracle_isolation(
         sampled_queries = rng.sample(all_queries, sample_size)
 
     print(f"Sampled {len(sampled_queries)} queries for Phase {phase}.")
+
+    parity_res = {}
+    if check_baseline_parity:
+        parity_res = verify_baseline_parity(dataset, sampled_queries, analyzer, bm25, num_to_check=5)
 
     shards_dir = os.path.join(output_dir, "shards")
     os.makedirs(shards_dir, exist_ok=True)
@@ -567,11 +649,14 @@ def run_dataset_oracle_isolation(
         "dataset": dataset,
         "phase": phase,
         "num_docs": num_docs,
+        "total_lexicon_terms": total_lex_terms,
+        "eligible_vocab_size": len(eligible_terms),
         "num_queries": len(sampled_queries),
         "total_variants": total_variants,
         "retrieval_time_sec": total_retrieval_time,
         "variants_per_sec": overall_var_rate,
         "construction_times_sec": construction_times,
+        "baseline_parity": parity_res,
     }
     return assembled_df, meta_summary
 
@@ -586,6 +671,7 @@ def parse_args():
     parser.add_argument("--chunk-size", type=int, default=500, help="Retrieval batch chunk size")
     parser.add_argument("--output-dir", type=str, default="results/pool_isolation", help="Output directory")
     parser.add_argument("--no-resume", action="store_true", help="Disable auto-resumption")
+    parser.add_argument("--skip-baseline-parity", action="store_true", help="Skip executable baseline parity check")
     return parser.parse_args()
 
 
@@ -599,6 +685,7 @@ def main():
 
     all_dfs = []
     meta_summaries = []
+    peak_process_tree_rss_bytes = get_process_tree_rss_bytes()
 
     for ds in datasets:
         df_ds, summary = run_dataset_oracle_isolation(
@@ -610,17 +697,49 @@ def main():
             output_dir=args.output_dir,
             resume=not args.no_resume,
             chunk_size=args.chunk_size,
+            check_baseline_parity=not args.skip_baseline_parity,
         )
         if not df_ds.empty:
             all_dfs.append(df_ds)
         meta_summaries.append(summary)
+        peak_process_tree_rss_bytes = max(peak_process_tree_rss_bytes, get_process_tree_rss_bytes())
 
+    # Get git commit
+    try:
+        git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode("utf-8").strip()
+    except Exception:
+        git_commit = "unknown"
+
+    peak_rss_gib = peak_process_tree_rss_bytes / (1024 ** 3)
+
+    # Save run manifest
+    manifest = {
+        "git_commit": git_commit,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "phase": args.phase,
+        "datasets": datasets,
+        "sample_size": args.sample_size,
+        "seed": args.seed,
+        "weights": weights,
+        "peak_process_tree_rss_gib": round(peak_rss_gib, 3),
+        "num_docs": {s["dataset"]: s["num_docs"] for s in meta_summaries},
+        "eligible_vocab_sizes": {s["dataset"]: s["eligible_vocab_size"] for s in meta_summaries},
+        "total_lexicon_terms": {s["dataset"]: s["total_lexicon_terms"] for s in meta_summaries},
+        "total_variants": sum(s["total_variants"] for s in meta_summaries),
+        "total_retrieval_time_sec": round(sum(s["retrieval_time_sec"] for s in meta_summaries), 2),
+        "baseline_parity": {s["dataset"]: s.get("baseline_parity", {}) for s in meta_summaries},
+    }
+    manifest_path = os.path.join(args.output_dir, "run_manifest.json")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"\nSaved run manifest -> {manifest_path}")
+
+    master_parquet = os.path.join(args.output_dir, "pool_candidate_audit.parquet")
     if all_dfs:
         full_df = pd.concat(all_dfs, ignore_index=True)
         # Save master candidate parquet
-        master_parquet = os.path.join(args.output_dir, "pool_candidate_audit.parquet")
         full_df.to_parquet(master_parquet, index=False)
-        print(f"\nSaved master candidate audit ({len(full_df)} records) -> {master_parquet}")
+        print(f"Saved master candidate audit ({len(full_df)} records) -> {master_parquet}")
 
         # Automatically compile summary tables
         try:
@@ -641,7 +760,8 @@ def main():
         print(f"Total Phase A Queries: {sum(s['num_queries'] for s in meta_summaries)}")
         print(f"Total Variants Evaluated: {total_vars}")
         print(f"Overall Retrieval Throughput: {mean_vps:.1f} variants/sec")
-        print(f"Process Peak RAM RSS: {psutil.Process().memory_info().rss / (1024**3):.2f} GiB (Limit: 15 GiB)")
+        print(f"Process-Tree Peak RAM RSS: {peak_rss_gib:.2f} GiB (Ceiling: 15 GiB)")
+        assert peak_rss_gib < 14.5, f"Peak process-tree RAM RSS ({peak_rss_gib:.2f} GiB) exceeded 14.5 GiB safe budget!"
 
         print("\nPool Construction Times:")
         for s in meta_summaries:
