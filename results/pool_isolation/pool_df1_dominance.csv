@@ -1,0 +1,9 @@
+dataset,evaluation_scope,num_queries,neither_useful_count,neither_useful_pct,df1_wins_count,df1_wins_pct,eligible_wins_df1_inactive_count,eligible_wins_df1_inactive_pct,useful_tie_count,useful_tie_pct,df1_useful_dominated_count,df1_useful_dominated_pct
+scifact,exact_mu010,50,35,70.0,1,2.0,8,16.0,4,8.0,2,4.0
+scifact,screened_multi_weight,50,27,54.0,0,0.0,16,32.0,5,10.0,2,4.0
+bright_aops,exact_mu010,50,49,98.0,0,0.0,1,2.0,0,0.0,0,0.0
+bright_aops,screened_multi_weight,50,29,57.99999999999999,0,0.0,21,42.0,0,0.0,0,0.0
+nfcorpus,exact_mu010,50,22,44.0,2,4.0,2,4.0,5,10.0,19,38.0
+nfcorpus,screened_multi_weight,50,9,18.0,4,8.0,5,10.0,2,4.0,30,60.0
+trec_covid,exact_mu010,50,2,4.0,1,2.0,14,28.000000000000004,5,10.0,28,56.00000000000001
+trec_covid,screened_multi_weight,50,1,2.0,0,0.0,6,12.0,0,0.0,43,86.0

@@ -1,17 +1,29 @@
 {
-  "git_commit": "8c854b2f618ae5cdbbb907a38bcab283b8fb39ed",
+  "git_commit": "3059da3307358618bbb073db05e6dae17d539436",
   "datasets": [
     "scifact",
     "bright_aops",
     "nfcorpus",
     "trec_covid"
   ],
-  "total_records": 1230704,
+  "total_executed_candidate_query_weight_variants": 1230704,
   "total_queries": {
     "bright_aops": 50,
     "nfcorpus": 50,
     "scifact": 50,
     "trec_covid": 50
+  },
+  "document_counts": {
+    "scifact": 5183,
+    "bright_aops": 188002,
+    "nfcorpus": 3633,
+    "trec_covid": 171332
+  },
+  "eligible_vocab_sizes": {
+    "scifact": 5595,
+    "bright_aops": 33656,
+    "nfcorpus": 11811,
+    "trec_covid": 59395
   },
   "weights": [
     0.05,
@@ -20,13 +32,19 @@
     0.5,
     1.0
   ],
-  "capacities": [
+  "fixed_capacities": [
     1000,
     2500,
     5000,
     10000,
     15000,
     20000
+  ],
+  "percentage_capacities": [
+    0.02,
+    0.05,
+    0.1,
+    0.2
   ],
   "policies": [
     "salience",
@@ -35,11 +53,17 @@
     "stratified",
     "coverage"
   ],
+  "tolerances": {
+    "tau_zero_tolerance": 1e-05,
+    "epsilon_recall_safety_ndcg_margin": 0.001
+  },
   "metric_definitions": {
     "nDCG@10": "Official linear ir_measures.nDCG@10",
     "R@1000": "Official ir_measures.R@1000",
-    "ranking_useful": "delta_ndcg10 > 1e-6",
-    "ranking_safe": "delta_ndcg10 > 1e-6 and delta_r1000 >= -1e-6",
-    "recall_safe": "delta_r1000 > 1e-6 and delta_ndcg10 >= -0.01"
+    "abstaining_oracle": "max(baseline, max_{t,mu} U_q(t,mu))",
+    "ranking_safe_weight": "delta_ndcg10 > 1e-05 and delta_r1000 >= -1e-05",
+    "recall_safe_weight": "delta_r1000 > 1e-05 and delta_ndcg10 >= -0.001",
+    "ranking_priority_joint_safe": "max delta_ndcg10 s.t. delta_r1000 >= -1e-05",
+    "recall_priority_joint_safe": "max delta_r1000 s.t. delta_ndcg10 >= -0.001"
   }
 }
