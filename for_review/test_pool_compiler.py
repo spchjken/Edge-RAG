@@ -109,3 +109,26 @@ def test_bootstrap_ci_bounds():
     low, high = bootstrap_ci(series, n_boot=500, seed=42)
     assert low < series.mean() < high
     assert low > 0.0
+
+
+def test_conditional_weight_calibration():
+    """Validates that conditional weight percentage properly normalizes by safe instances."""
+    # 4 candidate instances: 2 have weight 1.0, 1 has weight 0.5, 1 has no_safe_weight
+    df_inst = pd.DataFrame([
+        {"ranking_opt_weight": 1.0},
+        {"ranking_opt_weight": 1.0},
+        {"ranking_opt_weight": 0.5},
+        {"ranking_opt_weight": "no_safe_weight"},
+    ])
+    n_inst = len(df_inst)
+    n_safe = (df_inst["ranking_opt_weight"] != "no_safe_weight").sum()
+    assert n_safe == 3
+
+    # Unconditional: 2/4 = 50.0%
+    uncond_1_0 = (df_inst["ranking_opt_weight"] == 1.0).mean() * 100.0
+    assert uncond_1_0 == pytest.approx(50.0)
+
+    # Conditional: 2/3 = 66.667%
+    cond_1_0 = (df_inst[df_inst["ranking_opt_weight"] != "no_safe_weight"]["ranking_opt_weight"] == 1.0).mean() * 100.0
+    assert cond_1_0 == pytest.approx(66.6666667)
+

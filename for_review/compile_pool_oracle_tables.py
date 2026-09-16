@@ -25,7 +25,7 @@ EPSILON = 0.001     # Allowable nDCG drop for recall safety
 
 # Capacities and policies
 FIXED_CAPACITIES = [1000, 2500, 5000, 10000, 15000, 20000]
-PERCENTAGE_CAPACITIES = [0.02, 0.05, 0.10, 0.20]
+PERCENTAGE_CAPACITIES = [0.02, 0.05, 0.10, 0.15, 0.20]
 POLICIES = ["salience", "specificity", "hybrid", "stratified", "coverage"]
 WEIGHTS = [0.05, 0.10, 0.30, 0.50, 1.00]
 
@@ -438,7 +438,7 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
         for pol in POLICIES:
             rank_col = f"{pol}_rank"
 
-            # Combine Fixed capacities and Percentage capacities
+            # Combine Fixed capacities, Percentage capacities, and explicit 15% adaptive rule
             capacity_evaluations = []
             for cap in FIXED_CAPACITIES:
                 capacity_evaluations.append(("fixed", cap, cap, (cap / v_elig_total) * 100.0))
@@ -446,6 +446,10 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
             for p in PERCENTAGE_CAPACITIES:
                 eff_cap = min(20000, max(1, int(np.floor(p * v_elig_total))))
                 capacity_evaluations.append(("percentage", p, eff_cap, p * 100.0))
+
+            # Explicit 15% adaptive rule: B = min(10000, max(2500, floor(0.15 * |V_elig|)))
+            eff_adapt = min(10000, max(2500, int(np.floor(0.15 * v_elig_total))))
+            capacity_evaluations.append(("adaptive_rule_15pct", "adaptive_15pct_2.5k_10k", eff_adapt, (eff_adapt / v_elig_total) * 100.0))
 
             for cap_type, req_cap, eff_cap, actual_pct in capacity_evaluations:
                 cap_sub = sub[(sub[rank_col] >= 0) & (sub[rank_col] <= eff_cap)]
@@ -599,14 +603,32 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
                 "instance_count": n_inst,
             }
             # Ranking-safe weight distribution
-            for w in WEIGHTS:
-                calib_row[f"ranking_safe_pct_w_{w}"] = (b_inst["ranking_opt_weight"] == w).mean() * 100.0
+            n_rank_safe = (b_inst["ranking_opt_weight"] != "no_safe_weight").sum()
+            calib_row["ranking_safe_instance_count"] = int(n_rank_safe)
+            calib_row["ranking_safe_pct_has_safe"] = (n_rank_safe / n_inst * 100.0) if n_inst > 0 else 0.0
             calib_row["ranking_safe_pct_no_safe"] = (b_inst["ranking_opt_weight"] == "no_safe_weight").mean() * 100.0
+            for w in WEIGHTS:
+                uncond_pct = (b_inst["ranking_opt_weight"] == w).mean() * 100.0
+                calib_row[f"ranking_safe_unconditional_pct_w_{w}"] = uncond_pct
+                calib_row[f"ranking_safe_pct_w_{w}"] = uncond_pct
+                if n_rank_safe > 0:
+                    calib_row[f"ranking_safe_conditional_pct_w_{w}"] = (b_inst[b_inst["ranking_opt_weight"] != "no_safe_weight"]["ranking_opt_weight"] == w).mean() * 100.0
+                else:
+                    calib_row[f"ranking_safe_conditional_pct_w_{w}"] = 0.0
 
             # Recall-safe weight distribution
-            for w in WEIGHTS:
-                calib_row[f"recall_safe_pct_w_{w}"] = (b_inst["recall_opt_weight"] == w).mean() * 100.0
+            n_rec_safe = (b_inst["recall_opt_weight"] != "no_safe_weight").sum()
+            calib_row["recall_safe_instance_count"] = int(n_rec_safe)
+            calib_row["recall_safe_pct_has_safe"] = (n_rec_safe / n_inst * 100.0) if n_inst > 0 else 0.0
             calib_row["recall_safe_pct_no_safe"] = (b_inst["recall_opt_weight"] == "no_safe_weight").mean() * 100.0
+            for w in WEIGHTS:
+                uncond_pct = (b_inst["recall_opt_weight"] == w).mean() * 100.0
+                calib_row[f"recall_safe_unconditional_pct_w_{w}"] = uncond_pct
+                calib_row[f"recall_safe_pct_w_{w}"] = uncond_pct
+                if n_rec_safe > 0:
+                    calib_row[f"recall_safe_conditional_pct_w_{w}"] = (b_inst[b_inst["recall_opt_weight"] != "no_safe_weight"]["recall_opt_weight"] == w).mean() * 100.0
+                else:
+                    calib_row[f"recall_safe_conditional_pct_w_{w}"] = 0.0
 
             calib_rows.append(calib_row)
 
@@ -621,13 +643,33 @@ def compile_oracle_tables(audit_path: str, output_dir: str):
                 "partition_bin": dec,
                 "instance_count": n_inst,
             }
-            for w in WEIGHTS:
-                calib_row[f"ranking_safe_pct_w_{w}"] = (d_inst["ranking_opt_weight"] == w).mean() * 100.0
+            # Ranking-safe weight distribution
+            n_rank_safe = (d_inst["ranking_opt_weight"] != "no_safe_weight").sum()
+            calib_row["ranking_safe_instance_count"] = int(n_rank_safe)
+            calib_row["ranking_safe_pct_has_safe"] = (n_rank_safe / n_inst * 100.0) if n_inst > 0 else 0.0
             calib_row["ranking_safe_pct_no_safe"] = (d_inst["ranking_opt_weight"] == "no_safe_weight").mean() * 100.0
-
             for w in WEIGHTS:
-                calib_row[f"recall_safe_pct_w_{w}"] = (d_inst["recall_opt_weight"] == w).mean() * 100.0
+                uncond_pct = (d_inst["ranking_opt_weight"] == w).mean() * 100.0
+                calib_row[f"ranking_safe_unconditional_pct_w_{w}"] = uncond_pct
+                calib_row[f"ranking_safe_pct_w_{w}"] = uncond_pct
+                if n_rank_safe > 0:
+                    calib_row[f"ranking_safe_conditional_pct_w_{w}"] = (d_inst[d_inst["ranking_opt_weight"] != "no_safe_weight"]["ranking_opt_weight"] == w).mean() * 100.0
+                else:
+                    calib_row[f"ranking_safe_conditional_pct_w_{w}"] = 0.0
+
+            # Recall-safe weight distribution
+            n_rec_safe = (d_inst["recall_opt_weight"] != "no_safe_weight").sum()
+            calib_row["recall_safe_instance_count"] = int(n_rec_safe)
+            calib_row["recall_safe_pct_has_safe"] = (n_rec_safe / n_inst * 100.0) if n_inst > 0 else 0.0
             calib_row["recall_safe_pct_no_safe"] = (d_inst["recall_opt_weight"] == "no_safe_weight").mean() * 100.0
+            for w in WEIGHTS:
+                uncond_pct = (d_inst["recall_opt_weight"] == w).mean() * 100.0
+                calib_row[f"recall_safe_unconditional_pct_w_{w}"] = uncond_pct
+                calib_row[f"recall_safe_pct_w_{w}"] = uncond_pct
+                if n_rec_safe > 0:
+                    calib_row[f"recall_safe_conditional_pct_w_{w}"] = (d_inst[d_inst["recall_opt_weight"] != "no_safe_weight"]["recall_opt_weight"] == w).mean() * 100.0
+                else:
+                    calib_row[f"recall_safe_conditional_pct_w_{w}"] = 0.0
 
             calib_rows.append(calib_row)
 

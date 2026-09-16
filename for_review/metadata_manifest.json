@@ -1,5 +1,5 @@
 {
-  "git_commit": "3059da3307358618bbb073db05e6dae17d539436",
+  "git_commit": "80e9f968281ac205b03ea78818f26adcef5b514a",
   "datasets": [
     "scifact",
     "bright_aops",
@@ -44,6 +44,7 @@
     0.02,
     0.05,
     0.1,
+    0.15,
     0.2
   ],
   "policies": [
