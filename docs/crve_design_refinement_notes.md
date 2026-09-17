@@ -4,7 +4,8 @@
 > a later proposed-method session. It does not describe implemented behavior,
 > replace the active architecture, or freeze the research plan. See
 > [the capacity-bounded corpus-informed QE plan](corpus_informed_query_expansion_plan.md)
-> for the current broader proposal.
+> for the current broader proposal. The focused selection-stage design is in
+> [Phase 2 — Query-Conditioned Expansion-Term Selection Under Uncertainty](phase2_selection_under_uncertainty.md).
 
 ## 1. Why this discussion exists
 

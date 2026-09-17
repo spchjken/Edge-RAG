@@ -124,6 +124,9 @@ Call the working method **Context-Reranked Vocabulary Expansion (CRVE)** until n
 
 ### 4.2 Query-time phase
 
+The detailed selection-stage debate, uncertainty model, gate alternatives and validation protocol are
+maintained in [Phase 2 — Query-Conditioned Expansion-Term Selection Under Uncertainty](phase2_selection_under_uncertainty.md).
+
 1. Analyze the query and encode its anchors and/or whole-query representation once.
 2. Search the capped term matrix and retain only the top candidate set, initially 50–100 terms.
 3. Gather precomputed contexts for those candidates; do not load or encode raw sample text.
