@@ -153,17 +153,24 @@ The most accurate working description is:
 
 ## 5. Formal selection targets
 
-Define tolerance \(\epsilon>0\) to separate meaningful changes from noise. Use \(\Pr(\cdot)\) for
+Use two different thresholds:
+
+- \(\tau\): a small numerical tolerance that distinguishes a measured change from floating-point or
+  ranking-tie noise;
+- \(\delta>\tau\): a practical-effect threshold that defines a materially useful term.
+
+These thresholds must not be conflated. The existing oracle value \(\tau=10^{-5}\) detects a positive
+change; it does not establish that the change is operationally meaningful. Use \(\Pr(\cdot)\) for
 probability; it is distinct from the vocabulary pool \(\mathcal{P}\).
 
 For a single action \(a\):
 
 \[
-H_M(q,a)=1\{Y_M(q,a)>\epsilon\},
+H_M(q,a;\delta)=1\{Y_M(q,a)\ge\delta\},
 \]
 
 \[
-G_M(q,a)=1\{Y_M(q,a)<-\epsilon\}.
+G_M(q,a;\epsilon)=1\{Y_M(q,a)<-\epsilon\}.
 \]
 
 The positive and harmful sets are different for different metrics. In particular, define separately:
@@ -186,6 +193,178 @@ Later gates should target precision and risk:
 For a set, also report expected negative change and lower-tail harm, such as the mean of the worst 5%
 of observed \(Y_M(q,S)\) values. Do not replace set-level evaluation with the average of independent
 term labels.
+
+### 5.1 Safe oracle labels and material-gain thresholds
+
+Because selection and weighting are separate phases, a Gate-1 oracle label means that a term has at
+least one useful tested weight. It does not prescribe the deployed weight. For ranking-oriented
+evaluation, define the safe individual-term opportunity:
+
+\[
+g^{\mathrm{rank}}_{q,t}
+=
+\max_{\mu:\,\Delta R@1000(q,t,\mu)\ge-\tau}
+\Delta\mathrm{nDCG}@10(q,t,\mu).
+\]
+
+The materially helpful term set at threshold \(\delta\) is:
+
+\[
+H_q^{\mathrm{rank}}(\delta)
+=
+\{t\in\mathcal{P}:g^{\mathrm{rank}}_{q,t}\ge\delta\}.
+\]
+
+Do not report only one post-hoc threshold. The initial sensitivity grid is:
+
+\[
+\delta_{\mathrm{nDCG}}\in\{10^{-5},0.001,0.005,0.01,0.02\}.
+\]
+
+The primary practical threshold must be frozen on development data before final evaluation. A
+provisional primary value is \(\delta=0.005\), subject to development-set validation. Interpret the
+grid as usefulness tiers rather than treating every positive delta as equally valuable:
+
+| Opportunity tier | Safe individual-term \(\Delta\mathrm{nDCG}@10\) | Interpretation |
+|---|---:|---|
+| No positive opportunity | \(g\le\tau\) | no measurable safe improvement |
+| Marginal | \(\tau<g<0.001\) | positive but practically negligible |
+| Small | \(0.001\le g<0.005\) | weak opportunity |
+| Material | \(0.005\le g<0.01\) | meaningful opportunity |
+| Strong | \(g\ge0.01\) | high-value opportunity |
+
+Harm is a separate axis. A term can have a helpful weight and a harmful weight, so a term-level maximum
+cannot create a mutually exclusive helpful/dormant/harmful partition. Classify those three outcomes
+only for a fixed action \((t,\mu)\) or a frozen weighting policy: helpful when gain is at least
+\(\delta\), harmful when it is below \(-\epsilon\), and neutral or marginal otherwise. Across weights,
+report both best safe opportunity and worst-case or deployed-action harm.
+
+Recall changes are discrete and depend on the number of relevant documents. Therefore, do not impose
+one universal decimal \(\Delta R@K\) threshold. Define a recall-helpful term through document counts:
+
+\[
+H^{\mathrm{rec}}_{q,K}
+=
+\left\{t:\exists\mu,\;
+\Delta\#\mathrm{RelevantDocs}@K(q,t,\mu)\ge1
+\land
+\Delta\mathrm{nDCG}@10(q,t,\mu)\ge-\epsilon
+\right\}.
+\]
+
+Report stronger recall tiers separately, such as net recovery of at least two relevant documents or a
+declared relative-recall increase. This avoids treating the same decimal recall change as equivalent
+for queries with one and hundreds of relevant documents.
+
+### 5.2 Gate-1 recall, precision, and utility retention
+
+Let \(C_{1,L}(q)\) be the top \(L\) terms surviving Gate 1. For either a ranking-helpful or
+recall-helpful oracle set \(H_q\), report:
+
+\[
+\operatorname{TermRecall}@L(q)
+=
+\frac{|C_{1,L}(q)\cap H_q|}{|H_q|},
+\]
+
+\[
+\operatorname{TermPrecision}@L(q)
+=
+\frac{|C_{1,L}(q)\cap H_q|}{|C_{1,L}(q)|},
+\]
+
+and query-level opportunity coverage:
+
+\[
+\operatorname{Hit}@L(q)
+=
+1\{C_{1,L}(q)\cap H_q\ne\varnothing\}.
+\]
+
+Recall asks how many known useful terms survived. Precision asks what fraction of all survivors are
+known to be useful. Gate 1 prioritizes recall, but precision still controls Gate-2 cost and the number
+of harmful opportunities passed downstream. Compare methods across a candidate-budget curve, initially
+\(L\in\{10,20,50,100,200,500\}\), rather than at one favorable cutoff.
+
+If \(|H_q|=0\), TermRecall and Hit are `NA`, not zero: Gate 1 cannot recover an opportunity that does
+not exist. Report the addressable-query rate separately and macro-average recall over addressable
+queries, with explicit numerators and denominators. If the full-pool best gain is zero, BOR is likewise
+`NA`. TermPrecision remains defined when \(|C_{1,L}(q)|>0\), including on unaddressable queries.
+
+Also report best-opportunity retention:
+
+\[
+\operatorname{BOR}_M@L(q)
+=
+\frac{\max_{t\in C_{1,L}(q)}g^M_{q,t,+}}
+{\max_{t\in\mathcal{P}}g^M_{q,t,+}},
+\]
+
+where \(x_+=\max(x,0)\). Compute this separately for nDCG@10, Recall@100, and Recall@1000. A
+threshold-light secondary diagnostic is individual utility retention:
+
+\[
+\operatorname{UtilityRecall}_M@L(q)
+=
+\frac{\sum_{t\in C_{1,L}(q)}g^M_{q,t,+}}
+{\sum_{t\in\mathcal{P}}g^M_{q,t,+}}.
+\]
+
+This last quantity is not a candidate-set utility: it double-counts redundant terms and sums
+counterfactual gains measured independently against the same baseline. It may be used only as a quick
+diagnostic with the current per-term audit.
+
+### 5.3 Redundancy-aware gold-document opportunity coverage
+
+Raw term recall can reward many terms that all recover the same relevant document. For cutoff \(K\),
+let:
+
+\[
+A_{q,t,K}
+=
+\{d\in G_q:\operatorname{rank}_0(d)>K
+\land\exists\mu,\operatorname{rank}_{t,\mu}(d)\le K\},
+\]
+
+where \(G_q\) is the judged relevant-document set. Define:
+
+\[
+\operatorname{DocOpportunityRecall}@L,K(q)
+=
+\frac{\left|\bigcup_{t\in C_{1,L}(q)}A_{q,t,K}\right|}
+{\left|\bigcup_{t\in\mathcal{P}}A_{q,t,K}\right|}.
+\]
+
+The union counts two terms recovering the same gold document once, while rewarding terms that recover
+different gold documents. Also report absolute missed-gold recovery by replacing the denominator with
+\(|G_q\setminus B_q^K|\), where \(B_q^K\) is the baseline top-\(K\) relevant-document set.
+
+For a graded, rank-sensitive opportunity measure, let \(v_{q,t}(d)\) be the maximum positive DCG
+improvement contributed to relevant document \(d\) over safe tested weights, and define:
+
+\[
+F_q(C)=\sum_{d\in G_q}\max_{t\in C}v_{q,t}(d).
+\]
+
+Then report \(F_q(C_{1,L})/F_q(\mathcal{P})\). The per-document maximum prevents repeated credit for
+the same document. This remains an opportunity-coverage diagnostic, not the exact nDCG of injecting
+all terms together; exact set utility still requires executing the combined expanded query.
+
+The current `pool_candidate_audit.parquet` contains aggregate per-term nDCG and Recall deltas but not
+gold-document identities or rank transitions. It is sufficient for TermRecall, TermPrecision, Hit,
+BOR, and the limited UtilityRecall diagnostic. It cannot calculate DocOpportunityRecall or exact
+multi-term utility. A future audit must record, for each query-term-weight action, the relevant document
+IDs entering and leaving each cutoff and the baseline/expanded ranks of judged relevant documents.
+
+The current audit also evaluates terms extracted from judged relevant documents rather than every pool
+term. A Gate-1 output absent from the audit can be counted as not known helpful for conservative
+precision, but its exact dormant-versus-harmful status is unavailable without executing it. Report a
+mutually exclusive survivor decomposition only under a fixed term-weight action or frozen weighting
+policy:
+
+\[
+1=P_{\mathrm{helpful}}+P_{\mathrm{neutral/marginal}}+P_{\mathrm{harmful}}.
+\]
 
 ## 6. Proposed selection cascade
 
@@ -248,13 +427,61 @@ Interpretations:
 Do not apply a sigmoid to raw cosine and call the result a probability. The threshold and temperature
 must be calibrated on development data.
 
-Use adaptive context budgets, for example 2 -> 4 -> 8 -> 20, only for candidates whose evidence remains
-near the decision boundary. A candidate clearly above or below the boundary should stop early.
+Retain up to 30 contexts per term. If a term has at most 30 distinct retained occurrence contexts,
+store all of them. If it has more than 30, store a declared representative/diversity sample. At query
+time, score all stored contexts in one batch. Do not introduce iterative 8 -> 16 -> 30 scoring: the
+embeddings are already local, so repeated rounds add control-flow and aggregation overhead without
+avoiding the embedding work. Deduplicate context IDs across candidate terms before scoring so a shared
+context is evaluated once.
 
 Maintain two roles when the capacity permits:
 
 - a representative reservoir for dominant-use and ambiguity estimates;
 - a diversity reservoir for rare but query-compatible senses.
+
+#### 6.2.1 Optional statistical truncation evidence (deferred Gate 2+ work)
+
+The stored sample may later support an additional optimistic pruning signal. Let
+
+\[
+M_F(q,t)=\max_{c\in\mathcal C_t}F(q,c)
+\]
+
+be the unknown best compatibility over all corpus contexts for term \(t\). When every distinct context
+is stored, \(M_F\) is observed exactly. When only 30 of more than 30 contexts are stored, the observed
+sample maximum is a lower bound, not an upper bound. A future method may estimate an optimistic upper
+value \(U_F^{(1-\alpha)}(q,t)\) at a declared level such as 95% or 97.5%, under explicit sampling,
+distributional, or held-out calibration assumptions.
+
+This estimate can be used like a probabilistic top-k pruning bound:
+
+\[
+U_F^{(1-\alpha)}(q,t)<\tau_F
+\quad\Longrightarrow\quad
+\text{discard }t,
+\]
+
+or, for a fixed candidate budget, discard \(t\) when its optimistic value is below the current
+competitive boundary. This only states that the term is unlikely to contain a sufficiently compatible
+context under the declared model. It does not prove that the term cannot improve retrieval.
+
+Illustrative examples:
+
+- If 30 scores are uniformly low, with observed maximum 0.29 and an estimated 97.5% optimistic value
+  of 0.34, a declared compatibility threshold of 0.55 would prune the term.
+- If the observed maximum is 0.71 and the upper estimate is higher, the statistical rule cannot prune
+  it even when the other contexts are weak; support and ambiguity remain separate evidence.
+- A very frequent term may receive a high maximum estimate simply because it has many opportunities
+  for an extreme context. Its high DF simultaneously lowers IDF and lexical discrimination. Carry
+  this lexical information to the later influence/weighting decision rather than treating a high
+  estimated semantic maximum as sufficient evidence of usefulness.
+
+The initial study should remain low-dimensional: compare observed maximum, top-2 mean, and at most one
+declared upper-estimation rule. Do not begin with a high-dimensional learned utility predictor over
+maximum, mean, variance, DF, CF, IDF, occurrence count, and lexical bounds; these variables are strongly
+related and invite overfitting on the limited oracle data. Judge the optional bound by its
+pruning-versus-material-helpful-recall curve. If its conservative upper values saturate or it removes
+too few candidates to reduce later work, retire it rather than retaining it for theoretical appearance.
 
 ### Gate 3 — lexical influence, risk, and abstention
 
@@ -414,8 +641,13 @@ Compare BGE term, anchor, context-centroid, lexical, and hybrid proposals on the
 
 Report:
 
-- \(C_1\) size;
-- helpful-term coverage for nDCG and Recall separately;
+- \(C_1\) size and results over the declared \(L\) budget curve;
+- ranking-safe and recall-safe TermRecall and TermPrecision separately;
+- any-positive, material, and strong usefulness-threshold sensitivity;
+- query-level Hit@\(L\) and best-opportunity retention;
+- individual utility retention as a secondary, explicitly redundancy-blind diagnostic;
+- distinct-gold DocOpportunityRecall once per-document rank transitions are available;
+- helpful, dormant, and harmful survivor rates when full candidate labels are available;
 - candidate preparation and query cost;
 - false-negative examples.
 
@@ -473,7 +705,12 @@ QE baselines. Include preparation, memory, latency, postings, nDCG, and Recall.
 
 ### Selection metrics
 
-- Gate-1 helpful-term coverage;
+- Gate-1 TermRecall and TermPrecision across candidate budgets and usefulness thresholds;
+- Gate-1 query-level Hit and best-opportunity retention;
+- Gate-1 distinct-gold DocOpportunityRecall and absolute missed-gold recovery;
+- opportunity-tier distribution: no positive opportunity, marginal, small, material, and strong;
+- fixed-action or frozen-policy helpful, neutral/marginal, and harmful survivor rates;
+- individual utility retention, labeled as redundancy-blind;
 - Gate-2 accepted-term precision;
 - harmful accepted-term rate;
 - query-level set coverage: \(C(q)\cap H_M(q)\ne\varnothing\);
