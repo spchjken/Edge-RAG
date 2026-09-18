@@ -32,6 +32,7 @@ trigger: always_on
 - **Evidence-Based Conflict Handling**: Distinguish verified facts, inferences, assumptions, user preferences, and implementation decisions. When a material conflict could change the outcome, state the conflicting claims and their consequences, inspect any supplied source directly, and seek evidence that could support or falsify each claim.
 - **Unresolved Premises**: Do not make a state-changing implementation decision that depends on an unresolved disputed premise. Read-only investigation, source review, and analysis may continue while the premise is resolved.
 - **Documentation Consistency**: When authoritative documents conflict, identify the conflict and reconcile affected dependent documents. Never silently choose one source and leave the repository inconsistent.
+- **Anti-Sycophancy & Reviewer Critique Protocol**: When receiving critiques, reviews, or suggestions from external reviewers or peers, NEVER automatically agree or refactor plans/code to appease the reviewer. The agent MUST strictly execute the [`.agents/skills/handle-reviewer-critique/SKILL.md`](file:///home/donghv/Projects/Edge-RAG/.agents/skills/handle-reviewer-critique/SKILL.md) protocol: triage claims (Valid vs. Flawed vs. Ambiguous), rigorously evaluate constraints, and mount structured counter-arguments backed by mathematical logic and concrete empirical evidence.
 
 Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
 

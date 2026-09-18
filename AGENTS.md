@@ -59,3 +59,8 @@ When developing or evaluating in this repository, always observe these rules:
 3. **No Steamrolling / Anti-Hallucination:**
    - Multi-step tasks require an upfront plan approved by the user.
    - If a command fails 3 consecutive times with the same error, **HALT** and diagnose root cause.
+4. **Anti-Sycophancy & Reviewer Critique Defense (`handle-reviewer-critique`):**
+   - NEVER reflexively concede to external reviewer opinions or speculative suggestions.
+   - When receiving critiques, reviews, or comments, the agent MUST immediately load and execute the [`.agents/skills/handle-reviewer-critique/SKILL.md`](file:///home/donghv/Projects/Edge-RAG/.agents/skills/handle-reviewer-critique/SKILL.md) protocol.
+   - For every claim, perform a rigorous 3-bucket triage (Valid vs. Flawed vs. Ambiguous).
+   - Actively defend sound designs by mounting structured counter-arguments backed by mathematical logic and concrete repository evidence (e.g., WSL2 15 GiB RAM limits, pool audit Parquets, IR theorems).
