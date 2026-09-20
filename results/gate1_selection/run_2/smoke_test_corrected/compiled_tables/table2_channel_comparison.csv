@@ -1,0 +1,10 @@
+Channel,Budget (L),Corpus-Macro TermRecall@L,Corpus-Macro TermPrecision@L,Corpus-Macro NearBestHit@L,Corpus-Macro ReferenceBOR@L,Corpus-Macro RecallHit@1000,Corpus-Macro RawDocOppRecall@1000,Corpus-Macro SafeDocOppRecall@1000
+WholeQueryBGE,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+AnchorBGEFiltered,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+AnchorBGEAll,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+PPMISidecar,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+LivePPMI,200,nan%,nan%,nan%,nan%,nan%,N/A,N/A
+SparseLexicalContextProfiles,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+AcronymDefinitionRescue,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+RRF_Core3,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A
+RRF_Extended,200,nan%,0.0%,nan%,nan%,nan%,N/A,N/A

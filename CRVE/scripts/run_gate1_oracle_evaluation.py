@@ -466,6 +466,7 @@ def run_dataset_gate1_evaluation(
     device: str = "cpu",
     config_hash: str = "core_dev_v1",
     measure_fidelity: bool = False,
+    bge_model: str = "BAAI/bge-small-en-v1.5",
 ) -> Dict[str, Any]:
     """Runs complete Gate 1 counterfactual evaluation for a single dataset."""
     print(f"\n=======================================================")
@@ -954,6 +955,7 @@ def main():
             device=device,
             config_hash=config_hash,
             measure_fidelity=args.measure_fidelity,
+            bge_model=args.bge_model,
         )
         meta_summaries.append(ds_meta)
 

@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-09-20T16:30:51Z",
+  "config_hash": "40c7e047ac7bfa304a006cb5222a734c81ecc0f1d9a360f12a55ef21a7c3c9e4",
+  "datasets": [
+    "scifact"
+  ],
+  "sample_size": 1,
+  "seed": 42,
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "peak_rss_gib": 3.482,
+  "total_variants": 8005,
+  "total_cutoff_entries": 0,
+  "total_retrieval_time_sec": 163.78,
+  "environment": {
+    "cpu_model": "x86_64",
+    "gpu_name": "NVIDIA GeForce RTX 5060 Ti",
+    "driver_version": "N/A",
+    "cuda_version": "13.0",
+    "python_version": "3.12.3",
+    "torch_version": "2.12.0+cu130",
+    "pyterrier_version": "1.1.2"
+  },
+  "dataset_summaries": [
+    {
+      "dataset": "scifact",
+      "num_docs": 5183,
+      "pool_size": 5595,
+      "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+      "num_queries": 1,
+      "total_variants": 8005,
+      "total_cutoff_entries": 0,
+      "retrieval_time_sec": 163.78103788099543,
+      "fidelity_meta": {}
+    }
+  ]
+}

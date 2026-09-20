@@ -1,0 +1,2 @@
+Dataset,Queries,Unique Query-Candidate Pairs,Evaluated Variants (5 weights),Expected Variants,Labeling Coverage %,Coverage Status
+scifact,1,1601,8005,8005,100.00%,100.0% COMPLETE

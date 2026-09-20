@@ -234,7 +234,7 @@ class Gate1TableCompiler:
         return df_q1, macro_accum
 
     def compile_q2_single_channel_comparison(self, budget_l: int = 200) -> pd.DataFrame:
-        """Q2: Channel Proposal Efficiency across all 9 channels at budget L."""
+        """Q2: Channel Proposal Efficiency across all 9 channels at budget L, including document opportunity recall."""
         rows = []
         for ch_name, rank_col in CHANNELS:
             corpus_recalls = []
@@ -242,6 +242,8 @@ class Gate1TableCompiler:
             corpus_bor = []
             corpus_near_hit = []
             corpus_rec_hit = []
+            corpus_raw_opp = []
+            corpus_safe_opp = []
 
             for ds in self.available_datasets:
                 qids = sorted(list({k[1] for k in self.query_term_actions.keys() if k[0] == ds}))
@@ -250,6 +252,8 @@ class Gate1TableCompiler:
                 q_bor = []
                 q_near_hit = []
                 q_rec_hit = []
+                q_raw_opp = []
+                q_safe_opp = []
 
                 for qid in qids:
                     term_acts = self.query_term_actions[(ds, qid)]
@@ -260,6 +264,7 @@ class Gate1TableCompiler:
                             proposed.append((t, int(r)))
                     proposed.sort(key=lambda x: x[1])
                     prop_terms = [t for t, _ in proposed]
+                    prop_set = set(prop_terms)
 
                     g_gains = {t: compute_safe_ranking_gain(acts, tau=TAU) for t, acts in term_acts.items()}
                     g_star = max(g_gains.values()) if g_gains else 0.0
@@ -276,14 +281,41 @@ class Gate1TableCompiler:
                     q_near_hit.append(compute_near_best_hit(prop_terms, h_near, ceiling_g=g_star, delta=self.delta))
                     q_rec_hit.append(compute_recall_hit(prop_terms, h_rec, addressable_r_star=r_star))
 
+                    # Document opportunity recall from df_cutoff at K=1000
+                    if self.df_cutoff is not None and not self.df_cutoff.empty:
+                        c_sub = self.df_cutoff[
+                            (self.df_cutoff["dataset"] == ds) & 
+                            (self.df_cutoff["qid"] == qid) & 
+                            (self.df_cutoff["cutoff"] == 1000)
+                        ]
+                        if not c_sub.empty:
+                            total_raw_docs = set(c_sub[c_sub["raw_entry"] == True]["docid"])
+                            total_safe_docs = set(c_sub[c_sub["recall_safe_entry"] == True]["docid"])
+                            prop_sub = c_sub[c_sub["candidate_term"].isin(prop_set)]
+                            prop_raw_docs = set(prop_sub[prop_sub["raw_entry"] == True]["docid"])
+                            prop_safe_docs = set(prop_sub[prop_sub["recall_safe_entry"] == True]["docid"])
+
+                            q_raw_opp.append(len(prop_raw_docs) / len(total_raw_docs) if total_raw_docs else np.nan)
+                            q_safe_opp.append(len(prop_safe_docs) / len(total_safe_docs) if total_safe_docs else np.nan)
+                        else:
+                            q_raw_opp.append(np.nan)
+                            q_safe_opp.append(np.nan)
+                    else:
+                        q_raw_opp.append(np.nan)
+                        q_safe_opp.append(np.nan)
+
                 # Per-corpus means
                 corpus_recalls.append(np.nanmean(q_recalls))
                 corpus_precisions.append(np.nanmean(q_precisions))
                 corpus_bor.append(np.nanmean(q_bor))
                 corpus_near_hit.append(np.nanmean(q_near_hit))
                 corpus_rec_hit.append(np.nanmean(q_rec_hit))
+                corpus_raw_opp.append(np.nanmean(q_raw_opp))
+                corpus_safe_opp.append(np.nanmean(q_safe_opp))
 
             # True corpus-macro mean
+            raw_opp_val = np.nanmean(corpus_raw_opp)
+            safe_opp_val = np.nanmean(corpus_safe_opp)
             rows.append({
                 "Channel": ch_name,
                 "Budget (L)": budget_l,
@@ -292,6 +324,8 @@ class Gate1TableCompiler:
                 "Corpus-Macro NearBestHit@L": f"{np.nanmean(corpus_near_hit) * 100:.1f}%",
                 "Corpus-Macro ReferenceBOR@L": f"{np.nanmean(corpus_bor) * 100:.1f}%",
                 "Corpus-Macro RecallHit@1000": f"{np.nanmean(corpus_rec_hit) * 100:.1f}%",
+                "Corpus-Macro RawDocOppRecall@1000": f"{raw_opp_val * 100:.1f}%" if not np.isnan(raw_opp_val) else "N/A",
+                "Corpus-Macro SafeDocOppRecall@1000": f"{safe_opp_val * 100:.1f}%" if not np.isnan(safe_opp_val) else "N/A",
             })
 
         return pd.DataFrame(rows)
@@ -302,18 +336,24 @@ class Gate1TableCompiler:
         for ds in self.available_datasets:
             sub = self.df_audit[self.df_audit["dataset"] == ds]
             num_queries = sub["qid"].nunique()
-            num_cands = sub["candidate_term"].nunique()
-            num_variants = len(sub)
-            expected_variants = num_cands * 5  # 5 weights
+            
+            # Count unique (qid, candidate_term) pairs in audit
+            unique_q_cands = sub.drop_duplicates(subset=["qid", "candidate_term"])
+            num_q_cand_pairs = len(unique_q_cands)
+            expected_variants = num_q_cand_pairs * 5  # 5 distinct weights
+
+            # Count evaluated unique (qid, candidate_term, weight) triples
+            evaluated_variants = len(sub.drop_duplicates(subset=["qid", "candidate_term", "weight"]))
+            coverage_pct = min(100.0, (evaluated_variants / max(expected_variants, 1)) * 100.0)
 
             rows.append({
                 "Dataset": ds,
                 "Queries": num_queries,
-                "Unique Candidates": num_cands,
-                "Evaluated Variants": num_variants,
-                "Expected Variants (5 weights)": expected_variants,
-                "Labeling Coverage %": f"{(num_variants / max(expected_variants, 1)) * 100:.2f}%",
-                "Coverage Status": "100.0% COMPLETE" if num_variants >= expected_variants else "INCOMPLETE",
+                "Unique Query-Candidate Pairs": num_q_cand_pairs,
+                "Evaluated Variants (5 weights)": evaluated_variants,
+                "Expected Variants": expected_variants,
+                "Labeling Coverage %": f"{coverage_pct:.2f}%",
+                "Coverage Status": "100.0% COMPLETE" if evaluated_variants >= expected_variants else f"{coverage_pct:.1f}% INCOMPLETE",
             })
         return pd.DataFrame(rows)
 
