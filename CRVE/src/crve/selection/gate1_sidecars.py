@@ -36,10 +36,16 @@ from evaluation.baselines.pyterrier_qe import get_terrier_analyzer
 
 ANALYZER_VERSION = "v1_krovetz_suppletion"
 DEFAULT_BUILD_CEILINGS_SEC = {
-    "bge": 300.0,
-    "ppmi": 900.0,
-    "acronym": 180.0,
-    "lexical": 600.0,
+    "bge": 1800.0,      # 30 min
+    "ppmi": 3600.0,     # 60 min
+    "acronym": 900.0,   # 15 min
+    "lexical": 2700.0,  # 45 min
+}
+DEFAULT_MAX_DISK_MB = {
+    "bge": 100.0,
+    "ppmi": 250.0,
+    "acronym": 50.0,
+    "lexical": 350.0,
 }
 MAX_DISK_MB = 500.0
 
@@ -81,16 +87,33 @@ def compute_pool_sha256(terms: List[str]) -> str:
 class Gate1SidecarManager:
     """Manages creation, caching, and loading of all Gate 1 sidecars with strict validation."""
 
-    def __init__(self, cache_dir: str = "data/cache/canonical_pools"):
+    def __init__(
+        self,
+        cache_dir: str = "data/cache/canonical_pools",
+        config: Optional[Dict[str, Any]] = None,
+        bge_model_name: str = "BAAI/bge-small-en-v1.5",
+    ):
         self.cache_dir = os.path.abspath(cache_dir)
         os.makedirs(self.cache_dir, exist_ok=True)
         self.analyzer = get_terrier_analyzer()
+        self.config = config or {}
+        self.bge_model_name = bge_model_name
+
+        # Wire build ceilings and disk caps directly from config if provided
+        self.ceilings = dict(DEFAULT_BUILD_CEILINGS_SEC)
+        if "build_ceilings_sec" in self.config:
+            self.ceilings.update(self.config["build_ceilings_sec"])
+
+        self.disk_caps = dict(DEFAULT_MAX_DISK_MB)
+        if "build_disk_caps_mb" in self.config:
+            self.disk_caps.update(self.config["build_disk_caps_mb"])
 
     def _get_safe_ds(self, dataset: str) -> str:
         return dataset.lower().replace("-", "_")
 
-    def _check_disk_footprint(self, path: str):
-        """Asserts written file or directory is under MAX_DISK_MB."""
+    def _check_disk_footprint(self, path: str, max_mb: Optional[float] = None):
+        """Asserts written file or directory is under max_mb. Deletes path if cap exceeded."""
+        cap = max_mb if max_mb is not None else MAX_DISK_MB
         if os.path.isfile(path):
             size_mb = os.path.getsize(path) / (1024 ** 2)
         elif os.path.isdir(path):
@@ -101,9 +124,17 @@ class Gate1SidecarManager:
             ) / (1024 ** 2)
         else:
             return
-        if size_mb > MAX_DISK_MB:
+        if size_mb > cap:
+            # Clean up failed/oversized artifact immediately
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                elif os.path.isdir(path):
+                    shutil.rmtree(path)
+            except Exception:
+                pass
             raise BuildResourceError(
-                f"Disk footprint for {path} ({size_mb:.2f} MB) exceeded cap of {MAX_DISK_MB} MB!"
+                f"Disk footprint for {path} ({size_mb:.2f} MB) exceeded cap of {cap} MB!"
             )
 
     # -------------------------------------------------------------------------
@@ -117,11 +148,13 @@ class Gate1SidecarManager:
         encoder=None,
         device: str = "cpu",
         force_rebuild: bool = False,
-        timeout_sec: float = DEFAULT_BUILD_CEILINGS_SEC["bge"],
+        timeout_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Builds or loads BGE embeddings strictly aligned 1:1 with canonical pool terms in FP16.
         """
+        if timeout_sec is None:
+            timeout_sec = self.ceilings.get("bge", DEFAULT_BUILD_CEILINGS_SEC["bge"])
         safe_ds = self._get_safe_ds(dataset)
         out_path = os.path.join(self.cache_dir, f"{safe_ds}_bge_sidecar.pt")
         expected_sha = compute_pool_sha256(pool_terms)
@@ -134,6 +167,7 @@ class Gate1SidecarManager:
                     meta.get("pool_sha256") == expected_sha
                     and meta.get("num_docs") == num_docs
                     and meta.get("analyzer_version") == ANALYZER_VERSION
+                    and meta.get("bge_model") == self.bge_model_name
                     and data.get("pool_terms") == pool_terms
                 ):
                     return {
@@ -199,6 +233,7 @@ class Gate1SidecarManager:
             "pool_size": len(pool_terms),
             "num_docs": num_docs,
             "analyzer_version": ANALYZER_VERSION,
+            "bge_model": self.bge_model_name,
             "dtype": "float16",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -211,8 +246,8 @@ class Gate1SidecarManager:
             "surf_to_idx": surf_to_idx,
             "embeddings": embs_tensor.cpu(),
         }, tmp_path)
+        self._check_disk_footprint(tmp_path, max_mb=self.disk_caps.get("bge", 100.0))
         os.replace(tmp_path, out_path)
-        self._check_disk_footprint(out_path)
 
         timing_s = round(time.perf_counter() - t0, 2)
         print(f"[Sidecar] BGE Sidecar built in {timing_s}s -> {out_path}")
@@ -236,11 +271,13 @@ class Gate1SidecarManager:
         num_docs: int,
         top_m: int = 600,
         force_rebuild: bool = False,
-        timeout_sec: float = DEFAULT_BUILD_CEILINGS_SEC["ppmi"],
+        timeout_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Builds or loads precomputed top-M=600 PPMI neighbors per anchor with exact floats.
         """
+        if timeout_sec is None:
+            timeout_sec = self.ceilings.get("ppmi", DEFAULT_BUILD_CEILINGS_SEC["ppmi"])
         safe_ds = self._get_safe_ds(dataset)
         out_path = os.path.join(self.cache_dir, f"{safe_ds}_bounded_ppmi.json")
         expected_sha = compute_pool_sha256(pool_terms)
@@ -305,6 +342,10 @@ class Gate1SidecarManager:
                         if t != a:
                             a_counts[t] += 1
 
+        # Track empirical peak memory and pair statistics
+        peak_pairs = sum(len(v) for v in anchor_cooccur.values())
+        peak_rss_gib = get_process_rss_gib()
+
         # Compute exact PPMI (no rounding)
         anchor_ppmi = {}
         for a, targets in anchor_cooccur.items():
@@ -323,6 +364,7 @@ class Gate1SidecarManager:
                 scored.sort(key=lambda x: (-x[1], x[0]))
                 anchor_ppmi[a] = scored[:top_m]
 
+        elapsed_sec = round(time.perf_counter() - t0, 2)
         metadata = {
             "dataset": dataset,
             "pool_sha256": expected_sha,
@@ -331,6 +373,9 @@ class Gate1SidecarManager:
             "analyzer_version": ANALYZER_VERSION,
             "top_m": top_m,
             "num_anchors": len(anchor_ppmi),
+            "peak_pairs": peak_pairs,
+            "peak_rss_gib": round(peak_rss_gib, 3),
+            "elapsed_sec": elapsed_sec,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
 
@@ -341,11 +386,11 @@ class Gate1SidecarManager:
                 "metadata": metadata,
                 "anchors": anchor_ppmi,
             }, f)
+        self._check_disk_footprint(tmp_path, max_mb=self.disk_caps.get("ppmi", 250.0))
         os.replace(tmp_path, out_path)
-        self._check_disk_footprint(out_path)
 
-        timing_s = round(time.perf_counter() - t0, 2)
-        print(f"[Sidecar] Bounded PPMI Sidecar built in {timing_s}s for {len(anchor_ppmi):,} anchors -> {out_path}")
+        timing_s = elapsed_sec
+        print(f"[Sidecar] Bounded PPMI Sidecar built in {timing_s}s for {len(anchor_ppmi):,} anchors (peak pairs: {peak_pairs:,}, peak RSS: {peak_rss_gib:.2f} GiB) -> {out_path}")
 
         return {
             "anchor_ppmi": anchor_ppmi,
@@ -362,11 +407,13 @@ class Gate1SidecarManager:
         pool_terms: List[str],
         num_docs: int,
         force_rebuild: bool = False,
-        timeout_sec: float = DEFAULT_BUILD_CEILINGS_SEC["acronym"],
+        timeout_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Builds or loads bidirectional Schwartz-Hearst acronym/full-form mapping to P.
         """
+        if timeout_sec is None:
+            timeout_sec = self.ceilings.get("acronym", DEFAULT_BUILD_CEILINGS_SEC["acronym"])
         safe_ds = self._get_safe_ds(dataset)
         out_path = os.path.join(self.cache_dir, f"{safe_ds}_acronym_rescue.json")
         expected_sha = compute_pool_sha256(pool_terms)
@@ -473,8 +520,8 @@ class Gate1SidecarManager:
                 "metadata": metadata,
                 "acronyms": formatted,
             }, f)
+        self._check_disk_footprint(tmp_path, max_mb=self.disk_caps.get("acronym", 50.0))
         os.replace(tmp_path, out_path)
-        self._check_disk_footprint(out_path)
 
         timing_s = round(time.perf_counter() - t0, 2)
         print(f"[Sidecar] Acronym Rescue Sidecar built in {timing_s}s ({len(formatted)} triggers) -> {out_path}")
@@ -494,12 +541,14 @@ class Gate1SidecarManager:
         pool_terms: List[str],
         num_docs: int,
         force_rebuild: bool = False,
-        timeout_sec: float = DEFAULT_BUILD_CEILINGS_SEC["lexical"],
+        timeout_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Builds or loads auxiliary BM25 index over candidate terms' passage context profiles
         using deterministic reservoir sampling (up to 50 passages per candidate).
         """
+        if timeout_sec is None:
+            timeout_sec = self.ceilings.get("lexical", DEFAULT_BUILD_CEILINGS_SEC["lexical"])
         safe_ds = self._get_safe_ds(dataset)
         aux_index_dir = os.path.join(self.cache_dir, f"{safe_ds}_lexical_profiles_idx")
         prop_path = os.path.join(aux_index_dir, "data.properties")
@@ -596,10 +645,11 @@ class Gate1SidecarManager:
         with open(os.path.join(tmp_idx_dir, "sidecar_metadata.json"), "w", encoding="utf-8") as f:
             json.dump(metadata, f)
 
+        self._check_disk_footprint(tmp_idx_dir, max_mb=self.disk_caps.get("lexical", 350.0))
+
         if os.path.exists(aux_index_dir):
             shutil.rmtree(aux_index_dir)
         os.rename(tmp_idx_dir, aux_index_dir)
-        self._check_disk_footprint(aux_index_dir)
 
         retriever = pt.terrier.Retriever(os.path.abspath(aux_index_dir), wmodel="BM25", num_results=500)
         timing_s = round(time.perf_counter() - t0, 2)

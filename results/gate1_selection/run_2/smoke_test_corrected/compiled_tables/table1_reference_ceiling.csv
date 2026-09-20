@@ -1,3 +1,0 @@
-Dataset,Partition,Queries,Baseline nDCG@10,Baseline R@1000,Ceiling Delta-nDCG@10,Ceiling Net Rel Docs,Materially Addressable % (g* >= 0.005),Recall Addressable % (r* >= 1)
-scifact,Dev,5,0.6003,1.0000,"+0.2997 [0.0288, 0.5706]",+0.00,60.0%,0.0%
-Corpus-Macro Dev (4 Corpora),Macro,5,0.6003,1.0000,+0.2997,+0.00,60.0%,0.0%

@@ -1,0 +1,21 @@
+{
+  "dataset": "nfcorpus",
+  "index_path": "/home/donghv/Projects/Edge-RAG/data/cache/terrier_indices/nfcorpus_default/data.properties",
+  "index_fingerprint_sha256": "9a28e241ec15482372079e3d2a6235be084f849b93e9b49e88c7a254809a26f6",
+  "analyzer_version": "v1_krovetz_suppletion",
+  "num_docs": 3633,
+  "total_lexicon_size": 18596,
+  "mutually_exclusive_counts": {
+    "len_lt_2": 10,
+    "pure_digits": 1622,
+    "df_lt_2": 7830,
+    "cf_lt_3_given_df_ge_2": 1266,
+    "df_n_gt_0_15": 85,
+    "eligible": 7783
+  },
+  "sum_check_passed": true,
+  "eligible_count": 7783,
+  "frozen_pool_size": 7783,
+  "pool_policy_formula": "min(10000, |V_eligible|)",
+  "computed_pool_size": 7783
+}

@@ -378,11 +378,13 @@ def evaluate_query_gate1(
             "delta_r200": float(d_r200),
             "delta_r500": float(d_r500),
             "delta_r1000": float(d_r1000),
+            "net_rel_docs_k10": int(cutoff_net.get("net_rel_docs_k10", 0)),
             "net_rel_docs_k100": int(cutoff_net["net_rel_docs_k100"]),
             "net_rel_docs_k200": int(cutoff_net["net_rel_docs_k200"]),
             "net_rel_docs_k500": int(cutoff_net["net_rel_docs_k500"]),
             "net_rel_docs_k1000": int(cutoff_net["net_rel_docs_k1000"]),
             "is_ranking_helpful_action": bool(is_helpful_act),
+            "is_recall_helpful_k10": bool(cutoff_net.get("net_rel_docs_k10", 0) >= 1 and d_ndcg10 >= -epsilon_thresh),
             "is_recall_helpful_k100": bool(cutoff_net["net_rel_docs_k100"] >= 1 and d_ndcg10 >= -epsilon_thresh),
             "is_recall_helpful_k200": bool(cutoff_net["net_rel_docs_k200"] >= 1 and d_ndcg10 >= -epsilon_thresh),
             "is_recall_helpful_k500": bool(cutoff_net["net_rel_docs_k500"] >= 1 and d_ndcg10 >= -epsilon_thresh),
@@ -536,6 +538,8 @@ def run_dataset_gate1_evaluation(
             frozen_qids = q_manifest["dev_200_qids"].get(dataset)
 
     if frozen_qids:
+        if len(frozen_qids) != len(set(frozen_qids)):
+            raise RuntimeError(f"FATAL: Duplicate QIDs detected in frozen manifest for dataset '{dataset}'!")
         missing_qids = set(frozen_qids) - set(q_by_id.keys())
         if missing_qids:
             raise RuntimeError(f"FATAL: Dataset '{dataset}' is missing {len(missing_qids)} QIDs from frozen manifest: {list(missing_qids)[:5]}")
@@ -553,13 +557,14 @@ def run_dataset_gate1_evaluation(
     k_fetch = min(num_docs, 1000 + max_ex)
     bm25 = pt.terrier.Retriever(index, wmodel="BM25", num_results=k_fetch)
 
-    # 4. Load all 4 Gate 1 Sidecars
-    sidecar_mgr = Gate1SidecarManager()
+    # 4. Load all 4 Gate 1 Sidecars with frozen config wiring
+    sidecar_mgr = Gate1SidecarManager(config=frozen_config, bge_model_name=bge_model)
     bge_sidecar = sidecar_mgr.build_or_load_bge_sidecar(dataset, pool_terms, num_docs=num_docs, encoder=encoder, device=device)
     pool_embeddings = bge_sidecar["pool_embeddings"]
     surf_to_idx = bge_sidecar["surf_to_idx"]
 
-    ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(dataset, index, pool_terms, num_docs=num_docs, top_m=600)
+    ppmi_top_m = frozen_config.get("ppmi", {}).get("top_m", 600) if frozen_config else 600
+    ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(dataset, index, pool_terms, num_docs=num_docs, top_m=ppmi_top_m)
     anchor_ppmi = ppmi_sidecar["anchor_ppmi"]
 
     acronym_sidecar = sidecar_mgr.build_or_load_acronym_rescue_sidecar(dataset, pool_terms, num_docs=num_docs)
@@ -595,7 +600,9 @@ def run_dataset_gate1_evaluation(
     ppmi_sidecar_proposer = PPMISidecarProposer(anchor_ppmi, full_idf_map, full_df_map, num_docs)
     sparse_lex_proposer = SparseLexicalContextProposer(aux_retriever, pool_terms)
     acronym_proposer = AcronymDefinitionRescueProposer(acronym_to_pool, pool_terms)
-    rrf_proposer = RRFHybridProposer(k=60)
+    
+    rrf_k = frozen_config.get("rrf", {}).get("k", 60) if frozen_config else 60
+    rrf_proposer = RRFHybridProposer(k=rrf_k)
 
     proposers = {
         "WholeQueryBGE": wq_proposer,
@@ -641,11 +648,12 @@ def run_dataset_gate1_evaluation(
                 st_data = pq.read_table(status_shard).to_pydict()
                 st_cfg = st_data.get("config_hash", [""])[0]
                 st_ds = st_data.get("dataset_hash", [""])[0]
+                st_qrels = st_data.get("qrels_hash", [""])[0]
                 st_pool = st_data.get("pool_hash", [""])[0]
-                if st_cfg != config_hash or st_ds != dataset_hash or st_pool != pool_hash:
+                if st_cfg != config_hash or st_ds != dataset_hash or st_qrels != qrels_hash or st_pool != pool_hash:
                     raise RuntimeError(
                         f"FATAL: Stale shard for QID {qid} has mismatched hashes: "
-                        f"config={st_cfg[:8]} vs {config_hash[:8]}, pool={st_pool[:8]} vs {pool_hash[:8]}. Clean output directory."
+                        f"config={st_cfg[:8]} vs {config_hash[:8]}, qrels={st_qrels[:8]} vs {qrels_hash[:8]}, pool={st_pool[:8]} vs {pool_hash[:8]}. Clean output directory."
                     )
                 p_rows = pq.read_metadata(parent_shard).num_rows
                 c_rows = pq.read_metadata(cutoff_shard).num_rows
@@ -910,6 +918,11 @@ def main():
         weights = [float(w.strip()) for w in args.weights.split(",")]
         seed = args.seed
 
+    # Reseed global RNG with frozen seed
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
     # Load Phase 1 candidate audit if available
     phase1_audit_df = None
     if args.phase1_audit and os.path.exists(args.phase1_audit):
@@ -963,6 +976,16 @@ def main():
     assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
     assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=expected_qids_all if expected_qids_all else None)
 
+    import platform
+    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None"
+    cuda_ver = torch.version.cuda if torch.cuda.is_available() else "None"
+    driver_ver = "N/A"
+    try:
+        with open("/proc/driver/nvidia/version", "r") as f:
+            driver_ver = f.readline().strip().split()[7]
+    except Exception:
+        pass
+
     manifest = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "config_hash": config_hash,
@@ -974,6 +997,15 @@ def main():
         "total_variants": sum(s["total_variants"] for s in meta_summaries),
         "total_cutoff_entries": sum(s["total_cutoff_entries"] for s in meta_summaries),
         "total_retrieval_time_sec": round(sum(s["retrieval_time_sec"] for s in meta_summaries), 2),
+        "environment": {
+            "cpu_model": platform.processor() or "x86_64",
+            "gpu_name": gpu_name,
+            "driver_version": driver_ver,
+            "cuda_version": cuda_ver,
+            "python_version": sys.version.split()[0],
+            "torch_version": torch.__version__,
+            "pyterrier_version": getattr(pt, "__version__", "5.11"),
+        },
         "dataset_summaries": meta_summaries,
     }
     manifest_path = os.path.join(args.output_dir, "run_manifest.json")
