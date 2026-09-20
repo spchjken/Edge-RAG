@@ -21,6 +21,8 @@ from typing import Dict, List, Set, Tuple, Optional, Any, Union
 from collections import defaultdict
 import numpy as np
 import torch
+import pandas as pd
+import pyterrier as pt
 
 from evaluation.baselines.pyterrier_qe import get_terrier_analyzer
 
@@ -290,6 +292,13 @@ class LexicalPPMIProposer(BaseProposer):
         self.di = self.index.getDirectIndex()
         self.doi = self.index.getDocumentIndex()
 
+        # Precompute pool term IDs to eliminate inner-loop JNI calls
+        self.pool_term_ids: Dict[int, str] = {}
+        for entry in self.lex:
+            t = str(entry.getKey())
+            if t in self.pool_terms:
+                self.pool_term_ids[int(entry.getValue().getTermId())] = t
+
     def get_anchor_docids(self, term: str) -> Set[int]:
         """Retrieves set of docids where term occurs via InvertedIndex."""
         entry = self.lex.getLexiconEntry(term)
@@ -327,14 +336,12 @@ class LexicalPPMIProposer(BaseProposer):
             docids = self.get_anchor_docids(a)
             if docids:
                 anchor_docs_map[a] = docids
-                anchor_weights[a] = self.idf_map.get(a, 0.0) / max(self.max_idf, 1e-6)
+                anchor_weights[a] = max(self.idf_map.get(a, 0.0) / max(self.max_idf, 1e-6), 0.01)
 
         if not anchor_docs_map:
             return []
 
         # 2. Fast direct-index co-occurrence accumulation
-        # For each anchor, iterate over its documents and count pool terms
-        # joint_counts[anchor][cand] = count
         scores: Dict[str, float] = defaultdict(float)
 
         for a, docids in anchor_docs_map.items():
@@ -354,11 +361,9 @@ class LexicalPPMIProposer(BaseProposer):
                     continue
                 while postings.next() != postings.EOL:
                     term_id = postings.getId()
-                    l_entry = self.lex.getLexiconEntry(term_id)
-                    if l_entry is not None:
-                        t_str = l_entry.getKey()
-                        if t_str in self.pool_terms and t_str not in excluded_terms:
-                            joint_df[t_str] += 1
+                    t_str = self.pool_term_ids.get(term_id)
+                    if t_str is not None and t_str not in excluded_terms:
+                        joint_df[t_str] += 1
 
             # Compute unsmoothed PPMI for candidates with joint support >= min_support
             for cand, df_at in joint_df.items():
@@ -429,3 +434,138 @@ class RRFHybridProposer(BaseProposer):
     ) -> List[Tuple[str, float]]:
         # RRF proposal requires pre-generated channel rankings
         raise NotImplementedError("Use RRFHybridProposer.fuse(channel_rankings, top_l) to fuse multiple channels.")
+
+
+class PPMISidecarProposer(BaseProposer):
+    """
+    Channel 3b: Bounded PPMI Sidecar Proposer.
+    Performs O(1) query-time lookup from precomputed top-M=600 co-occurrence neighbors,
+    reproducing LivePPMI anchor filtering and IDF weighting with <1ms latency.
+    """
+
+    def __init__(
+        self,
+        anchor_ppmi: Dict[str, List[Tuple[str, float]]],
+        idf_map: Dict[str, float],
+        df_map: Dict[str, int],
+        num_docs: int,
+    ):
+        super().__init__(name="PPMISidecar")
+        self.anchor_ppmi = anchor_ppmi
+        self.idf_map = dict(idf_map)
+        self.df_map = dict(df_map)
+        self.num_docs = max(num_docs, 1)
+        self.max_idf = max(self.idf_map.values()) if self.idf_map else 1.0
+
+    def propose(
+        self,
+        query_obj: Dict[str, Any],
+        top_k: int = 500,
+    ) -> List[Tuple[str, float]]:
+        q_text = str(query_obj.get("question", query_obj.get("query", "")))
+        excluded_terms = self.get_query_excluded_terms(q_text)
+
+        terms, _ = self.analyzer.analyze(q_text)
+        if not terms:
+            return []
+
+        unique_anchors = list(set(terms))
+        scores: Dict[str, float] = defaultdict(float)
+
+        for a in unique_anchors:
+            a_df = self.df_map.get(a, 0)
+            if a_df < 2 or (a_df / self.num_docs) > 0.12:
+                continue
+
+            w_a = max(self.idf_map.get(a, 0.0) / max(self.max_idf, 1e-6), 0.01)
+            neighbors = self.anchor_ppmi.get(a, [])
+            for cand, pmi_val in neighbors:
+                if cand not in excluded_terms:
+                    scores[cand] += w_a * pmi_val
+
+        scored_terms = [(cand, score) for cand, score in scores.items()]
+        scored_terms.sort(key=lambda x: (-x[1], x[0]))
+        return scored_terms[:top_k]
+
+
+class SparseLexicalContextProposer(BaseProposer):
+    """
+    Channel 5: Sparse Lexical Context Profiles Proposer.
+    Queries auxiliary BM25 index over candidate terms' passage context profiles.
+    """
+
+    def __init__(
+        self,
+        retriever: pt.terrier.Retriever,
+        pool_terms: List[str],
+    ):
+        super().__init__(name="SparseLexicalContextProfiles")
+        self.retriever = retriever
+        self.pool_set = set(pool_terms)
+
+    def propose(
+        self,
+        query_obj: Dict[str, Any],
+        top_k: int = 500,
+    ) -> List[Tuple[str, float]]:
+        q_text = str(query_obj.get("question", query_obj.get("query", "")))
+        excluded_terms = self.get_query_excluded_terms(q_text)
+
+        terms, _ = self.analyzer.analyze(q_text)
+        if not terms:
+            return []
+
+        clean_query = " ".join(terms)
+        q_df = pd.DataFrame([{"qid": "q", "query": clean_query}])
+        res_df = self.retriever.transform(q_df)
+
+        scored_terms = []
+        for _, row in res_df.iterrows():
+            t = str(row["docno"])
+            if t in self.pool_set and t not in excluded_terms:
+                scored_terms.append((t, float(row["score"])))
+
+        scored_terms.sort(key=lambda x: (-x[1], x[0]))
+        return scored_terms[:top_k]
+
+
+class AcronymDefinitionRescueProposer(BaseProposer):
+    """
+    Channel 6: Acronym Definition Rescue Proposer.
+    Rescues pool terms matching acronyms or full forms via Schwartz-Hearst bidirectional extraction.
+    """
+
+    def __init__(
+        self,
+        acronym_to_pool: Dict[str, List[Tuple[str, float]]],
+        pool_terms: List[str],
+    ):
+        super().__init__(name="AcronymDefinitionRescue")
+        self.acronym_to_pool = acronym_to_pool
+        self.pool_set = set(pool_terms)
+
+    def propose(
+        self,
+        query_obj: Dict[str, Any],
+        top_k: int = 500,
+    ) -> List[Tuple[str, float]]:
+        q_text = str(query_obj.get("question", query_obj.get("query", "")))
+        excluded_terms = self.get_query_excluded_terms(q_text)
+
+        terms, surfs = self.analyzer.analyze(q_text)
+        triggers = set()
+        for t in terms:
+            triggers.add(t.lower())
+        for s in surfs:
+            triggers.add(str(s).lower())
+
+        scores: Dict[str, float] = {}
+        for tr in triggers:
+            for cand, score in self.acronym_to_pool.get(tr, []):
+                if cand in self.pool_set and cand not in excluded_terms:
+                    scores[cand] = max(scores.get(cand, 0.0), score)
+
+        scored_terms = [(cand, score) for cand, score in scores.items()]
+        scored_terms.sort(key=lambda x: (-x[1], x[0]))
+        return scored_terms[:top_k]
+
