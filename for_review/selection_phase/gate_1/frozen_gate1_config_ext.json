@@ -1,0 +1,13 @@
+{
+  "winning_config": "RRF_Core_L200",
+  "proposer": "rrf_core",
+  "budget": 200,
+  "macro_reference_bor": 0.6356115488384082,
+  "macro_near_best_hit": 0.4396135265700483,
+  "macro_recall_hit": 0.7806267806267807,
+  "macro_term_recall": 0.12115096020182853,
+  "gate_a_passed": false,
+  "centroid_trigger_fired": true,
+  "created_at": "2026-09-19T21:53:12Z",
+  "config_sha256": "4df58c42a27f71515dcf9c499b96283b6e494b9294e7cecd53c33d904bc1453f"
+}

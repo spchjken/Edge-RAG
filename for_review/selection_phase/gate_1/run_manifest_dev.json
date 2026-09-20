@@ -1,0 +1,122 @@
+{
+  "git_commit": "89bf941444d4ab0fed39a572ab0696764c359cb4",
+  "timestamp": "2026-09-19T05:24:46Z",
+  "config_hash": "gate1_core_dev_v1",
+  "datasets": [
+    "scifact",
+    "bright_aops",
+    "nfcorpus",
+    "trec_covid"
+  ],
+  "sample_size": 50,
+  "seed": 42,
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "peak_rss_gib": 4.536,
+  "total_variants": 2375195,
+  "total_transitions": 104064827,
+  "total_retrieval_time_sec": 20386.47,
+  "dataset_summaries": [
+    {
+      "dataset": "scifact",
+      "num_docs": 5183,
+      "pool_size": 10000,
+      "num_queries": 50,
+      "total_variants": 331895,
+      "total_transitions": 58470,
+      "retrieval_time_sec": 0.054017828000041845,
+      "baseline_parity": {
+        "dataset": "scifact",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "scifact",
+        "p50_ms": 916.7227850000472,
+        "p95_ms": 1253.1996482000295,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "f8fb96757345",
+      "qrels_hash": "58e57538ff29"
+    },
+    {
+      "dataset": "bright_aops",
+      "num_docs": 188002,
+      "pool_size": 10000,
+      "num_queries": 50,
+      "total_variants": 359055,
+      "total_transitions": 133263,
+      "retrieval_time_sec": 0.05078906000005645,
+      "baseline_parity": {
+        "dataset": "bright_aops",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "bright_aops",
+        "p50_ms": 21993.44471000006,
+        "p95_ms": 30714.29404440005,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "9083543ef034",
+      "qrels_hash": "2f73bac19c1a"
+    },
+    {
+      "dataset": "nfcorpus",
+      "num_docs": 3633,
+      "pool_size": 8915,
+      "num_queries": 50,
+      "total_variants": 460760,
+      "total_transitions": 4051972,
+      "retrieval_time_sec": 0.047100869000018974,
+      "baseline_parity": {
+        "dataset": "nfcorpus",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "nfcorpus",
+        "p50_ms": 12.661798000067392,
+        "p95_ms": 333.4688161999565,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "17e4357ee0e8",
+      "qrels_hash": "50d292a9fff4"
+    },
+    {
+      "dataset": "trec_covid",
+      "num_docs": 171331,
+      "pool_size": 10000,
+      "num_queries": 50,
+      "total_variants": 1223485,
+      "total_transitions": 99821122,
+      "retrieval_time_sec": 20386.314133619002,
+      "baseline_parity": {
+        "dataset": "trec_covid",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "trec_covid",
+        "p50_ms": 10748.220969000045,
+        "p95_ms": 34283.70084260005,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "53c3f500e9c5",
+      "qrels_hash": "544b7a059151"
+    }
+  ]
+}

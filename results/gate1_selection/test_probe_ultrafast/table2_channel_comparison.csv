@@ -1,0 +1,5 @@
+Channel,Partition,Budget (L),TermRecall@L,TermPrecision@L,NearBestHit@L,ReferenceBOR@L,"RecallHit@L,1000"
+WholeQueryBGE,Development (4 Corpora),200,nan%,0.0%,nan%,nan%,nan%
+AnchorBGEFiltered,Development (4 Corpora),200,nan%,0.0%,nan%,nan%,nan%
+AnchorBGEAll,Development (4 Corpora),200,nan%,0.0%,nan%,nan%,nan%
+LexicalPPMI,Development (4 Corpora),200,nan%,0.0%,nan%,nan%,nan%

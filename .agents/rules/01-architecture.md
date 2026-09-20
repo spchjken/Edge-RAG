@@ -2,113 +2,61 @@
 trigger: always_on
 ---
 
-# 🏗️ MODULE BOUNDARIES & ARCHITECTURE RULES (Edge-RAG)
+# 🏗️ MODULE BOUNDARIES & ARCHITECTURE RULES (CRVE)
 
 ## 1. System Documentation Hierarchy
 - **Canonical Reconciliation**: Each architectural decision has one canonical owner. Derivative documents may summarize or link to that owner but must not silently diverge. When Tier 0, Tier 1, or Tier 2 sources conflict, the higher tier governs; reconcile the lower-tier source and all affected references before dependent implementation proceeds.
-- **Tier 0 (Current System Description — `docs/ARCHITECTURE.md`)**: Canonical system blueprint describing the active High-Speed Anchored Lexical-Semantic Retriever. Must read first to understand system design.
-- **Tier 1 (High-Level Rules & Module Boundaries — This File)**: Defines active pipeline boundaries, isolation constraints, hardware caps ($N_{max}$), and configuration contracts.
-- **Tier 2 (Decentralized Pathway Specs — `pathway_*.md` in Sub-modules)**: Co-located algorithm specifications (e.g., `src/pipeline_v2/expansion/pathway_bm25_dense_aspect.md`). Any new retrieval variant added to `src/pipeline_v2/` MUST include a co-located `pathway_<name>.md`.
+- **Tier 0 (Current System Description — `CRVE/docs/ARCHITECTURE.md`)**: Canonical system blueprint describing the active CRVE 1st-Stage Retrieval architecture. Must read first to understand system design.
+- **Tier 1 (High-Level Rules & Module Boundaries — This File)**: Defines active module boundaries, component isolation constraints, hardware caps, and configuration contracts.
+- **Tier 2 (Decentralized Pathway Specs — `pathway_*.md` in Sub-modules)**: Co-located algorithm specifications (e.g., `CRVE/src/crve/selection/pathway_gate1_selection.md`). Any new retrieval variant added to `CRVE/src/crve/` MUST include a co-located `pathway_<name>.md`.
 
 ---
 
-## 2. Active Pipeline Architecture (`src/pipeline_v2/`)
-`src/pipeline_v2/` is the primary, production-grade Edge-RAG pipeline. It implements an Anchored Lexical-Semantic Retriever with downstream extension modules:
+## 2. Active Retrieval Architecture (`CRVE/src/crve/`)
+`CRVE/src/crve/` is the sole active retrieval package. It implements Context-Reranked Vocabulary Expansion for 1st-stage retrieval:
 
-### 2.1 Indexing & Shared IDF (`src/pipeline_v2/indexer/`)
-- `analyzer.py` — `EdgeRAGAnalyzer`: Krovetz stemmer with WordNet irregular suppletion overrides (*went $\to$ go*, *children $\to$ child*) and technical compound protection (*e.g.* `qwen2.5-7b`, `fp16`, `nav2_bringup`).
+### 2.1 Indexing & Shared IDF (`CRVE/src/crve/indexer/`)
+- `analyzer.py` — `EdgeRAGAnalyzer`: Krovetz stemmer with WordNet irregular suppletion overrides (*went $\to$ go*, *children $\to$ child*) and technical compound protection (*e.g.* `qwen2.5-7b`, `fp16`, `nav2_bringup`). Self-contained canonical tokenization pattern.
 - `corpus_idf_registry.py` — `CorpusIDFRegistry`: Unified non-negative Lucene IDF table ($\ln(1.0 + \frac{N - n + 0.5}{n + 0.5})$) and pre-indexed compound `boundary_prefix_map` for $O(1)$ query-time bailout lookups.
 - `corpus_vocab_builder.py` — `CorpusVocabBuilder`: Fast sublinear salience vocabulary extractor ($\text{IDF} \times \ln(1 + \text{DF})$) with canonical surface-form mapping (*e.g.*, stem `robot` $\to$ surface `robotics`).
-- `dense_vocab_matrix.py` — `DenseVocabMatrix`: Batched GPU embedding matrix using `BAAI/bge-small-en-v1.5` on CUDA FP16 with Farthest-Point Sampling (FPS) for 2,500 semantic coverage hubs ($<0.3\text{s}$ TTI).
-- `bm25_lucene_indexer.py` — `BM25LuceneIndexer`: Inverted posting list retrieval engine wrapping `LuceneBM25Baseline` (legacy mode) or `InvertedPostingIndex` (parity mode, $k_1=1.2, b=0.75$).
-- `posting_index.py` — `InvertedPostingIndex`: In-memory inverted posting index with exact Lucene BM25 score identity.
+- `dense_vocab_matrix.py` — `DenseVocabMatrix`: Batched GPU embedding matrix using `BAAI/bge-small-en-v1.5` on CUDA FP16 with Farthest-Point Sampling (FPS) for semantic coverage hubs ($<0.3\text{s}$ TTI).
 
-### 2.2 Query Expansion (`src/pipeline_v2/expansion/`)
-- `v7_aspect_extractor.py` — `V7AspectExtractor`: Standalone 5-phase V7 Retriever ($p=1.0$ content anchors, Penn Treebank POS priors, 1-pass GPU batch GEMM probing, adaptive similarity gating, and Information-Theoretic Mass-Preserving Expansion with score-space damping in CPU NumPy cache).
-- `pathway_v7_anchored_retriever.md` — Authoritative co-located Tier 2 specification for V7.
-- `bm25_dense_aspect_extractor.py` — `BM25DenseAspectExtractor`: Legacy schemas (1, 5a, 5b, 6a, 6b) and backward-compatible delegator for `BM25Dense_V7`.
-  - **Active Schemas:** `BM25Dense_V7` (Primary), `BM25Dense_AspectInject` (Schema 1), `BM25Dense_FixedRepDynamicCapacity` (Schema 5a), `BM25Dense_DynamicAspectInject` (Schema 5b), `BM25Dense_CentralityFixedRep` (Schema 6a), `BM25Dense_CentralityDynamicInject` (Schema 6b).
+### 2.2 Gate 1 Selection Under Uncertainty (`CRVE/src/crve/selection/`)
+- `gate1_proposers.py` — Multi-channel candidate proposers:
+  - `WholeQueryBGEProposer`: Global query-to-pool cosine matching ($S_{\text{WQ}}$).
+  - `AnchorBGEProposer`: Fine-grained anchor-to-term specificity matching ($S_{\text{ABGE}}$).
+  - `LexicalPPMIProposer`: Positive Pointwise Mutual Information ($S_{\text{PPMI}}$) evaluated from PyTerrier posting lists.
+  - `RRFHybridProposer`: Reciprocal Rank Fusion ($k=60$) over top candidate lists with unique refill.
+- `gate1_metrics.py` — Mathematical evaluation of selection under uncertainty: Recall@K, NDCG@K, ReferenceBOR, NearBestHit, TermRecall, TermPrecision, and transition dynamics.
+- `pathway_gate1_selection.md` — Authoritative co-located Tier 2 specification for Gate 1 selection.
 
-### 2.3 Downstream Extensions (Future Work)
-- **Cascade Routing (`src/pipeline_v2/routing/`):** `BM25CascadeRouter` — 3-way triage (Bypass / Rerank / Discard) based on normalized BM25 score and Aspect Coverage $\alpha$.
-- **Listwise LLM Reranker (`src/pipeline_v2/reranker/`):** `ListwiseLLMRerankerV2` — Single-pass listwise LLM evaluation using ~250-token sentence snippets extracted around anchor hits.
-- **Late Context Expansion (`src/pipeline_v2/expansion_late/`):** `LateExpansionV2` — Restores full uncompressed chunk text and enforces hardware VRAM safety budget ($N_{\text{max}} \le 10$).
-
-### 2.4 Orchestration & Configuration
-- `orchestrator.py` — `PipelineV2Orchestrator`: End-to-end runner orchestrating Indexer $\to$ Expansion $\to$ Routing $\to$ Reranker $\to$ Late Expansion.
-- `configs/pipeline_v2.yaml`: Authoritative single source of truth for all Pipeline V2 hyperparameters.
-
-### 2.5 Legacy Pipeline V1 (`src/legacy_pipeline/`)
-- Legacy experimental 5-stage pipeline (`query_expansion/`, `lexical_search/`, `routing/`, `llm_reranker/`, `late_expansion/`).
-- Deprecated and maintained for historical baseline comparisons. Isolated from `src/pipeline_v2/`.
+### 2.3 Orchestration & Configuration
+- `orchestrator.py` — `CRVEOrchestrator`: End-to-end 1st-stage runner connecting Indexer $\to$ Vocab Builder $\to$ Dense Matrix $\to$ Gate 1 Proposers $\to$ PyTerrier Retrieval.
+- `CRVE/configs/crve.yaml`: Authoritative single source of truth for all CRVE hyperparameters.
 
 ---
 
-## 3. Baselines (`src/baselines/`)
-- Fully isolated. Each baseline is self-contained.
-- May import `torch`, `transformers`, `FlagEmbedding`, `rank_bm25`.
-- MUST NOT import from `src/pipeline_v2/` or `src/legacy_pipeline/`.
+## 3. Evaluation & Baselines (`CRVE/src/evaluation/`)
+All baseline models and evaluation harnesses live in `CRVE/src/evaluation/`:
+
+### 3.1 Baselines Namespace (`CRVE/src/evaluation/baselines/`)
+Contains all 8 standardized retrieval baselines:
+- **Classical PyTerrier Baselines:**
+  - `pyterrier_harness.py`: Disk-backed Terrier inverted indexing and evaluation harness across 25 BEIR & BRIGHT datasets (`BM25_Default`, `BM25_RM3_Terrier_Default`, `BM25_Bo1_Terrier_Default`, `DPH`, `DPH_Bo1_Terrier_Default`, `DPH_RM3_Terrier_Default`).
+  - `pyterrier_qe.py`: Sparse lexical query expansion baselines (`BGE_Vocab_QE`, `LLM_Q2E_ZS`) and `TerrierQueryAnalyzer`.
+- **Neural Baselines:**
+  - `dense_rag.py`: `DenseRAGBaseline` (BAAI/bge-small-en-v1.5 on CUDA FP16).
+  - `splade.py`: `SPLADEBaseline` and `SparseInvertedIndex` (naver/splade-v3-distilbert).
+
+### 3.2 Evaluation Infrastructure (`CRVE/src/evaluation/`)
+- `benchmark_loader.py` — `BenchmarkLoader`: Streaming ingestion for all BEIR and BRIGHT datasets without loading multi-million raw corpora into memory.
+- `pool_generators.py` — Formal candidate pool policies (Salience, Specificity, Hybrid, Stratified, CELF Coverage) for pool oracle isolation.
+- `metrics.py` — Parity-verified IR metrics calculation (nDCG@K, MRR@K, R@K, P@K).
 
 ---
 
-## 4. Evaluation & Testing (`src/evaluation/`, `scripts/`, `tests/`)
-- Orchestrates evaluations comparing Pipeline V2 against baselines (BM25, Dense BGE, SPLADE-v3, RM3).
-- **PyTerrier Baseline Harness (`src/evaluation/pyterrier_harness.py`, `scripts/run_pyterrier_baselines.py`):**
-  - Canonical disk-backed evaluation harness across small and multi-million-document corpora (up to 5M+ docs).
-  - Evaluates the canonical 6-baseline matrix: `BM25_Default`, `BM25_RM3_Terrier_Default`, `BM25_Bo1_Terrier_Default`, `DPH`, `DPH_Bo1_Terrier_Default`, and `DPH_RM3_Terrier_Default`.
-  - Memory-safe architecture for 15 GiB RAM: bounded JVM heap (`pt.init(mem=3072)`), bounded Terrier buffer (`indexing.max.memory = 1073741824`), streaming disk generator ingestion (`stream_corpus`), and query chunking (`chunk_size=200`).
-  - Standard BEIR metric parity using official linear `ir_measures` with supplemental Table 2 exponential gains (`EXP_GAINS`).
-- Primary evaluation scripts:
-  - `scripts/results_scripts_mapping.md` — Authoritative two-column mapping of all result files to scripts/tests.
-  - `scripts/run_pyterrier_baselines.py` — Canonical 6-baseline evaluation runner across 25 BEIR & BRIGHT datasets with auto-resume.
-  - `scripts/legacy/` — Historical multi-corpus ablation sweeps and calibration suites (`pipeline_v1_legacy/`, `v2_ablation/`, `v7_legacy/`).
-  - `src/evaluation/benchmark_runner.py` — Baseline vs Edge-RAG orchestrator.
-  - `src/evaluation/metrics.py` — Retrieval and generation metric evaluators.
-
----
-
-## 5. Utils (`src/utils/`)
-- Shared utilities: `llm_client.py` (OpenAI-compatible wrapper), `helpers.py`.
-- `llm_client.py` auto-detects backend (Ollama vs llama-cpp) from `configs/models.yaml`.
-- No domain-specific logic in `utils/`.
-
----
-
-## 6. Configs (`configs/`)
-- All hyperparameters in YAML. No hardcoded magic numbers in source code.
-- `configs/pipeline_v2.yaml`: Pipeline V2 expansion, indexing, routing, and VRAM parameters.
-- `configs/models.yaml`: Per-model backend, endpoint, tags, context windows.
-- `configs/thresholds.yaml`: Legacy V1 threshold definitions.
-- `configs/hardware_profiles.yaml`: VRAM fractions for simulated hardware profiles.
-
----
-
-## 7. Vendor (`vendor/`)
-- Custom-built external tools (llama.cpp for ZAYA1-8B).
-- Built via `scripts/setup_zaya.sh`. Never committed to git.
-- Listed in `.gitignore`.
-
----
-
-## 8. Benchmark Creation (`scripts/benchmark_creation/`)
-5-step synthetic dataset generation pipeline:
-1. `step1_chunking.py` — Hierarchical parent block + child chunk parsing
-2. `step2_seed_generation.py` — LLM-generated queries + golden answers per parent block
-3. `step3_query_paraphrasing.py` — Vocabulary gap injection (lexical bias)
-4. `step4_global_recall.py` — Offline hybrid retrieval for false negative detection
-5. `step5_oracle_filtering.py` — LLM-as-a-Judge binary relevance annotation
-
----
-
-## 9. Data (`data/`)
-- `raw/` — Source documents (arXiv papers, enterprise datasets, etc.)
-- `processed/` — Chunked documents, generated query datasets
-- `cache/` — Embedding caches, IDF dictionaries
-- `models/` — Downloaded model files (GGUF, BGE, etc.)
-- `tmp_test_ai/` — Staging area for benchmark test data
-
----
-
-## 10. Ignored Paths & Search Guidance
-- `tests/` and `scripts/` are listed in `.gitignore`.
-- **Search Rule**: When searching for test scripts or evaluation harnesses, use standard path searches or `grep_search`/`find` directly rather than relying solely on git-index tools.
+## 4. Execution Invariants
+- **Local Virtual Environment:** Always run with `.venv/bin/python3`.
+- **PYTHONPATH Invariant:** Always set `PYTHONPATH=CRVE` for all scripts and tests.
+- **Hardware Profile & Budgets:** Tested under consumer edge constraints (WSL2 Linux, 15 GiB RAM ceiling, NVIDIA GPU). All code must be strictly memory-safe and respect memory caps.
+- **Query Chunking:** Never truncate candidate document rankings; cap RAM and JNI overhead by chunking queries (`chunk_size=200`).

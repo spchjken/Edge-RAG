@@ -1,49 +1,58 @@
-# Edge-RAG: High-Speed Anchored Lexical-Semantic Retriever for Edge Devices
+# CRVE: Context-Reranked Vocabulary Expansion (1st-Stage Retrieval)
 
-This repository contains the implementation and evaluation infrastructure for **Edge-RAG**, a high-speed, near-zero VRAM Anchored Lexical-Semantic Retriever designed for resource-constrained edge computing environments.
+This repository contains the official implementation and evaluation platform for **CRVE** (Context-Reranked Vocabulary Expansion), a high-speed, 1st-stage lexical-semantic retriever designed for domain-specific retrieval under edge constraints.
 
-Edge-RAG resolves the "ephemeral constraint"—processing novel, unindexed documents at runtime without pre-computed vector databases—by coupling **Corpus-Grounded Dense Vocabulary Probing** with **Lucene BM25 Inverted Posting List Traversal**. It achieves high recall and exact-match precision in **$<15\text{ms}$ CPU retrieval latency**, **$<0.3\text{s}$ index setup**, and **$0.09\text{ GB}$ VRAM**.
-
----
-
-## 🚀 Key Features
-
-- **High-Speed Anchored Lexical-Semantic Retrieval (`src/pipeline_v2/`)**: Maps user queries into grounded aspect groups using heuristic extraction and IDF/centrality anchor ranking, probed against corpus vocabulary via Dual BGE similarity.
-- **Zero-Lag Indexing & Shared IDF**: Non-negative Lucene IDF registry ($\ln(1 + \frac{N - n + 0.5}{n + 0.5})$) shared across indexing, vocabulary extraction, and query expansion for zero initialization lag.
-- **Sublinear Salience Candidate Pool**: Rapidly extracts the top 1,000 domain unigrams and bigrams from raw text ($\text{IDF} \times \ln(1 + \text{DF})$) in $<0.05\text{s}$.
-- **Sub-15ms CPU Posting List Scoring**: Standard Lucene BM25 scoring ($k_1=1.2, b=0.75$) evaluated over augmented token queries ($Q_{\text{aug}}$) using token repetition weighting.
-- **Near-Zero VRAM Consumption**: Uses a lightweight local embedding matrix (BGE-Small in CUDA FP16, $0.09\text{ GB}$ VRAM) for 1-pass batch matrix probing, completely eliminating generative query expansion overhead.
+CRVE solves the vocabulary mismatch problem in lexical retrieval (BM25, DPH) without incurring the latency, index explosion, or memory overhead of heavy neural bi-encoders or generative LLM query expanders. It couples **Corpus-Grounded Dense Vocabulary Probing** with **Uncertainty-Aware Gate 1 Candidate Selection** and **PyTerrier-Native Inverted Indexing**.
 
 ---
 
-## 📁 Repository Structure
+## ⚡ Active Workspace & Sole Active Codebase: `CRVE/`
+
+All active development, benchmarks, and tests reside exclusively inside the **[`CRVE/`](file:///home/donghv/Projects/Edge-RAG/CRVE)** directory. Downstream experimental modules (cascade routing, listwise LLM reranking, late expansion) have been decoupled, and obsolete custom BM25 indexers have been replaced by standard PyTerrier infrastructure.
 
 ```
-Edge-RAG/
-├── docs/                             # Architecture blueprint & theoretical foundations
-│   ├── ARCHITECTURE.md               # Canonical Edge-RAG V2 Retriever blueprint
-│   ├── EVALUATION_METRICS.md         # Metric definitions & measurement protocols
-│   └── DATASET_PREP.md               # Dataset download & preprocessing guide
-├── configs/                          # Authoritative configuration files
-│   ├── pipeline_v2.yaml              # Pipeline V2 expansion & indexer hyperparameters
-│   ├── models.yaml                   # Model endpoints & context configurations
-│   └── hardware_profiles.yaml        # Simulated VRAM constraints
+CRVE/
+├── configs/
+│   ├── crve.yaml                   # Single source of truth for CRVE hyperparameters
+│   ├── hardware_profiles.yaml      # Hardware memory and device budgets
+│   └── pyterrier_qe.yaml           # PyTerrier QE grid search and parameter specs
+├── docs/
+│   ├── ARCHITECTURE.md             # Canonical CRVE 1st-stage retrieval specification
+│   ├── DATASET_PREP.md             # Dataset download & preprocessing guide
+│   ├── EVALUATION_METRICS.md       # Metric definitions and parity verification
+│   └── phase2_selection_under_uncertainty.md # Selection under uncertainty foundation
+├── scripts/
+│   ├── run_pyterrier_baselines.py  # 6 classical baselines runner across 25 datasets
+│   ├── run_pyterrier_qe_baselines.py # PyTerrier QE baselines runner
+│   ├── run_gate1_oracle_evaluation.py # Gate 1 selection empirical runner
+│   ├── run_pool_oracle_isolation.py   # Pool oracle isolation experiment
+│   ├── compile_gate1_research_tables.py # Gate 1 research table compiler
+│   ├── compile_pool_oracle_tables.py   # Pool oracle table compiler
+│   └── results_scripts_mapping.md  # Mapping linking result files to scripts
 ├── src/
-│   ├── pipeline_v2/                  # Production Edge-RAG V2 Pipeline
-│   │   ├── indexer/                  # Lucene inverted indexer, Vocab Builder, Dense Matrix, IDF Registry
-│   │   ├── expansion/                # BM25DenseAspectExtractor & active expansion schemas
-│   │   ├── routing/                  # Cascade Router (Downstream extension)
-│   │   ├── reranker/                 # Listwise LLM Reranker (Downstream extension)
-│   │   ├── expansion_late/           # Late Expansion & VRAM safety (Downstream extension)
-│   │   └── orchestrator.py           # End-to-end PipelineV2Orchestrator runner
-│   ├── legacy_pipeline/              # Deprecated Legacy V1 5-stage pipeline (baseline comparison)
-│   ├── baselines/                    # Isolated baselines (Lucene BM25, Dense BGE, SPLADE-v3)
-│   ├── evaluation/                   # Metrics evaluators and benchmark runners
-│   └── utils/                        # OpenAI-compatible API client & helpers
-├── scripts/                          # Evaluation sweeps, ablation benchmarks, and dataset converters
-├── tests/                            # Pytest test suite
-├── data/                             # Raw and processed benchmark datasets
-└── results/                          # Benchmark outputs and sweep telemetry logs
+│   ├── crve/
+│   │   ├── indexer/
+│   │   │   ├── analyzer.py         # EdgeRAGAnalyzer (KStem + WordNet overrides)
+│   │   │   ├── corpus_idf_registry.py # CorpusIDFRegistry (Lucene IDF)
+│   │   │   ├── corpus_vocab_builder.py# CorpusVocabBuilder (Sublinear salience pool)
+│   │   │   └── dense_vocab_matrix.py  # DenseVocabMatrix (BGE-small FP16)
+│   │   ├── selection/
+│   │   │   ├── gate1_proposers.py  # Gate 1 candidate proposers (WQ, ABGE, PPMI, RRF)
+│   │   │   ├── gate1_metrics.py    # Gate 1 evaluation metrics & telemetry
+│   │   │   └── pathway_gate1_selection.md # Tier 2 Gate 1 specification
+│   │   └── orchestrator.py         # CRVEOrchestrator (End-to-end 1st-stage runner)
+│   ├── evaluation/
+│   │   ├── baselines/
+│   │   │   ├── pyterrier_harness.py# PyTerrier baseline harness & index manager
+│   │   │   ├── pyterrier_qe.py     # PyTerrier QE operator & BGE sidecar
+│   │   │   ├── dense_rag.py        # Dense BGE-small-en-v1.5 baseline
+│   │   │   └── splade.py           # SPLADE-v3 baseline
+│   │   ├── benchmark_loader.py     # BEIR / BRIGHT streaming data loader
+│   │   ├── pool_generators.py      # Candidate pool generation utilities
+│   │   └── metrics.py              # Parity-verified IR metrics calculation
+│   └── utils/
+│       └── helpers.py              # Shared utilities
+└── tests/                          # Automated pytest regression suite
 ```
 
 ---
@@ -58,38 +67,51 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Basic Pipeline V2 Usage
-```python
-from src.pipeline_v2.orchestrator import PipelineV2Orchestrator
+### 2. Execution Rule: Always Set `PYTHONPATH=CRVE`
+All scripts and tests must be executed with `PYTHONPATH=CRVE`:
+```bash
+# Run pytest verification suite
+PYTHONPATH=CRVE .venv/bin/python3 -m pytest CRVE/tests/test_gate1_selection.py CRVE/tests/test_pool_compiler.py -v
 
-# Sample ephemeral document corpus
+# Run 6 classical PyTerrier baselines on SciFact
+PYTHONPATH=CRVE .venv/bin/python3 -u CRVE/scripts/run_pyterrier_baselines.py --datasets scifact
+
+# Run Gate 1 candidate selection evaluation
+PYTHONPATH=CRVE .venv/bin/python3 -u CRVE/scripts/run_gate1_oracle_evaluation.py --mode dev
+```
+
+### 3. Basic CRVE Orchestrator Usage
+```python
+import os
+import sys
+
+# Ensure CRVE is on PYTHONPATH
+sys.path.insert(0, os.path.abspath("CRVE"))
+
+from crve.orchestrator import CRVEOrchestrator
+
+# Sample corpus
 corpus = [
-    "Large Language Models (LLMs) suffer from Key-Value (KV) cache memory overflow during listwise retrieval.",
-    "Edge-RAG combines fast Lucene BM25 inverted indexing with dense vocabulary query expansion on edge devices.",
-    "BGE-small provides compact 384-dimensional embeddings with near-zero VRAM consumption."
+    "Large language models benefit from context-reranked vocabulary expansion in retrieval.",
+    "BM25 provides exact keyword matching but suffers from the vocabulary mismatch problem.",
+    "Dense retrieval encodes semantic representations using bi-encoder neural architectures."
 ]
 
-# Initialize indexer & shared vocabulary matrix (<0.3s setup)
-orchestrator = PipelineV2Orchestrator(corpus=corpus)
+# Initialize CRVE 1st-stage orchestrator
+orchestrator = CRVEOrchestrator(corpus=corpus)
+orchestrator.build_vocabulary_and_matrix(corpus=corpus)
 
-# Execute high-speed retrieval (<15ms on CPU)
-result = orchestrator.run("How does Edge-RAG optimize KV-cache memory on edge devices?")
-
-print("Augmented Tokens:", result["aspect_payload"]["augmented_token_list"])
-print("Retrieved Chunks:", result["aspect_payload"]["aspects"])
+# Formulate expanded query for PyTerrier retrieval
+query = "vocabulary gap in lexical retrieval"
+print("Base query:", query)
 ```
-
-### 3. Running Benchmark Evaluation Suites
-To run the automated baseline evaluation suite across all 25 BEIR and BRIGHT benchmark datasets:
-```bash
-.venv/bin/python3 -u scripts/run_pyterrier_baselines.py --all-beir --all-bright
-```
-Historical ablation sweep scripts are archived in [`scripts/legacy/`](file:///home/donghv/Projects/Edge-RAG/scripts/legacy/).
 
 ---
 
-## 🔬 Reproducibility & Architecture References
+## 🔬 Reproducibility & Governance
 
-- **Canonical Architecture**: [`docs/ARCHITECTURE.md`](file:///home/donghv/Projects/Edge-RAG/docs/ARCHITECTURE.md)
-- **Module Rules & Boundaries**: [`.agents/rules/01-architecture.md`](file:///home/donghv/Projects/Edge-RAG/.agents/rules/01-architecture.md)
-- **Evaluation Metrics**: [`docs/EVALUATION_METRICS.md`](file:///home/donghv/Projects/Edge-RAG/docs/EVALUATION_METRICS.md)
+- **Operating Instructions**: [`AGENTS.md`](file:///home/donghv/Projects/Edge-RAG/AGENTS.md)
+- **Canonical Architecture**: [`CRVE/docs/ARCHITECTURE.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/docs/ARCHITECTURE.md)
+- **Evaluation Metrics & Parity**: [`CRVE/docs/EVALUATION_METRICS.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/docs/EVALUATION_METRICS.md)
+- **Selection Under Uncertainty**: [`CRVE/docs/phase2_selection_under_uncertainty.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/docs/phase2_selection_under_uncertainty.md)
+- **Results-to-Scripts Mapping**: [`CRVE/scripts/results_scripts_mapping.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/scripts/results_scripts_mapping.md)

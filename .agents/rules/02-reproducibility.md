@@ -27,18 +27,17 @@ trigger: always_on
 - Raw results → results/ as timestamped CSVs / JSONs.
 - Never overwrite previous results.
 - **Validation Status**: Record each material validation as `Pass`, `Fail`, or `Not verified`. `Pass` requires directly inspectable evidence. `Fail` means the required evidence was checked and did not meet the condition. `Not verified` means evidence or access is unavailable; record what is missing, who or what must provide it, and the precise re-verification scope. Both `Fail` and `Not verified` block a claim of successful validation.
-- **Claim-to-Evidence Traceability**: Every material benchmark, result, or manuscript claim MUST identify its generating script or command, exact result artifact, configuration and environment, and verification scope. Keep these links synchronized with `scripts/results_scripts_mapping.md` and `docs/manuscript_evidence_map.md` where applicable.
+- **Claim-to-Evidence Traceability**: Every material benchmark, result, or manuscript claim MUST identify its generating script or command, exact result artifact, configuration and environment, and verification scope. Keep these links synchronized with `CRVE/scripts/results_scripts_mapping.md`.
 - Results directory structure:
-  - `results/v2_ablation/` — Multi-corpus evaluation sweeps & schema ablations for Pipeline V2
-  - `results/pipeline_combinations/` — Full combination matrix runs
-  - `results/pipeline_test/` — Per-module test outputs (query_expansion/, etc.)
-  - `results/routing_test/` — Cascade Router threshold sensitivity
-  - `results/baseline_test/` — Baseline model evaluations
-  - `results/benchmarks/` — Final benchmark results
+  - `results/pyterrier_baselines/` — 6 classical baselines across 25 BEIR & BRIGHT datasets
+  - `results/pyterrier_qe_baselines/` — Sparse lexical QE baselines (BGE_Vocab_QE, LLM_Q2E_ZS)
+  - `results/gate1_selection/` — Phase 2 Gate 1 candidate selection under uncertainty results
+  - `results/pool_oracle_isolation/` — Stage 1 vocabulary pool oracle isolation results
+  - `results/legacy/` — Archived legacy runs
 
 ## 6. Reporting
 - `report.md` in project root serves as the weekly progress artifact.
-- `docs/manuscript_evidence_map.md` links paper claims to empirical data files.
+- `for_review/` contains frozen artifacts and reports for reviewer verification.
 
 ## 7. Currency of External Facts
 - Claims about external APIs, models, dependencies, pricing, hardware, policies, or tools that can change over time MUST cite a primary source and record the checked date and relevant version where available.

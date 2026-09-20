@@ -2,28 +2,25 @@
 trigger: always_on
 ---
 
-# 🛑 AGENT CORE — MANDATORY RULES (Edge-RAG)
+# 🛑 AGENT CORE — MANDATORY RULES (CRVE / Edge-RAG)
 
 ## 1. Project Identity
-- **Name:** Edge-RAG
-- **Type:** Python research experiment (Extractive-Compression RAG / High-Speed Anchored Lexical-Semantic Retriever)
-- **Root:** `Edge-RAG/`
-- **Runtime:** Python 3.11+ (MANDATORY: Always use the local virtual environment `.venv/bin/python3` to run Python commands), Ollama + llama.cpp for LLM inference, PyTorch for VRAM monitoring
-- **Key Libraries:** pyahocorasick, FlagEmbedding, faiss-cpu, scikit-learn, rank_bm25, fasttext, YAKE, pyterrier, ir_measures
+- **Name:** CRVE (Context-Reranked Vocabulary Expansion)
+- **Type:** Python research experiment (1st-Stage Lexical-Semantic Retrieval)
+- **Active Codebase Root:** `CRVE/` (inside repository `Edge-RAG/`)
+- **Runtime:** Python 3.11+ (MANDATORY: Always execute using `PYTHONPATH=CRVE .venv/bin/python3` to run Python commands/tests), PyTorch for FP16 embeddings, PyTerrier for indexing and retrieval
+- **Key Libraries:** pyterrier, ir_measures, FlagEmbedding, transformers, torch, pyterrier_dr, pyterrier_splade, pyterrier_pisa
 
 ## 2. Key Documentation Paths
 | Document | Path | Purpose |
 |---|---|---|
-| Active Architecture | `docs/ARCHITECTURE.md` | **Canonical** Edge-RAG V2 Retriever blueprint & data flow |
+| Active Architecture | `CRVE/docs/ARCHITECTURE.md` | **Canonical** CRVE 1st-Stage Retrieval blueprint & data flow |
 | Module Boundaries & Rules | `.agents/rules/01-architecture.md` | Tier 1 rules & component isolation |
-| Legacy V1 Architecture | `src/legacy_pipeline/pipeline_architecture.md` | Deprecated 5-stage legacy pipeline (historical baseline) |
-| Dataset Prep | `docs/DATASET_PREP.md` | Download & preprocessing guide |
-| Eval Metrics | `docs/EVALUATION_METRICS.md` | Metric definitions |
-| Evidence Map | `docs/manuscript_evidence_map.md` | Links paper claims → empirical data |
-| Paper Draft | `draft.md` | The research paper (not always in sync with code) |
-| Benchmark Pipeline | `scripts/benchmark_creation/benchmark_generation_pipeline.md` | Synthetic dataset generation methodology |
-| Per-Module Specs | `src/pipeline_v2/expansion/pathway_*.md` | Authoritative design docs per sub-module |
-| Results-to-Scripts Mapping | `scripts/results_scripts_mapping.md` | Authoritative mapping from all result files to scripts/tests |
+| Selection Spec | `CRVE/docs/phase2_selection_under_uncertainty.md` | Gate 1 selection under uncertainty formal foundation |
+| Dataset Prep | `CRVE/docs/DATASET_PREP.md` | Download & preprocessing guide |
+| Eval Metrics | `CRVE/docs/EVALUATION_METRICS.md` | Metric definitions & mathematical parity |
+| Configuration | `CRVE/configs/crve.yaml` | Single source of truth for CRVE hyperparameters |
+| Results-to-Scripts Mapping | `CRVE/scripts/results_scripts_mapping.md` | Authoritative mapping from all result files to scripts/tests |
 
 ## 3. Pre-Task Actions
 

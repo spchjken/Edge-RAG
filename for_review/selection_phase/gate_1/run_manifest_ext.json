@@ -1,0 +1,122 @@
+{
+  "git_commit": "89bf941444d4ab0fed39a572ab0696764c359cb4",
+  "timestamp": "2026-09-19T17:13:48Z",
+  "config_hash": "d62ffe3bd8d381f7306e44e45b65951686ba1ea33db24ce48f46adb7650a4850",
+  "datasets": [
+    "fiqa",
+    "scidocs",
+    "arguana",
+    "bright_stackoverflow"
+  ],
+  "sample_size": 50,
+  "seed": 42,
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "peak_rss_gib": 3.217,
+  "total_variants": 1449955,
+  "total_transitions": 564440,
+  "total_retrieval_time_sec": 40746.68,
+  "dataset_summaries": [
+    {
+      "dataset": "fiqa",
+      "num_docs": 57600,
+      "pool_size": 10000,
+      "num_queries": 50,
+      "total_variants": 354400,
+      "total_transitions": 218725,
+      "retrieval_time_sec": 8270.208088218,
+      "baseline_parity": {
+        "dataset": "fiqa",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "fiqa",
+        "p50_ms": 7902.475939000055,
+        "p95_ms": 14576.899786199963,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "38ee71b7ac02",
+      "qrels_hash": "cb4774c01f9d"
+    },
+    {
+      "dataset": "scidocs",
+      "num_docs": 25657,
+      "pool_size": 10000,
+      "num_queries": 50,
+      "total_variants": 374815,
+      "total_transitions": 266282,
+      "retrieval_time_sec": 8276.497622252999,
+      "baseline_parity": {
+        "dataset": "scidocs",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "scidocs",
+        "p50_ms": 5411.9827060003445,
+        "p95_ms": 7200.351080199471,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "364f314ec49f",
+      "qrels_hash": "74d3b0354841"
+    },
+    {
+      "dataset": "arguana",
+      "num_docs": 8674,
+      "pool_size": 9957,
+      "num_queries": 50,
+      "total_variants": 343815,
+      "total_transitions": 6947,
+      "retrieval_time_sec": 9473.184690846,
+      "baseline_parity": {
+        "dataset": "arguana",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "arguana",
+        "p50_ms": 9552.347069999087,
+        "p95_ms": 14442.862921398046,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "96f652bd78e7",
+      "qrels_hash": "c835d6200bfa"
+    },
+    {
+      "dataset": "bright_stackoverflow",
+      "num_docs": 107081,
+      "pool_size": 10000,
+      "num_queries": 50,
+      "total_variants": 376925,
+      "total_transitions": 72486,
+      "retrieval_time_sec": 14726.788939216,
+      "baseline_parity": {
+        "dataset": "bright_stackoverflow",
+        "checked": 5,
+        "passed": 5,
+        "max_score_diff": 0.0,
+        "status": "PASS"
+      },
+      "ppmi_preflight": {
+        "dataset": "bright_stackoverflow",
+        "p50_ms": 86434.229890001,
+        "p95_ms": 206134.72290379938,
+        "status": "WARNING_SLOW"
+      },
+      "dataset_hash": "8b10918b6b3e",
+      "qrels_hash": "aa76f87dbd4c"
+    }
+  ]
+}

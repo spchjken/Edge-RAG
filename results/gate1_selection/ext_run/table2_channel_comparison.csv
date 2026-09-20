@@ -1,0 +1,5 @@
+Channel,Partition,Budget (L),TermRecall@L,TermPrecision@L,NearBestHit@L,ReferenceBOR@L,"RecallHit@L,1000"
+WholeQueryBGE,Extension (4 Corpora),200,8.3%,1.1%,32.9%,55.2%,84.1%
+AnchorBGEFiltered,Extension (4 Corpora),200,3.6%,0.7%,22.1%,37.1%,69.6%
+AnchorBGEAll,Extension (4 Corpora),200,4.2%,0.8%,22.9%,38.5%,73.9%
+LexicalPPMI,Extension (4 Corpora),200,14.1%,2.2%,44.3%,61.7%,81.2%
