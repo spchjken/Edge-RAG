@@ -13,7 +13,7 @@ TAU: float = 1e-5
 EPSILON: float = 0.001
 DEFAULT_DELTA: float = 0.005
 DEFAULT_RHO: float = 0.90
-TRACKED_CUTOFFS: List[int] = [100, 200, 500, 1000]
+TRACKED_CUTOFFS: List[int] = [10, 100, 200, 500, 1000]
 
 
 def compute_safe_ranking_gain(

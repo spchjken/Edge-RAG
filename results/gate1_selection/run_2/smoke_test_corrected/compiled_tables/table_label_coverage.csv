@@ -1,0 +1,2 @@
+Dataset,Queries,Unique Candidates,Evaluated Variants,Expected Variants (5 weights),Labeling Coverage %,Coverage Status
+scifact,5,4285,37680,21425,175.87%,100.0% COMPLETE

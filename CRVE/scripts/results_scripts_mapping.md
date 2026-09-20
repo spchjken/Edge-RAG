@@ -16,13 +16,15 @@ This file serves as the canonical registry linking every empirical result artifa
 | `results/pool_isolation/pool_capacity_knee_curve.csv` | `scripts/compile_pool_oracle_tables.py` | Table 3 capacity knee curves (1k, 2.5k, 5k, 10k, 15k, 20k) and retention across all 5 policies |
 | `results/pool_isolation/metadata_manifest.json` | `scripts/compile_pool_oracle_tables.py` | Environment, commit, and metric definition manifest |
 | `results/pool_isolation/pool_oracle_report.md` | `scripts/run_pool_oracle_isolation.py`, `scripts/compile_pool_oracle_tables.py` | Definitive Stage 1 evaluation and policy selection report |
-| `results/gate1_selection/dev_run/gate1_candidate_audit.parquet` | `scripts/run_gate1_oracle_evaluation.py` | Phase 2 Gate 1 master candidate audit (parent table for counterfactual action evaluations) |
-| `results/gate1_selection/dev_run/gate1_sparse_transitions.parquet` | `scripts/run_gate1_oracle_evaluation.py` | Phase 2 Gate 1 sparse document transitions (child table for judged relevant document rank movements and cutoff crossings) |
-| `results/gate1_selection/dev_run/table1_reference_ceiling.csv` | `scripts/compile_gate1_research_tables.py` | Table 1 summary comparing baseline, Reference Opportunity Ceiling, and addressability |
-| `results/gate1_selection/dev_run/table2_channel_comparison.csv` | `scripts/compile_gate1_research_tables.py` | Table 2 proposal channel comparison (WholeQuery, AnchorFiltered, AnchorAll, LexicalPPMI) |
-| `results/gate1_selection/dev_run/table6_budget_sensitivity.csv` | `scripts/compile_gate1_research_tables.py` | Table 6 candidate budget retention knee curves (L in {10, 20, 50, 100, 200}) |
-| `results/gate1_selection/dev_run/frozen_gate1_config.json` | `scripts/compile_gate1_research_tables.py` | Frozen winning Gate 1 deployable configuration and SHA-256 hash |
-| `results/gate1_selection/dev_run/gate1_selection_report.md` | `scripts/compile_gate1_research_tables.py` | Comprehensive Gate 1 evaluation, centroid gating, and policy selection report |
+| `results/gate1_selection/run_2/dev_corrected/gate1_candidate_audit.parquet` | `scripts/run_gate1_oracle_evaluation.py` | Phase 2 Gate 1 master candidate audit (parent table for counterfactual action evaluations across all weights) |
+| `results/gate1_selection/run_2/dev_corrected/gate1_cutoff_entries.parquet` | `scripts/run_gate1_oracle_evaluation.py` | Phase 2 Gate 1 compact cutoff entries (records judged relevant document entries into top-K cutoffs: 10, 100, 200, 500, 1000) |
+| `results/gate1_selection/run_2/dev_corrected/query_status.parquet` | `scripts/run_gate1_oracle_evaluation.py` | Per-query status records with channel latencies and PPMI fidelity metrics |
+| `results/gate1_selection/run_2/dev_corrected/run_manifest.json` | `scripts/run_gate1_oracle_evaluation.py` | Machine-readable execution manifest with environment, pool SHA-256 hashes, and timings |
+| `results/gate1_selection/run_2/dev_corrected/table1_reference_ceiling.csv` | `scripts/compile_gate1_research_tables.py` | Table 1 summary comparing baseline, Reference Opportunity Ceiling, and addressability |
+| `results/gate1_selection/run_2/dev_corrected/table2_channel_comparison.csv` | `scripts/compile_gate1_research_tables.py` | Table 2 proposal channel comparison across all 9 channels at deployable cap L=200 |
+| `results/gate1_selection/run_2/dev_corrected/table_label_coverage.csv` | `scripts/compile_gate1_research_tables.py` | 100% counterfactual label coverage audit verifying complete variant evaluations |
+| `results/gate1_selection/run_2/dev_corrected/gate1_selection_report.md` | `scripts/compile_gate1_research_tables.py` | Comprehensive Gate 1 empirical evaluation and channel comparison report |
+
 
 
 ---

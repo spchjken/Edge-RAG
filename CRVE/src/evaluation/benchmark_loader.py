@@ -199,6 +199,25 @@ class BenchmarkLoader:
         return 0
 
     @classmethod
+    def get_query_qrels_paths(cls, dataset_name: str) -> Tuple[str, str]:
+        """Returns the absolute paths to (queries_file, qrels_file) for a dataset."""
+        norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+        bright_domain = parse_bright_domain(dataset_name)
+        if bright_domain:
+            src_dir = os.path.join(RAW_DIR, "bright")
+            q_file = os.path.join(src_dir, "queries", f"{bright_domain}.jsonl")
+            qrels_file = os.path.join(src_dir, "qrels", f"{bright_domain}.jsonl")
+            return os.path.abspath(q_file), os.path.abspath(qrels_file)
+
+        subset = norm[5:] if norm.startswith("beir_") else norm
+        src_dir = cls._find_beir_dir(subset)
+        q_file = os.path.join(src_dir, "queries.jsonl")
+        if not os.path.exists(q_file):
+            q_file = os.path.join(src_dir, "queries_queries.jsonl")
+        qrels_file = os.path.join(src_dir, "qrels", "test.tsv")
+        return os.path.abspath(q_file), os.path.abspath(qrels_file)
+
+    @classmethod
     def load_queries(cls, dataset_name: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Loads queries and qrels without materializing the corpus in RAM.

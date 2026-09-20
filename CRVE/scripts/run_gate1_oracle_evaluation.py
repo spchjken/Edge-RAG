@@ -165,6 +165,7 @@ def evaluate_query_gate1(
     config_hash: str = "core_dev_v1",
     dataset_hash: str = "",
     qrels_hash: str = "",
+    pool_hash: str = "",
     chunk_size: int = 100,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
     """
@@ -252,6 +253,10 @@ def evaluate_query_gate1(
     status_meta = {
         "dataset": dataset,
         "qid": qid,
+        "config_hash": config_hash,
+        "dataset_hash": dataset_hash,
+        "qrels_hash": qrels_hash,
+        "pool_hash": pool_hash,
         "sampled": True,
         "num_candidates": len(r_core),
         "num_variants": len(r_core) * len(weights),
@@ -263,6 +268,7 @@ def evaluate_query_gate1(
         "status": "SUCCESS",
         "error_msg": "",
     }
+
 
     if not r_core:
         return pd.DataFrame(), pd.DataFrame(), status_meta
@@ -473,7 +479,7 @@ def run_dataset_gate1_evaluation(
     analyzer = get_terrier_analyzer()
     num_docs = int(index.getCollectionStatistics().getNumberOfDocuments())
 
-    # 1. Load canonical pool artifact & verify hash
+    # 1. Load canonical pool artifact & verify hash directly from terms
     pool_path = os.path.abspath(f"data/cache/canonical_pools/{safe_ds}_canonical_pool.json")
     if not os.path.exists(pool_path):
         raise FileNotFoundError(f"Canonical pool artifact not found at {pool_path}!")
@@ -483,7 +489,11 @@ def run_dataset_gate1_evaluation(
 
     pool_terms = pool_data["terms"]
     pool_size = len(pool_terms)
-    pool_hash = pool_data["sha256"]
+    
+    # Direct raw-term SHA-256 computation
+    computed_pool_hash = hashlib.sha256("\n".join(pool_terms).encode("utf-8")).hexdigest()
+    assert computed_pool_hash == pool_data.get("sha256"), f"Corrupt pool artifact {pool_path}: computed {computed_pool_hash} != stored {pool_data.get('sha256')}"
+    pool_hash = computed_pool_hash
 
     # Verify against frozen config if present
     if frozen_config:
@@ -494,6 +504,13 @@ def run_dataset_gate1_evaluation(
 
     pool_set = set(pool_terms)
     print(f"  [Canonical Pool] Loaded {pool_size:,} terms (SHA-256: {pool_hash[:12]}...)")
+
+    # Compute dataset and qrels content hashes
+    q_file, qrels_file = BenchmarkLoader.get_query_qrels_paths(dataset)
+    with open(q_file, "rb") as f:
+        dataset_hash = hashlib.sha256(f.read()).hexdigest()
+    with open(qrels_file, "rb") as f:
+        qrels_hash = hashlib.sha256(f.read()).hexdigest()
 
     # 2. Build full-lexicon statistics for query anchors
     lex = index.getLexicon()
@@ -519,7 +536,10 @@ def run_dataset_gate1_evaluation(
             frozen_qids = q_manifest["dev_200_qids"].get(dataset)
 
     if frozen_qids:
-        sampled_queries = [q_by_id[qid] for qid in frozen_qids if qid in q_by_id]
+        missing_qids = set(frozen_qids) - set(q_by_id.keys())
+        if missing_qids:
+            raise RuntimeError(f"FATAL: Dataset '{dataset}' is missing {len(missing_qids)} QIDs from frozen manifest: {list(missing_qids)[:5]}")
+        sampled_queries = [q_by_id[qid] for qid in frozen_qids]
         print(f"  [Queries] Loaded {len(sampled_queries)} queries from frozen manifest for {dataset}.")
     else:
         rng = random.Random(seed)
@@ -535,26 +555,42 @@ def run_dataset_gate1_evaluation(
 
     # 4. Load all 4 Gate 1 Sidecars
     sidecar_mgr = Gate1SidecarManager()
-    bge_sidecar = sidecar_mgr.build_or_load_bge_sidecar(dataset, pool_terms, encoder=encoder, device=device)
+    bge_sidecar = sidecar_mgr.build_or_load_bge_sidecar(dataset, pool_terms, num_docs=num_docs, encoder=encoder, device=device)
     pool_embeddings = bge_sidecar["pool_embeddings"]
     surf_to_idx = bge_sidecar["surf_to_idx"]
 
-    ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(dataset, index, pool_terms, top_m=600)
+    ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(dataset, index, pool_terms, num_docs=num_docs, top_m=600)
     anchor_ppmi = ppmi_sidecar["anchor_ppmi"]
 
-    acronym_sidecar = sidecar_mgr.build_or_load_acronym_rescue_sidecar(dataset, pool_terms)
+    acronym_sidecar = sidecar_mgr.build_or_load_acronym_rescue_sidecar(dataset, pool_terms, num_docs=num_docs)
     acronym_to_pool = acronym_sidecar["acronym_to_pool"]
 
-    lex_sidecar = sidecar_mgr.build_or_load_sparse_lexical_sidecar(dataset, pool_terms)
+    lex_sidecar = sidecar_mgr.build_or_load_sparse_lexical_sidecar(dataset, pool_terms, num_docs=num_docs)
     aux_retriever = lex_sidecar["retriever"]
 
     # Proposers initialization
     wq_proposer = WholeQueryBGEProposer(pool_terms, pool_embeddings, encoder, device=device)
     anchor_filt_proposer = AnchorBGEProposer(
-        pool_terms, pool_embeddings, surf_to_idx, full_idf_map, full_df_map, num_docs, encoder, filter_anchors=True, device=device
+        encoder=encoder,
+        pool_terms=pool_terms,
+        pool_embeddings_tensor=pool_embeddings,
+        surf_to_pool_idx=surf_to_idx,
+        idf_map=full_idf_map,
+        df_map=full_df_map,
+        num_docs=num_docs,
+        filter_anchors=True,
+        device=device,
     )
     anchor_all_proposer = AnchorBGEProposer(
-        pool_terms, pool_embeddings, surf_to_idx, full_idf_map, full_df_map, num_docs, encoder, filter_anchors=False, device=device
+        encoder=encoder,
+        pool_terms=pool_terms,
+        pool_embeddings_tensor=pool_embeddings,
+        surf_to_pool_idx=surf_to_idx,
+        idf_map=full_idf_map,
+        df_map=full_df_map,
+        num_docs=num_docs,
+        filter_anchors=False,
+        device=device,
     )
     ppmi_sidecar_proposer = PPMISidecarProposer(anchor_ppmi, full_idf_map, full_df_map, num_docs)
     sparse_lex_proposer = SparseLexicalContextProposer(aux_retriever, pool_terms)
@@ -575,12 +611,15 @@ def run_dataset_gate1_evaluation(
         live_ppmi_proposer = LexicalPPMIProposer(index, pool_terms, full_idf_map, full_df_map, num_docs)
         proposers["LivePPMI"] = live_ppmi_proposer
 
-    # Phase 1 lookup
+    # Phase 1 lookup (fail-closed if missing)
     phase1_map = defaultdict(set)
-    if phase1_audit_df is not None and not phase1_audit_df.empty:
-        ds_phase1 = phase1_audit_df[phase1_audit_df["dataset"] == dataset]
-        for _, row in ds_phase1.iterrows():
-            phase1_map[str(row["qid"])].add(str(row["candidate_term"]))
+    if phase1_audit_df is None or phase1_audit_df.empty:
+        raise RuntimeError(f"FATAL: Phase 1 candidate audit is required but missing/empty!")
+    ds_phase1 = phase1_audit_df[phase1_audit_df["dataset"] == dataset]
+    if len(ds_phase1) == 0:
+        raise RuntimeError(f"FATAL: Phase 1 candidate audit has 0 rows for dataset '{dataset}'!")
+    for _, row in ds_phase1.iterrows():
+        phase1_map[str(row["qid"])].add(str(row["candidate_term"]))
 
     shards_dir = os.path.join(output_dir, "shards")
     os.makedirs(shards_dir, exist_ok=True)
@@ -599,13 +638,24 @@ def run_dataset_gate1_evaluation(
 
         if resume and os.path.exists(parent_shard) and os.path.exists(cutoff_shard) and os.path.exists(status_shard):
             try:
+                st_data = pq.read_table(status_shard).to_pydict()
+                st_cfg = st_data.get("config_hash", [""])[0]
+                st_ds = st_data.get("dataset_hash", [""])[0]
+                st_pool = st_data.get("pool_hash", [""])[0]
+                if st_cfg != config_hash or st_ds != dataset_hash or st_pool != pool_hash:
+                    raise RuntimeError(
+                        f"FATAL: Stale shard for QID {qid} has mismatched hashes: "
+                        f"config={st_cfg[:8]} vs {config_hash[:8]}, pool={st_pool[:8]} vs {pool_hash[:8]}. Clean output directory."
+                    )
                 p_rows = pq.read_metadata(parent_shard).num_rows
                 c_rows = pq.read_metadata(cutoff_shard).num_rows
                 total_variants += p_rows
                 total_cutoff_entries += c_rows
                 print(f"  [{idx_q}/{len(sampled_queries)}] QID {qid}: Resumed from shard ({p_rows} variants, {c_rows} cutoff entries)")
                 continue
-            except Exception:
+            except Exception as e:
+                if "FATAL" in str(e):
+                    raise
                 pass
 
         t0_q = time.perf_counter()
@@ -622,8 +672,12 @@ def run_dataset_gate1_evaluation(
             weights=weights,
             thresholds=thresholds,
             config_hash=config_hash,
+            dataset_hash=dataset_hash,
+            qrels_hash=qrels_hash,
+            pool_hash=pool_hash,
             chunk_size=chunk_size,
         )
+
         t_q = time.perf_counter() - t0_q
 
         # Save shards
@@ -753,11 +807,12 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
     for fpath in all_files:
         try:
             table = pq.read_table(fpath)
+            if unified_schema is None:
+                unified_schema = table.schema
             if table.num_rows == 0:
                 del table
                 continue
             if writer is None:
-                unified_schema = table.schema
                 writer = pq.ParquetWriter(output_path, unified_schema, compression="zstd")
             elif table.schema != unified_schema:
                 # Cast to unified schema if strictly compatible
@@ -773,6 +828,11 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
 
     if writer is not None:
         writer.close()
+    elif unified_schema is not None:
+        # All shards had 0 rows (e.g. no cutoff entries in sample)
+        empty_table = pa.Table.from_batches([], schema=unified_schema)
+        pq.write_table(empty_table, output_path, compression="zstd")
+
     print(f"Successfully assembled {total_rows:,} rows ({len(assembled_qids)} QIDs) -> {output_path}")
 
     if expected_qids is not None:
@@ -825,14 +885,30 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    # Load frozen configuration
+    # Load frozen configuration and compute its exact SHA-256
     frozen_config = None
     if args.frozen_config_path:
         if not os.path.exists(args.frozen_config_path):
             raise FileNotFoundError(f"Frozen config not found at {args.frozen_config_path}")
-        with open(args.frozen_config_path, "r", encoding="utf-8") as f:
-            frozen_config = yaml.safe_load(f)
-        print(f"Loaded frozen configuration from {args.frozen_config_path}")
+        with open(args.frozen_config_path, "rb") as f:
+            raw_bytes = f.read()
+            config_hash = hashlib.sha256(raw_bytes).hexdigest()
+        frozen_config = yaml.safe_load(raw_bytes.decode("utf-8"))
+        print(f"Loaded frozen configuration from {args.frozen_config_path} (SHA-256: {config_hash[:12]}...)")
+        
+        # Enforce frozen parameters
+        if "weights" in frozen_config:
+            weights = [float(w) for w in frozen_config["weights"]]
+        else:
+            weights = [float(w.strip()) for w in args.weights.split(",")]
+        if "seed" in frozen_config:
+            seed = int(frozen_config["seed"])
+        else:
+            seed = args.seed
+    else:
+        config_hash = args.config_hash
+        weights = [float(w.strip()) for w in args.weights.split(",")]
+        seed = args.seed
 
     # Load Phase 1 candidate audit if available
     phase1_audit_df = None
@@ -841,7 +917,6 @@ def main():
         phase1_audit_df = pd.read_parquet(args.phase1_audit)
         print(f"Loaded {len(phase1_audit_df):,} Phase 1 audit rows.")
 
-    weights = [float(w.strip()) for w in args.weights.split(",")]
     datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
 
     # Initialize encoder once on device
@@ -857,34 +932,43 @@ def main():
             output_dir=args.output_dir,
             weights=weights,
             sample_size=args.sample_size,
-            seed=args.seed,
+            seed=seed,
             chunk_size=args.chunk_size,
             resume=not args.no_resume,
             phase1_audit_df=phase1_audit_df,
             frozen_config=frozen_config,
             encoder=encoder,
             device=device,
-            config_hash=args.config_hash,
+            config_hash=config_hash,
             measure_fidelity=args.measure_fidelity,
         )
         meta_summaries.append(ds_meta)
 
-    # Assemble master artifacts
+    # Assemble master artifacts with fail-closed QID verification
+    expected_qids_all = set()
+    if frozen_config and "query_manifests" in frozen_config:
+        q_manifest = frozen_config["query_manifests"]
+        for ds in datasets:
+            if args.sample_size == 10 and "probe_40_qids" in q_manifest:
+                expected_qids_all.update(q_manifest["probe_40_qids"].get(ds, []))
+            elif args.sample_size == 50 and "dev_200_qids" in q_manifest:
+                expected_qids_all.update(q_manifest["dev_200_qids"].get(ds, []))
+
     shards_dir = os.path.join(args.output_dir, "shards")
     master_parent = os.path.join(args.output_dir, "gate1_candidate_audit.parquet")
     master_cutoff = os.path.join(args.output_dir, "gate1_cutoff_entries.parquet")
     master_status = os.path.join(args.output_dir, "query_status.parquet")
 
-    assemble_shards_to_master(shards_dir, shard_type="audit", output_path=master_parent)
+    assemble_shards_to_master(shards_dir, shard_type="audit", output_path=master_parent, expected_qids=expected_qids_all if expected_qids_all else None)
     assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
-    assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status)
+    assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=expected_qids_all if expected_qids_all else None)
 
     manifest = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "config_hash": args.config_hash,
+        "config_hash": config_hash,
         "datasets": datasets,
         "sample_size": args.sample_size,
-        "seed": args.seed,
+        "seed": seed,
         "weights": weights,
         "peak_rss_gib": round(get_process_tree_rss_bytes() / (1024 ** 3), 3),
         "total_variants": sum(s["total_variants"] for s in meta_summaries),
@@ -896,6 +980,7 @@ def main():
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     print(f"\nSaved Gate 1 run manifest -> {manifest_path}")
+
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+Channel,Budget (L),Corpus-Macro TermRecall@L,Corpus-Macro TermPrecision@L,Corpus-Macro NearBestHit@L,Corpus-Macro ReferenceBOR@L,Corpus-Macro RecallHit@1000
+WholeQueryBGE,200,8.3%,0.6%,0.0%,40.7%,nan%
+AnchorBGEFiltered,200,6.4%,0.5%,33.3%,34.9%,nan%
+AnchorBGEAll,200,6.4%,0.5%,33.3%,34.9%,nan%
+PPMISidecar,200,28.3%,1.6%,100.0%,100.0%,nan%
+LivePPMI,200,0.0%,nan%,0.0%,0.0%,nan%
+SparseLexicalContextProfiles,200,35.5%,1.6%,100.0%,100.0%,nan%
+AcronymDefinitionRescue,200,0.0%,0.0%,0.0%,0.0%,nan%
+RRF_Core3,200,21.7%,1.3%,33.3%,58.0%,nan%
+RRF_Extended,200,32.7%,1.8%,66.7%,74.1%,nan%

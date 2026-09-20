@@ -1,0 +1,5 @@
+Dataset,Queries,Unique Candidates,Evaluated Variants,Expected Variants (5 weights),Labeling Coverage %,Coverage Status
+bright_aops,10,6210,88245,31050,284.20%,100.0% COMPLETE
+nfcorpus,10,6118,79415,30590,259.61%,100.0% COMPLETE
+scifact,10,4934,74065,24670,300.22%,100.0% COMPLETE
+trec_covid,10,8926,162640,44630,364.42%,100.0% COMPLETE

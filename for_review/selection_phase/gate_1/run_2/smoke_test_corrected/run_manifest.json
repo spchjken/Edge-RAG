@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-09-20T14:27:10Z",
+  "config_hash": "40c7e047ac7bfa304a006cb5222a734c81ecc0f1d9a360f12a55ef21a7c3c9e4",
+  "datasets": [
+    "scifact"
+  ],
+  "sample_size": 5,
+  "seed": 42,
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "peak_rss_gib": 3.725,
+  "total_variants": 37680,
+  "total_cutoff_entries": 0,
+  "total_retrieval_time_sec": 760.06,
+  "dataset_summaries": [
+    {
+      "dataset": "scifact",
+      "num_docs": 5183,
+      "pool_size": 5595,
+      "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+      "num_queries": 5,
+      "total_variants": 37680,
+      "total_cutoff_entries": 0,
+      "retrieval_time_sec": 760.0623747649952,
+      "fidelity_meta": {}
+    }
+  ]
+}

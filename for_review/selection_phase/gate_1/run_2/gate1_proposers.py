@@ -172,19 +172,12 @@ class AnchorBGEProposer(BaseProposer):
 
         self.max_idf = max(self.idf_map.values()) if self.idf_map else 1.0
 
-    def propose(
-        self,
-        query_obj: Dict[str, Any],
-        top_k: int = 500,
-    ) -> List[Tuple[str, float]]:
-        q_text = str(query_obj.get("question", query_obj.get("query", "")))
-        excluded_terms = self.get_query_excluded_terms(q_text)
-
+    def _extract_query_anchors(self, q_text: str) -> List[Tuple[str, str, float]]:
+        """Extracts and weights query anchors according to the filter_anchors policy."""
         terms, surfs = self.analyzer.analyze(q_text)
         if not terms or not surfs:
             return []
 
-        # 1. Select anchors and compute weights
         selected_anchors = []
         candidate_anchors = []
 
@@ -214,6 +207,18 @@ class AnchorBGEProposer(BaseProposer):
             best_cand = max(candidate_anchors, key=lambda x: x[3])
             selected_anchors = [(best_cand[0], best_cand[1], best_cand[2])]
 
+        return selected_anchors
+
+    def propose(
+        self,
+        query_obj: Dict[str, Any],
+        top_k: int = 500,
+    ) -> List[Tuple[str, float]]:
+        q_text = str(query_obj.get("question", query_obj.get("query", "")))
+        excluded_terms = self.get_query_excluded_terms(q_text)
+
+        # 1. Select anchors and compute weights
+        selected_anchors = self._extract_query_anchors(q_text)
         if not selected_anchors:
             return []
 
