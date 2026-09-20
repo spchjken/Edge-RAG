@@ -1,0 +1,352 @@
+version: phase2_1a_v1
+description: Authoritative frozen configuration for Phase 2.1a Gate 1 Candidate Selection
+seed: 42
+cutoffs:
+- 100
+- 200
+- 500
+- 1000
+diagnostic_budgets:
+- 10
+- 20
+- 50
+- 100
+- 200
+- 500
+deployable_budget: 200
+weights:
+- 0.05
+- 0.1
+- 0.3
+- 0.5
+- 1.0
+thresholds:
+  delta: 0.005
+  epsilon: 0.001
+  tau: 1.0e-05
+  rho: 0.9
+escalation_trigger:
+  aggregation: corpus_macro
+  term_recall_floor: 0.85
+  near_best_hit_floor: 0.9
+  reference_bor_floor: 0.92
+  recall_hit_floor: 0.8
+pool_spec:
+  df_min: 2
+  cf_min: 3
+  len_min: 2
+  df_max_ratio: 0.15
+  sizes:
+    scifact: 5595
+    bright_aops: 10000
+    nfcorpus: 7783
+    trec_covid: 10000
+  hashes:
+    scifact: f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7
+    bright_aops: 687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454
+    nfcorpus: 147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c
+    trec_covid: e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39
+proposers:
+  core:
+  - WholeQueryBGE
+  - AnchorBGEFiltered
+  - PPMISidecar
+  ablations:
+  - AnchorBGEAll
+  extended:
+  - SparseLexicalContextProfiles
+  - AcronymDefinitionRescue
+  diagnostic:
+  - LivePPMI
+rrf_policies:
+  rrf_core3:
+    members:
+    - WholeQueryBGE
+    - AnchorBGEFiltered
+    - PPMISidecar
+    k: 60
+    input_depth: 500
+    tie_breaking:
+    - rrf_score_desc
+    - best_individual_rank_asc
+    - term_asc
+  rrf_extended:
+    members:
+    - WholeQueryBGE
+    - AnchorBGEFiltered
+    - PPMISidecar
+    - SparseLexicalContextProfiles
+    - AcronymDefinitionRescue
+    k: 60
+    input_depth: 500
+    tie_breaking:
+    - rrf_score_desc
+    - best_individual_rank_asc
+    - term_asc
+memory_watchdog:
+  jvm_heap_gib: 4
+  warn_rss_gib: 8
+  hard_abort_rss_gib: 12
+build_ceilings_sec:
+  bge_sidecar: 1800
+  ppmi_sidecar: 3600
+  lexical_profiles: 2700
+  acronym_rescue: 900
+checkpoint_b_thresholds:
+  ppmi_min_recall500: 0.9
+  ppmi_min_rbo: 0.85
+  max_oracle_loss_corpus_macro: 0.02
+  max_oracle_loss_per_corpus: 0.02
+  max_p95_lookup_ms: 20.0
+  max_rss_gib: 12.0
+query_manifests:
+  dev_200_qids:
+    scifact:
+    - q_beir_scifact_1014
+    - q_beir_scifact_1086
+    - q_beir_scifact_1088
+    - q_beir_scifact_1099
+    - q_beir_scifact_1100
+    - q_beir_scifact_1130
+    - q_beir_scifact_1132
+    - q_beir_scifact_1185
+    - q_beir_scifact_1197
+    - q_beir_scifact_1204
+    - q_beir_scifact_1216
+    - q_beir_scifact_1225
+    - q_beir_scifact_1232
+    - q_beir_scifact_124
+    - q_beir_scifact_1266
+    - q_beir_scifact_1274
+    - q_beir_scifact_1290
+    - q_beir_scifact_132
+    - q_beir_scifact_133
+    - q_beir_scifact_1389
+    - q_beir_scifact_142
+    - q_beir_scifact_185
+    - q_beir_scifact_198
+    - q_beir_scifact_208
+    - q_beir_scifact_213
+    - q_beir_scifact_217
+    - q_beir_scifact_230
+    - q_beir_scifact_239
+    - q_beir_scifact_295
+    - q_beir_scifact_312
+    - q_beir_scifact_324
+    - q_beir_scifact_36
+    - q_beir_scifact_380
+    - q_beir_scifact_491
+    - q_beir_scifact_50
+    - q_beir_scifact_502
+    - q_beir_scifact_517
+    - q_beir_scifact_525
+    - q_beir_scifact_539
+    - q_beir_scifact_54
+    - q_beir_scifact_619
+    - q_beir_scifact_628
+    - q_beir_scifact_693
+    - q_beir_scifact_718
+    - q_beir_scifact_808
+    - q_beir_scifact_870
+    - q_beir_scifact_887
+    - q_beir_scifact_907
+    - q_beir_scifact_922
+    - q_beir_scifact_975
+    bright_aops:
+    - q_bright_aops_aops_1959_IMO_Problems/Problem_1
+    - q_bright_aops_aops_1971_Canadian_MO_Problems/Problem_1
+    - q_bright_aops_aops_1981_IMO_Problems/Problem_3
+    - q_bright_aops_aops_1985_AIME_Problems/Problem_6
+    - q_bright_aops_aops_2000_AMC_12_Problems/Problem_14
+    - q_bright_aops_aops_2000_AMC_12_Problems/Problem_4
+    - q_bright_aops_aops_2001_AMC_10_Problems/Problem_19
+    - q_bright_aops_aops_2002_AIME_I_Problems/Problem_10
+    - q_bright_aops_aops_2005_AMC_12A_Problems/Problem_18
+    - q_bright_aops_aops_2005_USAMO_Problems/Problem_2
+    - q_bright_aops_aops_2007_AIME_II_Problems/Problem_10
+    - q_bright_aops_aops_2008_AMC_12B_Problems/Problem_16
+    - q_bright_aops_aops_2011_AMC_8_Problems/Problem_6
+    - q_bright_aops_aops_2013_AMC_12A_Problems/Problem_13
+    - q_bright_aops_aops_2015_AIME_I_Problems/Problem_4
+    - q_bright_aops_aops_2015_AMC_12A_Problems/Problem_22
+    - q_bright_aops_aops_2016_AIME_I_Problems/Problem_15
+    - q_bright_aops_aops_2016_AMC_10A_Problems/Problem_7
+    - q_bright_aops_aops_2019_AMC_10A_Problems/Problem_12
+    - q_bright_aops_aops_2019_AMC_12A_Problems/Problem_17
+    - q_bright_aops_aops_2019_AMC_8_Problems/Problem_25
+    - q_bright_aops_aops_2020_AMC_10A_Problems/Problem_24
+    - q_bright_aops_aops_2021_AIME_II_Problems/Problem_9
+    - q_bright_aops_aops_2021_AIME_I_Problems/Problem_14
+    - q_bright_aops_aops_2021_AMC_12B_Problems/Problem_9
+    - q_bright_aops_aops_2022_AMC_10B_Problems/Problem_9
+    - q_bright_aops_math_test_counting_and_probability_1009
+    - q_bright_aops_math_test_intermediate_algebra_1812
+    - q_bright_aops_math_test_prealgebra_1987
+    - q_bright_aops_math_train_counting_and_probability_5011
+    - q_bright_aops_math_train_counting_and_probability_5024
+    - q_bright_aops_math_train_counting_and_probability_5045
+    - q_bright_aops_math_train_counting_and_probability_5047
+    - q_bright_aops_math_train_counting_and_probability_5111
+    - q_bright_aops_math_train_counting_and_probability_822
+    - q_bright_aops_math_train_geometry_6022
+    - q_bright_aops_math_train_geometry_6105
+    - q_bright_aops_math_train_geometry_6112
+    - q_bright_aops_math_train_geometry_6115
+    - q_bright_aops_math_train_geometry_6116
+    - q_bright_aops_math_train_geometry_6173
+    - q_bright_aops_math_train_geometry_747
+    - q_bright_aops_math_train_intermediate_algebra_1268
+    - q_bright_aops_math_train_intermediate_algebra_1822
+    - q_bright_aops_math_train_intermediate_algebra_513
+    - q_bright_aops_math_train_intermediate_algebra_659
+    - q_bright_aops_math_train_number_theory_7012
+    - q_bright_aops_math_train_number_theory_7030
+    - q_bright_aops_math_train_number_theory_7066
+    - q_bright_aops_math_train_number_theory_7078
+    nfcorpus:
+    - q_beir_nfcorpus_PLAIN-1028
+    - q_beir_nfcorpus_PLAIN-1130
+    - q_beir_nfcorpus_PLAIN-1141
+    - q_beir_nfcorpus_PLAIN-1161
+    - q_beir_nfcorpus_PLAIN-1172
+    - q_beir_nfcorpus_PLAIN-1225
+    - q_beir_nfcorpus_PLAIN-1409
+    - q_beir_nfcorpus_PLAIN-1441
+    - q_beir_nfcorpus_PLAIN-1473
+    - q_beir_nfcorpus_PLAIN-1496
+    - q_beir_nfcorpus_PLAIN-1527
+    - q_beir_nfcorpus_PLAIN-1568
+    - q_beir_nfcorpus_PLAIN-1635
+    - q_beir_nfcorpus_PLAIN-1710
+    - q_beir_nfcorpus_PLAIN-1784
+    - q_beir_nfcorpus_PLAIN-1805
+    - q_beir_nfcorpus_PLAIN-1995
+    - q_beir_nfcorpus_PLAIN-2071
+    - q_beir_nfcorpus_PLAIN-2081
+    - q_beir_nfcorpus_PLAIN-2092
+    - q_beir_nfcorpus_PLAIN-2113
+    - q_beir_nfcorpus_PLAIN-2167
+    - q_beir_nfcorpus_PLAIN-2220
+    - q_beir_nfcorpus_PLAIN-2301
+    - q_beir_nfcorpus_PLAIN-2354
+    - q_beir_nfcorpus_PLAIN-2375
+    - q_beir_nfcorpus_PLAIN-2460
+    - q_beir_nfcorpus_PLAIN-2660
+    - q_beir_nfcorpus_PLAIN-2680
+    - q_beir_nfcorpus_PLAIN-270
+    - q_beir_nfcorpus_PLAIN-2760
+    - q_beir_nfcorpus_PLAIN-2780
+    - q_beir_nfcorpus_PLAIN-2850
+    - q_beir_nfcorpus_PLAIN-2860
+    - q_beir_nfcorpus_PLAIN-3063
+    - q_beir_nfcorpus_PLAIN-3074
+    - q_beir_nfcorpus_PLAIN-3211
+    - q_beir_nfcorpus_PLAIN-3271
+    - q_beir_nfcorpus_PLAIN-3472
+    - q_beir_nfcorpus_PLAIN-520
+    - q_beir_nfcorpus_PLAIN-561
+    - q_beir_nfcorpus_PLAIN-593
+    - q_beir_nfcorpus_PLAIN-645
+    - q_beir_nfcorpus_PLAIN-721
+    - q_beir_nfcorpus_PLAIN-78
+    - q_beir_nfcorpus_PLAIN-782
+    - q_beir_nfcorpus_PLAIN-850
+    - q_beir_nfcorpus_PLAIN-872
+    - q_beir_nfcorpus_PLAIN-934
+    - q_beir_nfcorpus_PLAIN-987
+    trec_covid:
+    - q_beir_trec_covid_1
+    - q_beir_trec_covid_10
+    - q_beir_trec_covid_11
+    - q_beir_trec_covid_12
+    - q_beir_trec_covid_13
+    - q_beir_trec_covid_14
+    - q_beir_trec_covid_15
+    - q_beir_trec_covid_16
+    - q_beir_trec_covid_17
+    - q_beir_trec_covid_18
+    - q_beir_trec_covid_19
+    - q_beir_trec_covid_2
+    - q_beir_trec_covid_20
+    - q_beir_trec_covid_21
+    - q_beir_trec_covid_22
+    - q_beir_trec_covid_23
+    - q_beir_trec_covid_24
+    - q_beir_trec_covid_25
+    - q_beir_trec_covid_26
+    - q_beir_trec_covid_27
+    - q_beir_trec_covid_28
+    - q_beir_trec_covid_29
+    - q_beir_trec_covid_3
+    - q_beir_trec_covid_30
+    - q_beir_trec_covid_31
+    - q_beir_trec_covid_32
+    - q_beir_trec_covid_33
+    - q_beir_trec_covid_34
+    - q_beir_trec_covid_35
+    - q_beir_trec_covid_36
+    - q_beir_trec_covid_37
+    - q_beir_trec_covid_38
+    - q_beir_trec_covid_39
+    - q_beir_trec_covid_4
+    - q_beir_trec_covid_40
+    - q_beir_trec_covid_41
+    - q_beir_trec_covid_42
+    - q_beir_trec_covid_43
+    - q_beir_trec_covid_44
+    - q_beir_trec_covid_45
+    - q_beir_trec_covid_46
+    - q_beir_trec_covid_47
+    - q_beir_trec_covid_48
+    - q_beir_trec_covid_49
+    - q_beir_trec_covid_5
+    - q_beir_trec_covid_50
+    - q_beir_trec_covid_6
+    - q_beir_trec_covid_7
+    - q_beir_trec_covid_8
+    - q_beir_trec_covid_9
+  probe_40_qids:
+    scifact:
+    - q_beir_scifact_1014
+    - q_beir_scifact_1086
+    - q_beir_scifact_1088
+    - q_beir_scifact_1099
+    - q_beir_scifact_1100
+    - q_beir_scifact_1130
+    - q_beir_scifact_1185
+    - q_beir_scifact_132
+    - q_beir_scifact_619
+    - q_beir_scifact_907
+    bright_aops:
+    - q_bright_aops_aops_1959_IMO_Problems/Problem_1
+    - q_bright_aops_aops_1971_Canadian_MO_Problems/Problem_1
+    - q_bright_aops_aops_1981_IMO_Problems/Problem_3
+    - q_bright_aops_aops_1985_AIME_Problems/Problem_6
+    - q_bright_aops_aops_2000_AMC_12_Problems/Problem_14
+    - q_bright_aops_aops_2000_AMC_12_Problems/Problem_4
+    - q_bright_aops_aops_2002_AIME_I_Problems/Problem_10
+    - q_bright_aops_aops_2016_AMC_10A_Problems/Problem_7
+    - q_bright_aops_math_train_geometry_6173
+    - q_bright_aops_math_train_number_theory_7030
+    nfcorpus:
+    - q_beir_nfcorpus_PLAIN-1028
+    - q_beir_nfcorpus_PLAIN-1130
+    - q_beir_nfcorpus_PLAIN-1141
+    - q_beir_nfcorpus_PLAIN-1161
+    - q_beir_nfcorpus_PLAIN-1172
+    - q_beir_nfcorpus_PLAIN-1225
+    - q_beir_nfcorpus_PLAIN-1441
+    - q_beir_nfcorpus_PLAIN-2071
+    - q_beir_nfcorpus_PLAIN-561
+    - q_beir_nfcorpus_PLAIN-872
+    trec_covid:
+    - q_beir_trec_covid_1
+    - q_beir_trec_covid_10
+    - q_beir_trec_covid_11
+    - q_beir_trec_covid_12
+    - q_beir_trec_covid_13
+    - q_beir_trec_covid_14
+    - q_beir_trec_covid_16
+    - q_beir_trec_covid_25
+    - q_beir_trec_covid_46
+    - q_beir_trec_covid_7
