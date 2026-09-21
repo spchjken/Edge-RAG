@@ -74,6 +74,8 @@ temp*
 tests/
 !CRVE/tests/
 !CRVE/tests/**
+CRVE/tests/__pycache__/**
+CRVE/tests/assets/**
 scripts/*
 !scripts/benchmark_creation/
 !scripts/data_adapters/
