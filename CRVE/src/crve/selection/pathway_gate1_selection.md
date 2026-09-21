@@ -1,12 +1,12 @@
 # Pathway Specification: Gate 1 Candidate Selection Under Uncertainty (`pathway_gate1_selection.md`)
 
 ## 1. Overview
-Gate 1 implements the high-recall, low-latency candidate proposal stage of Edge-RAG Phase 2. Its sole objective is to retain useful expansion terms from the static 10,000-term vocabulary pool $\mathcal{P}$, passing a compact, high-quality candidate set $C_1(q)$ ($L \le 200$) downstream to Gate 2 (Context Verification) without deciding final lexical weights.
+Gate 1 implements the high-recall, low-latency candidate proposal stage of CRVE Phase 2. Its sole objective is to retain potentially useful expansion terms from the eligible pool $\mathcal{P}$, passing a candidate set $C_1(q)$ ($L \le 200$) downstream to the proposed Gate 2 without deciding final lexical weights. The frozen pool uses DF >= 2, CF >= 3 and $|\mathcal{P}|=\min(10{,}000,|V_{\mathrm{eligible}}|)$; see [ARCHITECTURE.md](../../../docs/ARCHITECTURE.md) for stage status and source-of-truth order. This page describes the frozen Phase 2.1a Gate 1 pathway; the generic orchestrator may still expose an earlier live-PPMI variant.
 
 Gate 1 operates strictly under the edge hardware profile (WSL2 Linux, 15 GiB RAM ceiling) and evaluates four distinct proposal channels:
 1. **$S_{\text{WQ}}$ — Whole-Query BGE Proposer**: Encodes raw query string with `BAAI/bge-small-en-v1.5` on CUDA FP16, evaluating cosine similarity against precomputed canonical pool surface forms.
 2. **$S_{\text{Anchor}}$ — Anchor-to-Term BGE Proposer**: Extracts query anchors using `EdgeRAGAnalyzer`, applies high-DF filtering ($DF/N \le 0.12$) and specificity filtering ($\text{spec} \ge 0.65$), computing specificity-weighted max cosine similarity.
-3. **$S_{\text{Lex}}$ — Lexical PPMI Proposer**: Evaluates unsmoothed Positive Pointwise Mutual Information directly from Terrier inverted and direct index postings, requiring joint support $DF(a,t) \ge 2$.
+3. **$S_{\text{Lex}}$ — PPMISidecar Proposer**: Uses a bounded co-occurrence sidecar built from Terrier index evidence during preparation. It avoids query-time posting intersections in the frozen core RRF. LivePPMI computes directly from live postings and remains a higher-fidelity, high-latency diagnostic comparator; sidecar truncation can lose neighbors.
 4. **$S_{\text{RRF}}$ — Hybrid Reciprocal Rank Fusion**: Fuses truncated top-500 candidate rankings with $k=60$, deterministic 3-tier tie-breaking, and equal-budget unique refill.
 
 ---
@@ -24,7 +24,7 @@ flowchart TD
     subgraph Channels["Candidate Proposal Channels"]
         Q --> WQ["Whole-Query BGE (Sentence Cosine on CUDA FP16)"]
         Anchors --> AnchorBGE["Anchor BGE (Weighted Max Cosine)"]
-        Anchors --> LexPPMI["Lexical PPMI (Direct-Index Posting Intersection)"]
+        Anchors --> LexPPMI["PPMISidecar (Prebuilt Bounded Co-occurrence)"]
     end
 
     subgraph CandidateRankings["Truncated Output Lists (Top-500)"]
@@ -72,5 +72,5 @@ flowchart TD
 
 ## 4. Hardware Budgets & Execution Constraints
 - **RAM Ceiling**: Strictly bounded under 15 GiB. Incremental query-by-query streaming writes for sparse document transition tables.
-- **Latency Target**: Query encoding $< 5$ ms; GPU matrix dot-product $< 2$ ms; Lexical direct-index posting intersection $< 15$ ms; Total Gate 1 execution $< 25$ ms.
+- **Latency Reporting**: Report query encoding, GPU matrix probing, sidecar lookup, and total Gate 1 time separately. Live posting-intersection timing belongs to the diagnostic comparator, not the core sidecar path; see the frozen review report for measured values.
 - **Deployment Cap**: $L_{\text{deploy,max}} = 200$ terms.

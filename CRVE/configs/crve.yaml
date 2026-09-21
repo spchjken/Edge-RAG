@@ -1,9 +1,13 @@
-# CRVE Configuration: Context-Reranked Vocabulary Expansion (1st-Stage Retrieval)
+# Generic CRVE orchestrator runtime defaults, not the frozen pool/Gate 1 experiment.
+# For tested DF >= 2, CF >= 3, pool = min(10k, eligible vocabulary), and PPMISidecar
+# in RRF_Core3, use gate1_phase2_1a.yaml and its for_review/ frozen copy.
+# The current orchestrator does not enforce vocabulary.min_df; changing this YAML
+# alone would not implement the frozen eligibility filter. See docs/ARCHITECTURE.md.
 
 vocabulary:
   pool_size: 10000
   scoring_function: "sublinear_salience" # IDF * ln(1 + DF)
-  min_df: 1
+  min_df: 1  # Legacy generic value; not the frozen pool eligibility policy.
   canonical_mapping: true
 
 dense_matrix:
@@ -29,7 +33,7 @@ gate1_selection:
     anchor_bge_all:
       enabled: true
       top_k: 500
-    lexical_ppmi:
+    lexical_ppmi: # Generic orchestrator uses live postings; frozen Gate 1 uses PPMISidecar.
       enabled: true
       top_k: 500
       min_joint_support: 2

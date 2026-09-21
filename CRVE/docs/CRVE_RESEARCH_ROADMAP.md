@@ -1,6 +1,6 @@
 # CRVE Study Roadmap: From V7/V8 to a Risk-Aware Selection Cascade
 
-> **Status:** short- and medium-term research map, 2026-09-20. This document organizes the study;
+> **Status:** short- and medium-term research map, 2026-09-20, reconciled 2026-09-21. This document organizes the study;
 > it does not describe a fully implemented pipeline or supersede the
 > [canonical architecture](ARCHITECTURE.md). V7 and V8 are archived experimental controls. The
 > detailed selection theory remains in
@@ -105,6 +105,9 @@ The minimum artifact is not just a list of words. Depending on the ablation, Pha
 
 Context samples are one candidate representation, not a foregone conclusion. Aggregate or sketch-based
 static evidence should remain eligible when it provides a better evidence-to-memory trade-off.
+Where text samples are retained, use shared canonical chunks with term-to-chunk references, not
+duplicated term-centered windows. Sweep retained chunks per term at 5, 10, 15, 20, and 30; the chunk
+segmentation and representative/diversity selection policies remain research choices.
 
 ### Research questions
 
@@ -206,6 +209,9 @@ include:
 - overlap or redundancy with other candidates;
 - calibrated helpfulness and harm estimates learned only from declared development data.
 
+For a candidate, fetch its retained evidence together and score it in one batch. Deduplicate shared
+chunk IDs across candidates. Adaptive multi-round context fetching is not part of this short-term map.
+
 Probabilistic properties are optional evidence, not assumed truth. Raw cosine, a sigmoid of cosine, or
 an uncalibrated classifier score must not be labeled as a probability. Any \(p_{\mathrm{help}}\) or
 \(p_{\mathrm{harm}}\) must specify its fixed term-weight action or frozen weighting policy, calibration
@@ -228,7 +234,7 @@ Gate 3 asks:
 > For each admitted candidate, how much lexical influence is justified by its potential gain, loss,
 > redundancy, and cost?
 
-Selection and weighting remain separate. A Gate-2 survivor may still receive a small weight or
+Selection and weighting remain separate, and no Gate-3 weighting method has been selected. A Gate-2 survivor may still receive a small weight or
 \(\mu_t=0\). A useful research objective is a constrained portfolio rather than independent semantic
 weights:
 
@@ -272,10 +278,9 @@ full cascade.
 4. **Run fixed-action Gate-2 ablations.** Compare maximum compatibility, top-2 support,
    representative support, ambiguity evidence, and one declared probabilistic rule if calibration data
    are sufficient.
-5. **Prototype Gate-3 weighting.** Start with a small fixed-weight action grid, a single transparent
-   risk-adjusted weighting rule, explicit expansion-mass and posting-cost bounds, and \(\mu=0\). Measure
-   both mean gain and lower-tail loss. This prototype follows provisional Gate-2 evidence; placing it
-   in the short-term map does not make weighting independent of harmful-candidate rejection.
+5. **Study Gate-3 weighting.** Compare declared candidate policies, including a fixed-weight grid and
+   zero weight, against gain, lower-tail loss, and execution cost. Choose a weighting method only after
+   Gate-2 evidence and paired full-retrieval results justify it. Gate 3 remains in the short-term map.
 6. **Establish the abstention baseline.** Compare every safety and weighting method with leaving the original query
    unchanged.
 7. **Run a bounded cascade feasibility test.** Connect the frozen Phase-1 artifact, Gate 1, the
@@ -473,8 +478,9 @@ even if its update latency is low.
 
 Several higher-risk ideas are worth testing after the basic deployment tracks are measurable:
 
-- **Compute follows uncertainty:** dynamically stop after any gate when the decision margin is large;
-  spend context, network, and weighting budget only on ambiguous cases.
+- **Compute follows uncertainty:** dynamically stop *between* gates when the decision margin is large;
+  when Gate 2 evaluates a term, fetch all its retained evidence together rather than using adaptive
+  multi-round context fetching. Spend network and weighting budget only on ambiguous cases.
 - **Anytime CRVE:** emit a safe preliminary query under a tight deadline, then improve the expansion
   set if more local or distributed evidence arrives before retrieval begins.
 - **Evidence distillation:** compress an expensive distributed teacher cascade into a small local
@@ -540,8 +546,8 @@ Recall-oriented conclusions remain separate unless an explicit multi-objective p
 ## 10. Relationship to other documents
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) is the canonical description of the active implementation.
-- [Capacity-Bounded Corpus-Informed Query Expansion](corpus_informed_query_expansion_plan.md) contains
-  the broader method proposal, literature positioning, and experiment plan.
+- [Capacity-Bounded Corpus-Informed Query Expansion](corpus_informed_query_expansion_plan.md) preserves
+  an earlier, broader context-memory proposal; its old windows and budgets are not current defaults.
 - [Phase 2 — Selection Under Uncertainty](phase2_selection_under_uncertainty.md) defines the formal
   labels, metrics, uncertainty limits, and detailed gate hypotheses.
 - [CRVE Design Refinement Notes](crve_design_refinement_notes.md) records the context-memory and

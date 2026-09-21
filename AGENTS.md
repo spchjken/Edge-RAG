@@ -44,7 +44,7 @@ Specialized agent execution playbooks are located in `.agents/workflows/`:
 
 When modifying core components or checking evidence, consult:
 1. **System Architecture:** [`CRVE/docs/ARCHITECTURE.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/docs/ARCHITECTURE.md) — Canonical blueprint for CRVE 1st-Stage Retrieval and PyTerrier Baseline Suite.
-2. **Configuration Contract:** [`CRVE/configs/crve.yaml`](file:///home/donghv/Projects/Edge-RAG/CRVE/configs/crve.yaml) — Authoritative single source of truth for all CRVE hyperparameters.
+2. **Configuration Contract:** [`CRVE/configs/crve.yaml`](CRVE/configs/crve.yaml) contains generic orchestrator defaults. For a particular experiment, its frozen config and `for_review/` run manifest are the source of truth for tested settings; [`CRVE/configs/gate1_phase2_1a.yaml`](CRVE/configs/gate1_phase2_1a.yaml) owns the current frozen Gate 1 protocol.
 3. **Evaluation Metrics:** [`CRVE/docs/EVALUATION_METRICS.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/docs/EVALUATION_METRICS.md) — Formal definitions of `Strict@K`, official linear `nDCG@K`, supplemental Table 2 exponential gains `BEIR_EXP_GAINS`, `MRR@K`, and query chunking invariance.
 4. **Selection Under Uncertainty:** [`CRVE/docs/phase2_selection_under_uncertainty.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/docs/phase2_selection_under_uncertainty.md) — Formal mathematical foundation for Gate 1 selection and candidate proposers.
 5. **Results-to-Scripts Mapping:** [`CRVE/scripts/results_scripts_mapping.md`](file:///home/donghv/Projects/Edge-RAG/CRVE/scripts/results_scripts_mapping.md) — Authoritative mapping linking every result file under `results/` to its generator script.

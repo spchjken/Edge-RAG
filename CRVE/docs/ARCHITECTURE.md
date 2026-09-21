@@ -1,235 +1,50 @@
-# Context-Reranked Vocabulary Expansion (CRVE) Architecture
+# CRVE first-stage retrieval architecture
 
-This document specifies the canonical system architecture for **CRVE** (`CRVE/src/crve/`), a high-speed, 1st-stage lexical-semantic retriever. CRVE bridges the vocabulary mismatch problem in domain-specific retrieval by coupling **Corpus-Grounded Dense Vocabulary Probing** with **Uncertainty-Aware Gate 1 Candidate Selection** and **PyTerrier-Native Inverted Indexing**.
+This is the canonical description of CRVE's scope and stage boundaries. CRVE produces a first-stage lexical ranking; downstream reranking and answer generation are outside its active scope. The [research roadmap](CRVE_RESEARCH_ROADMAP.md) describes experiments and longer-term deployment questions, not completed components.
 
----
+## System flow and implementation status
 
-## 1. System Overview & 1st-Stage Retrieval Paradigm
-
-CRVE operates strictly at the **1st-stage retrieval** tier, replacing or augmenting traditional lexical ranking (BM25, DPH) and pseudo-relevance feedback (RM3, Bo1) without incurring the latency, index-size explosion, or memory overhead of heavy neural bi-encoders or generative LLM query expanders.
-
-```mermaid
-graph TD
-    classDef compute fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#000000;
-    classDef storage fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000;
-    classDef target fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000000;
-
-    subgraph Index_Time ["1. Index-Time Phase"]
-        RawDocs[Raw Corpus Documents] --> ANALYZER[EdgeRAGAnalyzer: KStem + WordNet Overrides]:::compute
-        ANALYZER --> PT_INDEX[(PyTerrier Inverted Index: IterDictIndexer)]:::storage
-        ANALYZER --> IDF_REG[(CorpusIDFRegistry: Non-Negative Lucene IDF)]:::storage
-        RawDocs --> VOCAB_BUILD[CorpusVocabBuilder: Sublinear Salience Pool N=10k]:::compute
-        VOCAB_BUILD --> DENSE_MAT[DenseVocabMatrix: BGE-small-en-v1.5 CUDA FP16]:::compute
-    end
-
-    subgraph Query_Time ["2. Query-Time Retrieval Phase"]
-        Q[User Query] --> ANALYZER_Q[EdgeRAGAnalyzer]:::compute
-        ANALYZER_Q --> PROPOSERS[Gate 1 Selection Proposers]:::compute
-        DENSE_MAT --> PROPOSERS
-        PT_INDEX --> PROPOSERS
-        
-        subgraph Gate1_Channels ["Gate 1 Proposal Channels"]
-            PROPOSERS --> CH1[Whole-Query BGE Cosine]:::compute
-            PROPOSERS --> CH2[Anchor-Level BGE Cosine]:::compute
-            PROPOSERS --> CH3[Lexical PPMI from Postings]:::compute
-            CH1 & CH2 & CH3 --> RRF[RRF Hybrid Fusion & Budget Filter L <= 200]:::compute
-        end
-
-        RRF --> EXP_Q[Expanded Query: w_Q]:::storage
-        EXP_Q --> RETRIEVER[PyTerrier Retrieval: BM25 / DPH]:::compute
-        PT_INDEX --> RETRIEVER
-        RETRIEVER --> CANDIDATES[Top-K Retrieved Documents]:::target
-    end
+```text
+Corpus -> bounded eligible term pool -> reusable static evidence
+       -> Gate 1: recall-focused term proposal, at most 200 candidates
+       -> Gate 2: precision-focused context verification and harmful-candidate rejection
+       -> Gate 3: choose lexical weights, possibly no expansion
+       -> one full first-stage BM25/DPH retrieval -> ranked documents
 ```
 
----
+Pool construction, Gate 1 proposers, and a direct expanded-query retrieval path exist in `CRVE/src/crve/`. Gates 2 and 3 are **short-term research stages, not implemented production gates**. The current orchestrator's simple normalized candidate-score weights are an experimental bridge to retrieval, not a calibrated Gate 3 policy or evidence that the full cascade exists.
 
-## 2. Core Four-Component Architecture
+The gates make distinct decisions: pool membership establishes availability; Gate 1 preserves potentially useful terms under a hard candidate budget; Gate 2 uses query-conditioned evidence to reject unsupported, ambiguous, redundant, or potentially harmful terms while tracking false rejection; Gate 3 determines each survivor's lexical influence. Query-conditioned evidence comes from corpus information prepared without the future query. The full document retrieval occurs after these decisions, not as pseudo-relevance feedback inside a gate. Returning no expansion is valid.
 
-### Component 1: Corpus Vocabulary Extraction & Shared IDF (`src/crve/indexer/`)
+## Phase 1: pool and static evidence
 
-1. **`EdgeRAGAnalyzer` (`src/crve/indexer/analyzer.py`):**
-   - **Linguistic Pre-Stemming Overrides:** Enforces exact WordNet irregular suppletion mappings (*went $\to$ go*, *children $\to$ child*, *better $\to$ good*) prior to stemming.
-   - **Technical Compound Protection:** Preserves versioned identifiers, models, and hardware tags (*e.g.*, `qwen2.5-7b`, `fp16`, `nav2_bringup`) from destructive morphological degradation.
-   - **Krovetz Stemming (KStem):** Inflectional morphological reduction ensuring exact $1:1$ stem parity between corpus indexing and query analysis.
+For the **frozen pool/Gate 1 experiment**, eligible terms satisfy DF >= 2 and CF >= 3, and the pool contains `min(10,000, |V_eligible|)` terms. The exact frozen pool sizes, hashes, exclusions, and settings are recorded in [`gate1_phase2_1a.yaml`](../configs/gate1_phase2_1a.yaml) and the [review copy](../../for_review/selection_phase/gate_1/run_2/frozen_gate1_config_phase2_1a.yaml). `for_review/` artifacts are immutable evidence for their specific runs; older run reports retain their historical configurations. Generic [`crve.yaml`](../configs/crve.yaml) is a runtime configuration, not a substitute for a frozen experiment manifest.
 
-2. **`CorpusIDFRegistry` (`src/crve/indexer/corpus_idf_registry.py`):**
-   - Computes and caches unified non-negative Lucene IDF tables:
-     $$\text{IDF}(t) = \ln\left(1.0 + \frac{N - n(t) + 0.5}{n(t) + 0.5}\right)$$
-   - Pre-indexes compound boundary prefix maps for $O(1)$ query-time bailout lookups.
+Static evidence can include analyzed identities and surface forms, DF/CF/IDF, embeddings, co-occurrence sidecars, posting-cost summaries, aliases, sketches, and sampled corpus usage. CRVE is not defined by the presence of samples. Each artifact must have provenance, a capacity bound, build cost, and a corpus/index version.
 
-3. **`CorpusVocabBuilder` (`src/crve/indexer/corpus_vocab_builder.py`):**
-   - **Canonical Surface-Form Mapping:** Maps analyzed stems back to their highest-frequency surface form in the corpus (*e.g.*, stem `robot` $\to$ surface `robotics`), ensuring neural embeddings evaluate natural words rather than truncated stem artifacts.
-   - **Sublinear Salience Scoring:** Extracts vocabulary candidate pools using:
-     $$\text{Salience}(t) = \text{IDF}(t) \times \ln(1 + \text{Doc\_Freq}(t))$$
+For the proposed Gate 2 context sidecar, partition documents into small **canonical chunks**, store each retained chunk once, and maintain term-to-chunk references. Do not store a separate `+/-50`-token centered window for every occurrence: adjacent terms such as `JVM` and `garbage` could produce nearly identical copies, potentially making the saved sample text larger than the corpus. Chunk boundaries and deduplication policy require empirical validation; no particular chunk length is frozen yet. Sweep **5, 10, 15, 20, and 30 retained chunks per term**, with fewer when fewer distinct eligible chunks exist. Measure unique chunks, term-to-chunk references, duplicate/reuse rates, storage, and preparation cost. Representative and diversity-oriented sampling are alternative or complementary policies to evaluate, not an established winner.
 
-4. **`DenseVocabMatrix` (`src/crve/indexer/dense_vocab_matrix.py`):**
-   - Pre-computes batched CUDA FP16 dense representations of canonical surface forms using `BAAI/bge-small-en-v1.5`.
-   - Supports Farthest-Point Sampling (FPS) for semantic coverage hubs and direct matrix GEMM for low-latency similarity evaluation ($<0.3\text{s}$ TTI).
+## Gate 1: bounded, recall-focused proposal
 
----
+Gate 1 emits a ranked candidate set `C1(q)` with `|C1(q)| <= 200`; it does not decide final admission or lexical weights. The [co-located pathway](../src/crve/selection/pathway_gate1_selection.md) owns detailed proposer and audit semantics. Compare individual channels and fusions at matched candidate budgets. `L=500` is diagnostic only, beyond the deployable cap.
 
-### Component 2: Gate 1 Selection Under Uncertainty (`src/crve/selection/`)
+The **current frozen Gate 1 core RRF** combines WholeQueryBGE, AnchorBGEFiltered, and **PPMISidecar** (`k=60`, input depth 500). PPMISidecar is prebuilt from index evidence during preparation and bounds query-time work by storing a limited neighbor list per anchor. **LivePPMI** computes PPMI from live index postings at query time and is a higher-fidelity diagnostic comparator, not the low-latency core RRF member. Precomputation can truncate neighbors; it should not be described as mathematically identical to unrestricted live computation. The [review report](../../for_review/selection_phase/gate_1/run_2/gate1_halftime_review_report.md) records their measured latency for that run. Other evaluated channels and historical run variants remain valid as labeled experiments, not current defaults.
 
-Gate 1 is the critical selection mechanism that decides which expansion terms to propose into the query under a deployable budget $L \le 200$.
+## Gate 2: precision-focused verification
 
-1. **Candidate Proposal Channels (`src/crve/selection/gate1_proposers.py`):**
-   - **WholeQueryBGEProposer ($S_{\text{WQ}}$):** Encodes the complete user query into a single dense vector and computes cosine similarity against candidate pool terms in $P_q = P \setminus \text{AnalyzedCanonicalTerms}(q)$.
-   - **AnchorBGEProposer ($S_{\text{ABGE}}$):** Breaks the query into syntactic anchors with Penn Treebank POS priors and specificity filtering ($\text{max\_df\_ratio} \le 0.12, \text{specificity} \ge 0.65$), scoring candidates by maximum anchor cosine match.
-   - **LexicalPPMIProposer ($S_{\text{PPMI}}$):** Evaluates document co-occurrence between query terms and candidate terms in PyTerrier inverted posting lists using Positive Pointwise Mutual Information:
-     $$\text{PPMI}(q, t) = \max\left(0, \log_2 \frac{P(q, t)}{P(q)P(t)}\right)$$
-   - **RRFHybridProposer:** Fuses proposals across multiple channels using Reciprocal Rank Fusion ($k=60$) with deterministic tie-breaking and unique refill:
-     $$\text{RRF}(t) = \sum_{c \in \mathcal{C}} \frac{1}{k + \text{rank}_c(t)}$$
+Gate 2 is proposed. For every Gate 1 candidate, fetch its retained static evidence and score all available evidence **in one batch**; deduplicate shared chunk IDs across candidates before scoring. There is no adaptive `2 -> 4 -> 8` or `8 -> 16 -> 30` evidence-fetch loop in the current design. Context compatibility, representative support, diversity/ambiguity, lexical statistics, redundancy, and optional calibrated harm estimates are candidate signals. Static statistics can describe context around a term without being literal text samples.
 
-2. **Gate 1 Evaluation & Metrics (`src/crve/selection/gate1_metrics.py`):**
-   - Rigorous telemetry including candidate pool recall ($R@K$), precision ($P@K$), nDCG, fidelity to oracle expansion terms, and transition dynamics.
+Gate 2 aims to improve admitted-term precision and harmful-candidate rejection without destroying useful-opportunity recall. A raw similarity score is not a probability of helpfulness. Any harm label or calibrated probability must declare its retrieval action, metric, depth, corpus/index version, and development/test split. Term-level proxy evidence cannot by itself prove that a term will improve the final ranking.
 
----
+## Gate 3: weighting, then full retrieval
 
-### Component 3: PyTerrier Baseline & Evaluation Harness (`src/evaluation/baselines/`)
+Gate 3 is proposed and its weighting **method is open**. It must balance potential gain, loss, redundancy, and execution cost for Gate 2 survivors; a survivor can receive zero weight, and the query can abstain from expansion. Equal weights, fixed weight grids, or mass bounds may be studied as baselines, but no historical weighting theorem or particular formula is the selected CRVE policy. Evaluation requires running the complete first-stage retrieval and comparing paired query-level ranking/recall outcomes, including negative outcomes.
 
-PyTerrier serves as the core indexing and retrieval engine for both CRVE and competing baselines:
+## Source-of-truth order
 
-1. **Memory-Safe Architecture for 15 GiB RAM:**
-   - Disk-backed Terrier inverted indexing using `IterDictIndexer`.
-   - Bounded JVM heap (`pt.java.set_memory_limit(3072)`).
-   - Ingestion via streaming generator (`BenchmarkLoader.stream_corpus()`) preventing large corpora (5M+ documents) from loading into RAM.
-   - Mathematical query chunking (`chunk_size=200`) to eliminate JNI and memory overhead without candidate truncation.
+1. This page owns active scope, stage boundaries, and implemented-versus-proposed status.
+2. A frozen `for_review/` config and its run manifest own **that experiment's** numeric settings and results. The matching `CRVE/configs/gate1_phase2_1a.yaml` is its working config. The generic `CRVE/configs/crve.yaml` owns only its own runtime defaults; it does not retroactively define frozen runs.
+3. The [Gate 1 pathway](../src/crve/selection/pathway_gate1_selection.md) owns Gate 1 algorithm details; [evaluation metrics](EVALUATION_METRICS.md) owns metric definitions; the [selection design](phase2_selection_under_uncertainty.md) owns proposed labels and research hypotheses where consistent with this architecture.
+4. The [roadmap](CRVE_RESEARCH_ROADMAP.md) owns the short-/medium-term study sequence. The [older corpus-informed plan](corpus_informed_query_expansion_plan.md), [design notes](crve_design_refinement_notes.md), and [IT-MPE theory note](theoretical_foundations_anchored_expansion.md) preserve historical proposals, not current defaults.
 
-2. **Canonical 8-Baseline Matrix:**
-   - **Classical Baselines:**
-     1. `BM25_Default` (Standard BM25, $k_1=1.2, b=0.75$)
-     2. `BM25_RM3_Terrier_Default` (BM25 + RM3 Pseudo-Relevance Feedback)
-     3. `BM25_Bo1_Terrier_Default` (BM25 + Bose-Einstein 1 Query Expansion)
-     4. `DPH` (Divergence From Randomness Divergence-Poisson-Hypergeometric)
-     5. `DPH_Bo1_Terrier_Default` (DPH + Bo1)
-     6. `DPH_RM3_Terrier_Default` (DPH + RM3)
-   - **Neural Baselines:**
-     7. `Dense_BGE` (Bi-encoder dense retrieval with `BAAI/bge-small-en-v1.5` on CUDA FP16)
-     8. `SPLADE_v3` (Learned sparse representation with `naver/splade-v3`)
-
-3. **Metric Parity & Standards:**
-   - Evaluated using official `ir_measures` with both linear gains and standard BEIR Table 2 exponential gains (`BEIR_EXP_GAINS` = $2^{\text{rel}} - 1$).
-
----
-
-### Component 4: CRVE Orchestrator (`src/crve/orchestrator.py`)
-
-The `CRVEOrchestrator` integrates the entire 1st-stage pipeline:
-1. Coordinates corpus indexing with `EdgeRAGAnalyzer` and `CorpusIDFRegistry`.
-2. Builds the vocabulary candidate pool via `CorpusVocabBuilder` and dense embeddings via `DenseVocabMatrix`.
-3. Sets up Gate 1 candidate proposers (`RRFHybridProposer` / single channels).
-4. Produces expanded query representations with calibrated weights for execution against the PyTerrier retrieval engine.
-
----
-
-## 3. Directory Layout (`CRVE/`)
-
-```
-CRVE/
-├── configs/
-│   ├── crve.yaml                   # Single source of truth for CRVE hyperparameters
-│   ├── hardware_profiles.yaml      # Hardware memory and device budgets
-│   └── pyterrier_qe.yaml           # PyTerrier QE grid search and parameter specs
-├── docs/
-│   ├── ARCHITECTURE.md             # Canonical CRVE 1st-stage retrieval specification (this file)
-│   ├── DATASET_PREP.md             # Dataset download & preprocessing guide
-│   ├── EVALUATION_METRICS.md       # Metric definitions and parity verification
-│   ├── phase2_selection_under_uncertainty.md # Selection under uncertainty foundation
-│   ├── corpus_informed_query_expansion_plan.md
-│   ├── crve_design_refinement_notes.md
-│   └── theoretical_foundations_anchored_expansion.md
-├── scripts/
-│   ├── run_pyterrier_baselines.py  # 6 classical baselines runner across 25 datasets
-│   ├── run_pyterrier_qe_baselines.py # PyTerrier QE baselines runner
-│   ├── run_gate1_oracle_evaluation.py # Gate 1 selection empirical runner
-│   ├── run_pool_oracle_isolation.py   # Pool oracle isolation experiment
-│   ├── compile_gate1_research_tables.py # Gate 1 research table compiler
-│   ├── compile_pool_oracle_tables.py   # Pool oracle table compiler
-│   └── results_scripts_mapping.md  # Mapping linking result files to scripts
-├── src/
-│   ├── crve/
-│   │   ├── indexer/
-│   │   │   ├── analyzer.py         # EdgeRAGAnalyzer (KStem + WordNet overrides)
-│   │   │   ├── corpus_idf_registry.py # CorpusIDFRegistry (Lucene IDF)
-│   │   │   ├── corpus_vocab_builder.py# CorpusVocabBuilder (Sublinear salience pool)
-│   │   │   └── dense_vocab_matrix.py  # DenseVocabMatrix (BGE-small FP16)
-│   │   ├── selection/
-│   │   │   ├── gate1_proposers.py  # Gate 1 candidate proposers (WQ, ABGE, PPMI, RRF)
-│   │   │   ├── gate1_metrics.py    # Gate 1 evaluation metrics & telemetry
-│   │   │   └── pathway_gate1_selection.md # Tier 2 Gate 1 specification
-│   │   └── orchestrator.py         # CRVEOrchestrator (End-to-end 1st-stage runner)
-│   ├── evaluation/
-│   │   ├── baselines/
-│   │   │   ├── pyterrier_harness.py# PyTerrier baseline harness & index manager
-│   │   │   ├── pyterrier_qe.py     # PyTerrier QE operator & BGE sidecar
-│   │   │   ├── dense_rag.py        # Dense BGE-small-en-v1.5 baseline
-│   │   │   └── splade.py           # SPLADE-v3 baseline
-│   │   ├── benchmark_loader.py     # BEIR / BRIGHT streaming data loader
-│   │   ├── pool_generators.py      # Candidate pool generation utilities
-│   │   └── metrics.py              # Parity-verified IR metrics calculation
-│   └── utils/
-│       └── helpers.py              # Shared utilities
-└── tests/
-    ├── test_gate1_selection.py     # Gate 1 proposer & metric tests
-    ├── test_pool_compiler.py       # Pool compiler tests
-    ├── test_pool_oracle_isolation.py # Pool oracle tests
-    ├── test_pyterrier_harness_v2.py# PyTerrier harness unit tests
-    ├── test_pyterrier_metrics_parity.py # Parity with ir_measures
-    ├── test_pyterrier_neural_baselines.py # Dense & SPLADE test suite
-    ├── test_pyterrier_qe.py        # PyTerrier QE test suite
-    └── test_splade_standard_parity.py # SPLADE parity test
-```
-
----
-
-## 4. Configuration Contract (`CRVE/configs/crve.yaml`)
-
-```yaml
-vocabulary:
-  pool_size: 10000
-  scoring_function: "sublinear_salience" # IDF * ln(1 + DF)
-  min_df: 1
-  canonical_mapping: true
-
-dense_matrix:
-  model_name: "BAAI/bge-small-en-v1.5"
-  device: "cuda"
-  fp16: true
-  batch_size: 256
-  coverage_hubs: 2500
-
-gate1_selection:
-  default_proposer: "rrf_core"
-  deployable_budget_l: 200
-  rrf_k: 60
-  channels:
-    whole_query:
-      enabled: true
-      top_k: 500
-    anchor_bge_filtered:
-      enabled: true
-      top_k: 500
-      max_df_ratio: 0.12
-      min_specificity: 0.65
-    anchor_bge_all:
-      enabled: true
-      top_k: 500
-    lexical_ppmi:
-      enabled: true
-      top_k: 500
-      min_joint_support: 2
-
-evaluation:
-  harness: "pyterrier"
-  jvm_memory_mb: 3072
-  indexing_max_memory_bytes: 1073741824
-  query_chunk_size: 200
-  metrics:
-    - "nDCG@10"
-    - "R@100"
-    - "R@200"
-    - "R@500"
-    - "R@1000"
-    - "MRR@10"
-```
+Where a generic runtime config and a frozen experiment differ, report the config actually used for the claimed result. Do not silently change historical artifacts or infer that an unimplemented stage ran in a frozen Gate 1 test.

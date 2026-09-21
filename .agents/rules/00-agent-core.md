@@ -19,7 +19,7 @@ trigger: always_on
 | Selection Spec | `CRVE/docs/phase2_selection_under_uncertainty.md` | Gate 1 selection under uncertainty formal foundation |
 | Dataset Prep | `CRVE/docs/DATASET_PREP.md` | Download & preprocessing guide |
 | Eval Metrics | `CRVE/docs/EVALUATION_METRICS.md` | Metric definitions & mathematical parity |
-| Configuration | `CRVE/configs/crve.yaml` | Single source of truth for CRVE hyperparameters |
+| Configuration | `CRVE/configs/crve.yaml` | Generic orchestrator defaults; frozen run configs/manifests own tested settings |
 | Results-to-Scripts Mapping | `CRVE/scripts/results_scripts_mapping.md` | Authoritative mapping from all result files to scripts/tests |
 
 ## 3. Pre-Task Actions
