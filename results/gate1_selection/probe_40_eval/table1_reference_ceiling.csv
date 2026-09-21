@@ -1,0 +1,6 @@
+Dataset,Partition,Queries,Baseline nDCG@10,Baseline R@1000,Ceiling Delta-nDCG@10,Ceiling Net Rel Docs,Materially Addressable % (g* >= 0.005),Recall Addressable % (r* >= 1)
+bright_aops,Dev,10,0.0939,0.3643,"+0.1323 [0.0390, 0.2335]",+1.10,50.0%,80.0%
+nfcorpus,Dev,10,0.2855,0.3212,"+0.4136 [0.2376, 0.6128]",+8.60,80.0%,80.0%
+scifact,Dev,10,0.6526,1.0000,"+0.3025 [0.1025, 0.5287]",+0.00,50.0%,0.0%
+trec_covid,Dev,10,0.5724,0.3692,"+0.2971 [0.2146, 0.3820]",+31.20,100.0%,100.0%
+Corpus-Macro Dev (4 Corpora),Macro,40,0.4011,0.5137,+0.2864,+10.22,70.0%,65.0%

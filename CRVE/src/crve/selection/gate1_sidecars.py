@@ -55,6 +55,71 @@ class BuildResourceError(RuntimeError):
     pass
 
 
+def validate_gate1_config(config: Dict[str, Any]) -> None:
+    """
+    Fail-closed schema validation for Phase 2.1a Gate 1 configuration.
+    Raises KeyError or ValueError if any required key is missing or invalid.
+    """
+    if not isinstance(config, dict):
+        raise ValueError("FATAL: Configuration must be a dictionary!")
+
+    # 1. Memory Watchdog
+    if "memory_watchdog" not in config:
+        raise KeyError("FATAL: Missing required config section 'memory_watchdog'!")
+    mw = config["memory_watchdog"]
+    for key in ("warn_rss_gib", "hard_abort_rss_gib"):
+        if key not in mw:
+            raise KeyError(f"FATAL: Missing 'memory_watchdog.{key}'!")
+        if not isinstance(mw[key], (int, float)) or mw[key] <= 0:
+            raise ValueError(f"FATAL: 'memory_watchdog.{key}' must be a positive number!")
+
+    # 2. Build Ceilings & Disk Caps
+    for sec, cap_type in (("build_ceilings_sec", "seconds"), ("build_disk_caps_mb", "MB")):
+        if sec not in config:
+            raise KeyError(f"FATAL: Missing required config section '{sec}'!")
+        for sidecar in ("bge_sidecar", "ppmi_sidecar", "lexical_profiles", "acronym_rescue"):
+            if sidecar not in config[sec]:
+                raise KeyError(f"FATAL: Missing '{sec}.{sidecar}'!")
+            if not isinstance(config[sec][sidecar], (int, float)) or config[sec][sidecar] <= 0:
+                raise ValueError(f"FATAL: '{sec}.{sidecar}' must be a positive number of {cap_type}!")
+
+    # 3. RRF Policies
+    if "rrf_policies" not in config:
+        raise KeyError("FATAL: Missing required config section 'rrf_policies'!")
+    rrf = config["rrf_policies"]
+    for pol in ("rrf_core3", "rrf_extended"):
+        if pol not in rrf:
+            raise KeyError(f"FATAL: Missing required policy 'rrf_policies.{pol}'!")
+        if "k" not in rrf[pol]:
+            raise KeyError(f"FATAL: Missing 'rrf_policies.{pol}.k'!")
+        if not isinstance(rrf[pol]["k"], int) or rrf[pol]["k"] <= 0:
+            raise ValueError(f"FATAL: 'rrf_policies.{pol}.k' must be a positive integer!")
+
+    # 4. Sidecars & Reservoir Seed
+    if "sidecars" not in config:
+        raise KeyError("FATAL: Missing required config section 'sidecars'!")
+    sc = config["sidecars"]
+    if "lexical_profiles" not in sc or "reservoir_seed" not in sc["lexical_profiles"]:
+        raise KeyError("FATAL: Missing 'sidecars.lexical_profiles.reservoir_seed'!")
+    if not isinstance(sc["lexical_profiles"]["reservoir_seed"], int):
+        raise ValueError("FATAL: 'sidecars.lexical_profiles.reservoir_seed' must be an integer!")
+
+    # 5. Checkpoint B Operational Thresholds
+    if "checkpoint_b_thresholds" not in config:
+        raise KeyError("FATAL: Missing required config section 'checkpoint_b_thresholds'!")
+    cb = config["checkpoint_b_thresholds"]
+    for k in (
+        "max_oracle_loss_corpus_macro",
+        "max_oracle_loss_per_corpus",
+        "max_doc_opp_recall_loss_corpus_macro",
+        "max_doc_opp_recall_loss_per_corpus",
+    ):
+        if k not in cb:
+            raise KeyError(f"FATAL: Missing 'checkpoint_b_thresholds.{k}'!")
+        if not isinstance(cb[k], (int, float)) or cb[k] < 0:
+            raise ValueError(f"FATAL: 'checkpoint_b_thresholds.{k}' must be a non-negative number!")
+
+
 def get_process_rss_gib() -> float:
     """Returns the total RSS of the current process and all its children in GiB."""
     try:
@@ -85,14 +150,17 @@ def compute_pool_sha256(terms: List[str]) -> str:
 
 
 def compute_corpus_source_hash(dataset: str) -> str:
-    """Computes SHA-256 hash over raw corpus files consumed by stream_corpus()."""
+    """Computes SHA-256 hash over raw corpus files consumed by stream_corpus(). Raises on missing files."""
     paths = BenchmarkLoader.get_corpus_source_paths(dataset)
+    if not paths:
+        raise FileNotFoundError(f"FATAL: No corpus source paths found for dataset '{dataset}'!")
     h = hashlib.sha256()
     for p in sorted(paths):
-        if os.path.exists(p):
-            with open(p, "rb") as f:
-                while chunk := f.read(65536):
-                    h.update(chunk)
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"FATAL: Required corpus source file missing: {p}")
+        with open(p, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
     return h.hexdigest()
 
 
@@ -123,6 +191,12 @@ class Gate1SidecarManager:
         self.analyzer = get_terrier_analyzer()
         self.config = config or {}
         self.bge_model_name = bge_model_name
+
+        if self.config:
+            validate_gate1_config(self.config)
+            self.hard_abort_rss_gib = float(self.config["memory_watchdog"]["hard_abort_rss_gib"])
+        else:
+            self.hard_abort_rss_gib = 12.0
 
         # Wire build ceilings and disk caps directly from config if provided
         key_map = {
@@ -207,7 +281,7 @@ class Gate1SidecarManager:
                     and meta.get("analyzer_version") == ANALYZER_VERSION
                     and meta.get("bge_model") == self.bge_model_name
                     and data.get("pool_terms") == pool_terms
-                    and (not corpus_source_hash or meta.get("corpus_source_hash") == corpus_source_hash)
+                    and meta.get("corpus_source_hash") == corpus_source_hash
                 ):
                     return {
                         "pool_embeddings": data["embeddings"].to(device),
@@ -231,44 +305,55 @@ class Gate1SidecarManager:
         for _, text in BenchmarkLoader.stream_corpus(dataset):
             doc_count += 1
             if doc_count % 1000 == 0:
-                check_build_watchdog()
+                check_build_watchdog(self.hard_abort_rss_gib)
                 if time.perf_counter() - t0 > timeout_sec:
                     raise TimeoutError(f"BGE sidecar build exceeded time limit of {timeout_sec}s")
-            terms, surfs = self.analyzer.analyze(text)
-            for t, s in zip(terms, surfs):
-                if t in surface_counts:
-                    surface_counts[t][s.lower()] += 1
+
+            terms, _ = self.analyzer.analyze(text)
+            for t in terms:
+                if t in pool_set:
+                    surface_counts[t][t] += 1
             if doc_count >= 10000:
                 break
 
         display_surfaces = []
         for t in pool_terms:
-            top_s = surface_counts[t].most_common(1)
-            display_surfaces.append(top_s[0][0] if top_s else t)
+            top_surf = surface_counts[t].most_common(1)
+            display_surfaces.append(top_surf[0][0] if top_surf else t)
+        surf_to_idx = {s: i for i, s in enumerate(display_surfaces)}
 
-        surf_to_idx = {str(s).lower(): i for i, s in enumerate(display_surfaces)}
-
-        # Step 2: Encode display surfaces in FP16
+        # Step 2: Dense embedding generation in batches on GPU (FP16)
         if encoder is None:
             from sentence_transformers import SentenceTransformer
-            enc_device = "cuda" if torch.cuda.is_available() else "cpu"
-            encoder = SentenceTransformer("BAAI/bge-small-en-v1.5", device=enc_device)
+            encoder = SentenceTransformer(self.bge_model_name, device=device)
 
-        if hasattr(encoder, "encode"):
-            embs = encoder.encode(display_surfaces, normalize_embeddings=True, show_progress_bar=False, batch_size=256)
-            embs_tensor = torch.tensor(embs, dtype=torch.float16)
-        elif hasattr(encoder, "encode_queries"):
-            embs = encoder.encode_queries(display_surfaces)
-            embs_tensor = torch.tensor(embs, dtype=torch.float16)
-        else:
-            raise ValueError(f"Unsupported encoder type: {type(encoder)}")
+        batch_size = 512
+        embs_list = []
+        with torch.no_grad():
+            for i in range(0, len(display_surfaces), batch_size):
+                check_build_watchdog(self.hard_abort_rss_gib)
+                if time.perf_counter() - t0 > timeout_sec:
+                    raise TimeoutError(f"BGE sidecar build exceeded time limit of {timeout_sec}s")
+                batch_texts = display_surfaces[i:i + batch_size]
+                embs = encoder.encode(
+                    batch_texts,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                    convert_to_tensor=True,
+                    device=device,
+                )
+                if not isinstance(embs, torch.Tensor):
+                    embs = torch.tensor(embs)
+                embs_list.append(embs.half())
 
-        embs_tensor = torch.nn.functional.normalize(embs_tensor.float(), p=2, dim=-1).half()
+        embs_tensor = torch.cat(embs_list, dim=0)
 
         # Step 3: Atomic write with provenance metadata
         metadata = {
             "dataset": dataset,
             "pool_sha256": expected_sha,
+            "corpus_source_hash": corpus_source_hash,
             "pool_size": len(pool_terms),
             "num_docs": num_docs,
             "analyzer_version": ANALYZER_VERSION,
@@ -333,8 +418,8 @@ class Gate1SidecarManager:
                     and meta.get("num_docs") == num_docs
                     and meta.get("analyzer_version") == ANALYZER_VERSION
                     and meta.get("top_m") == top_m
-                    and (not corpus_source_hash or meta.get("corpus_source_hash") == corpus_source_hash)
-                    and (not lexicon_semantic_hash or meta.get("lexicon_semantic_hash") == lexicon_semantic_hash)
+                    and meta.get("corpus_source_hash") == corpus_source_hash
+                    and meta.get("lexicon_semantic_hash") == lexicon_semantic_hash
                 ):
                     return {
                         "anchor_ppmi": {a: [(t, float(s)) for t, s in cands] for a, cands in data["anchors"].items()},
@@ -368,7 +453,7 @@ class Gate1SidecarManager:
         for _, text in BenchmarkLoader.stream_corpus(dataset):
             doc_count += 1
             if doc_count % 2000 == 0:
-                check_build_watchdog()
+                check_build_watchdog(self.hard_abort_rss_gib)
                 if time.perf_counter() - t0 > timeout_sec:
                     raise TimeoutError(f"PPMI sidecar build exceeded time limit of {timeout_sec}s")
 
@@ -467,6 +552,7 @@ class Gate1SidecarManager:
         out_path = os.path.join(self.cache_dir, f"{safe_ds}_acronym_rescue.json")
         expected_sha = compute_pool_sha256(pool_terms)
 
+        corpus_source_hash = compute_corpus_source_hash(dataset)
         if not force_rebuild and os.path.exists(out_path):
             try:
                 with open(out_path, "r", encoding="utf-8") as f:
@@ -476,6 +562,7 @@ class Gate1SidecarManager:
                     meta.get("pool_sha256") == expected_sha
                     and meta.get("num_docs") == num_docs
                     and meta.get("analyzer_version") == ANALYZER_VERSION
+                    and meta.get("corpus_source_hash") == corpus_source_hash
                 ):
                     return {
                         "acronym_to_pool": {k: [(t, float(s)) for t, s in v] for k, v in data["acronyms"].items()},
@@ -508,7 +595,7 @@ class Gate1SidecarManager:
         for _, text in BenchmarkLoader.stream_corpus(dataset):
             doc_count += 1
             if doc_count % 5000 == 0:
-                check_build_watchdog()
+                check_build_watchdog(self.hard_abort_rss_gib)
                 if time.perf_counter() - t0 > timeout_sec:
                     raise TimeoutError(f"Acronym sidecar build exceeded time limit of {timeout_sec}s")
 
@@ -555,6 +642,7 @@ class Gate1SidecarManager:
         metadata = {
             "dataset": dataset,
             "pool_sha256": expected_sha,
+            "corpus_source_hash": corpus_source_hash,
             "pool_size": len(pool_terms),
             "num_docs": num_docs,
             "analyzer_version": ANALYZER_VERSION,
@@ -604,6 +692,12 @@ class Gate1SidecarManager:
         meta_path = os.path.join(aux_index_dir, "sidecar_metadata.json")
         expected_sha = compute_pool_sha256(pool_terms)
 
+        corpus_source_hash = compute_corpus_source_hash(dataset)
+        configured_seed = (
+            self.config.get("sidecars", {}).get("lexical_profiles", {}).get("reservoir_seed", 42)
+            if self.config else 42
+        )
+
         if not force_rebuild and os.path.exists(prop_path) and os.path.exists(meta_path):
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:
@@ -612,6 +706,8 @@ class Gate1SidecarManager:
                     meta.get("pool_sha256") == expected_sha
                     and meta.get("num_docs") == num_docs
                     and meta.get("analyzer_version") == ANALYZER_VERSION
+                    and meta.get("corpus_source_hash") == corpus_source_hash
+                    and meta.get("reservoir_seed") == configured_seed
                 ):
                     retriever = pt.terrier.Retriever(os.path.abspath(aux_index_dir), wmodel="BM25", num_results=500)
                     return {
@@ -625,12 +721,12 @@ class Gate1SidecarManager:
             except Exception as e:
                 print(f"[Sidecar] Failed to load Lexical profiles cache for {dataset} ({e}). Rebuilding...")
 
-        print(f"[Sidecar] Building Sparse Lexical Context Sidecar for {dataset} ({len(pool_terms)} terms, reservoir sampling)...")
+        print(f"[Sidecar] Building Sparse Lexical Context Sidecar for {dataset} ({len(pool_terms)} terms, reservoir sampling, seed={configured_seed})...")
         t0 = time.perf_counter()
         pool_set = set(pool_terms)
 
-        # Reservoir sampling: reservoir size K=50 per pool term with fixed seed
-        rng = random.Random(42)
+        # Reservoir sampling: reservoir size K=50 per pool term with configured seed
+        rng = random.Random(configured_seed)
         reservoirs: Dict[str, List[str]] = defaultdict(list)
         item_counts: Dict[str, int] = defaultdict(int)
 
@@ -638,7 +734,7 @@ class Gate1SidecarManager:
         for _, text in BenchmarkLoader.stream_corpus(dataset):
             doc_count += 1
             if doc_count % 2000 == 0:
-                check_build_watchdog()
+                check_build_watchdog(self.hard_abort_rss_gib)
                 if time.perf_counter() - t0 > timeout_sec:
                     raise TimeoutError(f"Lexical sidecar build exceeded time limit of {timeout_sec}s")
 
@@ -685,10 +781,12 @@ class Gate1SidecarManager:
         metadata = {
             "dataset": dataset,
             "pool_sha256": expected_sha,
+            "corpus_source_hash": corpus_source_hash,
             "pool_size": len(pool_terms),
             "num_docs": num_docs,
             "analyzer_version": ANALYZER_VERSION,
             "passages_per_candidate": 50,
+            "reservoir_seed": configured_seed,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         with open(os.path.join(tmp_idx_dir, "sidecar_metadata.json"), "w", encoding="utf-8") as f:

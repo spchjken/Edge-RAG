@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(BASE_DIR, "src"))
 from evaluation.baselines.pyterrier_harness import init_pyterrier
 from evaluation.benchmark_loader import BenchmarkLoader
 from evaluation.baselines.pyterrier_qe import get_terrier_analyzer
-from crve.selection.gate1_sidecars import Gate1SidecarManager
+from crve.selection.gate1_sidecars import Gate1SidecarManager, validate_gate1_config
 from crve.selection.gate1_proposers import (
     WholeQueryBGEProposer,
     AnchorBGEProposer,
@@ -117,8 +117,14 @@ def get_process_tree_rss_bytes() -> int:
         return 0
 
 
-def check_memory_watchdog(warn_rss_gib: float = 8.0, abort_rss_gib: float = 12.0):
+def check_memory_watchdog(config: Optional[Dict[str, Any]] = None):
     """Fail-closed memory watchdog: triggers gc at warn threshold, aborts at hard cap."""
+    if config and "memory_watchdog" in config:
+        warn_rss_gib = float(config["memory_watchdog"]["warn_rss_gib"])
+        abort_rss_gib = float(config["memory_watchdog"]["hard_abort_rss_gib"])
+    else:
+        warn_rss_gib = 8.0
+        abort_rss_gib = 12.0
     rss_gib = get_process_tree_rss_bytes() / (1024 ** 3)
     if rss_gib >= abort_rss_gib:
         raise MemorySafetyError(
@@ -187,14 +193,15 @@ def validate_action_coverage(audit_df: pd.DataFrame, universe_df: pd.DataFrame, 
         )
 
 
-def get_shard_paths(shards_dir: str, dataset: str, qid: str) -> Tuple[str, str, str, str]:
-    """Generates shard paths for parent candidate audit, cutoff entries, query status, and reference universe."""
+def get_shard_paths(shards_dir: str, dataset: str, qid: str) -> Tuple[str, str, str, str, str]:
+    """Generates shard paths for parent candidate audit, cutoff entries, query status, reference universe, and diagnostic universe."""
     q_hash = hashlib.md5(qid.encode("utf-8")).hexdigest()[:12]
     parent_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}.parquet")
     cutoff_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_cutoff_entries.parquet")
     status_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_status.parquet")
     universe_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_universe.parquet")
-    return parent_shard, cutoff_shard, status_shard, universe_shard
+    diag_universe_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_diag_universe.parquet")
+    return parent_shard, cutoff_shard, status_shard, universe_shard, diag_universe_shard
 
 
 def compute_ir_metrics(
@@ -232,7 +239,8 @@ def evaluate_query_gate1(
     analyzer,
     bm25,
     proposers: Dict[str, BaseProposer],
-    rrf_proposer: RRFHybridProposer,
+    rrf_core3_proposer: RRFHybridProposer,
+    rrf_ext_proposer: RRFHybridProposer,
     pool_set: Set[str],
     phase1_cands_for_q: Set[str],
     weights: List[float],
@@ -242,7 +250,7 @@ def evaluate_query_gate1(
     qrels_hash: str = "",
     pool_hash: str = "",
     chunk_size: int = 100,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any], pd.DataFrame, pd.DataFrame]:
     """
     Evaluates all candidate actions for a single query.
     Emits parent candidate audit, cutoff entries, and query status.
@@ -284,14 +292,14 @@ def evaluate_query_gate1(
         props_clean = [(t, s) for t, s in props if t in pool_set and t not in query_excluded_terms]
         channel_proposals[name] = props_clean
 
-    # Compute RRF Fusions
+    # Compute RRF Fusions with separate policy proposers
     # RRF-Core3: WholeQueryBGE + AnchorBGEFiltered + PPMISidecar
     core3_rankings = {
         "WholeQueryBGE": channel_proposals.get("WholeQueryBGE", []),
         "AnchorBGEFiltered": channel_proposals.get("AnchorBGEFiltered", []),
         "PPMISidecar": channel_proposals.get("PPMISidecar", []),
     }
-    channel_proposals["RRF_Core3"] = rrf_proposer.fuse(core3_rankings, top_l=500)
+    channel_proposals["RRF_Core3"] = rrf_core3_proposer.fuse(core3_rankings, top_l=500)
 
     # RRF-Extended: Core3 + SparseLexicalContextProfiles + AcronymDefinitionRescue
     ext_rankings = dict(core3_rankings)
@@ -299,7 +307,7 @@ def evaluate_query_gate1(
         ext_rankings["SparseLexicalContextProfiles"] = channel_proposals["SparseLexicalContextProfiles"]
     if "AcronymDefinitionRescue" in channel_proposals:
         ext_rankings["AcronymDefinitionRescue"] = channel_proposals["AcronymDefinitionRescue"]
-    channel_proposals["RRF_Extended"] = rrf_proposer.fuse(ext_rankings, top_l=500)
+    channel_proposals["RRF_Extended"] = rrf_ext_proposer.fuse(ext_rankings, top_l=500)
 
     # Proposer ranks map
     proposer_ranks_map = defaultdict(dict)
@@ -343,6 +351,32 @@ def evaluate_query_gate1(
     ]
     df_universe = pd.DataFrame(universe_rows)
 
+    # If LivePPMI is present (diagnostic mode), form separate Diagnostic Reference Universe R_q^diag
+    df_diag_universe = None
+    if "LivePPMI" in channel_proposals:
+        r_diag = set(r_core)
+        diag_sources = defaultdict(set)
+        for t, s in candidate_sources.items():
+            diag_sources[t] = set(s)
+        for t, _ in channel_proposals["LivePPMI"]:
+            r_diag.add(t)
+            diag_sources[t].add("LivePPMI")
+
+        diag_universe_rows = [
+            {
+                "dataset": dataset,
+                "qid": qid,
+                "candidate_term": t,
+                "is_phase1": bool("phase1" in diag_sources[t]),
+                "proposer_sources": ",".join(sorted(diag_sources[t])),
+            }
+            for t in sorted(r_diag)
+        ]
+        df_diag_universe = pd.DataFrame(diag_universe_rows)
+        candidates_list = sorted(list(r_diag))
+    else:
+        candidates_list = sorted(list(r_core))
+
     # Compute PPMI fidelity if both sidecar and live PPMI are present (diagnostic only)
     live_ppmi_terms = [t for t, _ in channel_proposals.get("LivePPMI", [])]
     sidecar_ppmi_terms = [t for t, _ in channel_proposals.get("PPMISidecar", [])]
@@ -365,13 +399,14 @@ def evaluate_query_gate1(
         "qrels_hash": qrels_hash,
         "pool_hash": pool_hash,
         "sampled": True,
-        "num_candidates": len(r_core),
-        "num_variants": len(r_core) * len(weights),
+        "num_candidates": len(candidates_list),
+        "num_variants": len(candidates_list) * len(weights),
         "num_cutoff_entries": 0,
         "is_empty_reference": len(r_core) == 0,
         "reference_universe_size": len(r_core),
         "reference_universe_sha256": r_core_sha,
-        "expected_action_count": len(r_core) * len(weights),
+        "diagnostic_universe_size": len(candidates_list) if df_diag_universe is not None else 0,
+        "expected_action_count": len(candidates_list) * len(weights),
         "ppmi_recall500": float(ppmi_recall500),
         "ppmi_rbo": float(ppmi_rbo),
         "channel_latencies_json": json.dumps(channel_latencies),
@@ -379,10 +414,8 @@ def evaluate_query_gate1(
         "error_msg": "",
     }
 
-    if not r_core:
-        return pd.DataFrame(), pd.DataFrame(), status_meta, df_universe
-
-    candidates_list = sorted(list(r_core))
+    if not candidates_list:
+        return pd.DataFrame(), pd.DataFrame(), status_meta, df_universe, df_diag_universe
 
     # 4. Build counterfactual variants for PyTerrier execution across weights
     variants_to_eval = []
@@ -562,7 +595,7 @@ def evaluate_query_gate1(
         "dataset", "qid", "candidate_term", "cutoff", "docid", "raw_entry", "recall_safe_entry"
     ])
 
-    return parent_df, cutoff_df, status_meta, df_universe
+    return parent_df, cutoff_df, status_meta, df_universe, df_diag_universe
 
 
 def run_dataset_gate1_evaluation(
@@ -581,6 +614,7 @@ def run_dataset_gate1_evaluation(
     measure_fidelity: bool = False,
     bge_model: str = "BAAI/bge-small-en-v1.5",
     qids_manifest: Optional[str] = None,
+    force_rebuild_sidecars: bool = False,
 ) -> Dict[str, Any]:
     """Runs complete Gate 1 counterfactual evaluation for a single dataset."""
     print(f"\n=======================================================")
@@ -626,8 +660,13 @@ def run_dataset_gate1_evaluation(
     consumed_inputs = BenchmarkLoader.get_consumed_input_paths(dataset)
     input_hashes = {}
     for name, path in consumed_inputs.items():
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"FATAL: Required input file missing: {path}")
+        hasher = hashlib.sha256()
         with open(path, "rb") as f:
-            input_hashes[name] = hashlib.sha256(f.read()).hexdigest()
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        input_hashes[name] = hasher.hexdigest()
 
     if "examples" in input_hashes:
         dataset_hash = input_hashes["examples"]
@@ -636,10 +675,17 @@ def run_dataset_gate1_evaluation(
         dataset_hash = input_hashes.get("queries", "")
         qrels_hash = input_hashes.get("qrels", "")
 
-    # Recompute and validate recorded index files at runtime
+    # Recompute and validate recorded index files at runtime using streaming chunks
     idx_manifest_path = os.path.join(os.path.dirname(idx_path), "index_manifest.json")
     if not os.path.exists(idx_manifest_path):
         raise FileNotFoundError(f"FATAL: index_manifest.json not found at {idx_manifest_path}!")
+
+    manifest_hasher = hashlib.sha256()
+    with open(idx_manifest_path, "rb") as f:
+        while chunk := f.read(65536):
+            manifest_hasher.update(chunk)
+    index_manifest_file_sha256 = manifest_hasher.hexdigest()
+
     with open(idx_manifest_path, "r", encoding="utf-8") as f:
         idx_manifest = json.load(f)
 
@@ -647,8 +693,11 @@ def run_dataset_gate1_evaluation(
         fpath = os.path.join(os.path.dirname(idx_path), fname)
         if not os.path.exists(fpath):
             raise FileNotFoundError(f"FATAL: Required index file missing: {fpath}")
+        hasher = hashlib.sha256()
         with open(fpath, "rb") as f:
-            actual_hash = hashlib.sha256(f.read()).hexdigest()
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        actual_hash = hasher.hexdigest()
         if actual_hash != exp_hash:
             raise RuntimeError(f"FATAL: Index file {fname} has changed! Actual {actual_hash} != recorded {exp_hash}")
 
@@ -688,7 +737,7 @@ def run_dataset_gate1_evaluation(
             raise RuntimeError(f"FATAL: Dataset '{dataset}' is missing {len(missing_qids)} QIDs from frozen manifest: {list(missing_qids)[:5]}")
         sampled_queries = [q_by_id[qid] for qid in frozen_qids]
         print(f"  [Queries] Loaded {len(sampled_queries)} queries from frozen manifest for {dataset}.")
-        if dataset == "bright_aops":
+        if dataset == "bright_aops" and qids_manifest == "micro_smoke_qids":
             q_ex = sampled_queries[0].get("excluded_doc_ids", sampled_queries[0].get("exclusions", []))
             assert len(q_ex) > 0, f"FATAL: Micro-smoke BRIGHT query {frozen_qids[0]} has 0 exclusions!"
     else:
@@ -699,24 +748,30 @@ def run_dataset_gate1_evaluation(
             sampled_queries = rng.sample(all_queries, sample_size)
         print(f"  [Queries] Sampled {len(sampled_queries)} queries using seed={seed}.")
 
-    max_ex = max((len(q.get("excluded_doc_ids", q.get("exclusions", []))) for q in all_queries), default=0)
-    k_fetch = min(num_docs, 1000 + max_ex)
-    bm25 = pt.terrier.Retriever(index, wmodel="BM25", num_results=k_fetch)
+    bm25 = pt.terrier.Retriever(index, wmodel="BM25", num_results=1000)
 
     # 4. Load all 4 Gate 1 Sidecars with frozen config wiring
     sidecar_mgr = Gate1SidecarManager(config=frozen_config, bge_model_name=bge_model)
-    bge_sidecar = sidecar_mgr.build_or_load_bge_sidecar(dataset, pool_terms, num_docs=num_docs, encoder=encoder, device=device)
+    bge_sidecar = sidecar_mgr.build_or_load_bge_sidecar(
+        dataset, pool_terms, num_docs=num_docs, encoder=encoder, device=device, force_rebuild=force_rebuild_sidecars
+    )
     pool_embeddings = bge_sidecar["pool_embeddings"]
     surf_to_idx = bge_sidecar["surf_to_idx"]
 
     ppmi_top_m = frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600) if frozen_config else 600
-    ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(dataset, index, pool_terms, num_docs=num_docs, top_m=ppmi_top_m)
+    ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(
+        dataset, index, pool_terms, num_docs=num_docs, top_m=ppmi_top_m, force_rebuild=force_rebuild_sidecars
+    )
     anchor_ppmi = ppmi_sidecar["anchor_ppmi"]
 
-    acronym_sidecar = sidecar_mgr.build_or_load_acronym_rescue_sidecar(dataset, pool_terms, num_docs=num_docs)
+    acronym_sidecar = sidecar_mgr.build_or_load_acronym_rescue_sidecar(
+        dataset, pool_terms, num_docs=num_docs, force_rebuild=force_rebuild_sidecars
+    )
     acronym_to_pool = acronym_sidecar["acronym_to_pool"]
 
-    lex_sidecar = sidecar_mgr.build_or_load_sparse_lexical_sidecar(dataset, pool_terms, num_docs=num_docs)
+    lex_sidecar = sidecar_mgr.build_or_load_sparse_lexical_sidecar(
+        dataset, pool_terms, num_docs=num_docs, force_rebuild=force_rebuild_sidecars
+    )
     aux_retriever = lex_sidecar["retriever"]
 
     # Proposers initialization
@@ -747,8 +802,10 @@ def run_dataset_gate1_evaluation(
     sparse_lex_proposer = SparseLexicalContextProposer(aux_retriever, pool_terms)
     acronym_proposer = AcronymDefinitionRescueProposer(acronym_to_pool, pool_terms)
     
-    rrf_k = frozen_config.get("rrf", {}).get("k", 60) if frozen_config else 60
-    rrf_proposer = RRFHybridProposer(k=rrf_k)
+    rrf_core3_k = int(frozen_config["rrf_policies"]["rrf_core3"]["k"]) if frozen_config else 60
+    rrf_ext_k = int(frozen_config["rrf_policies"]["rrf_extended"]["k"]) if frozen_config else 60
+    rrf_core3_proposer = RRFHybridProposer(k=rrf_core3_k)
+    rrf_ext_proposer = RRFHybridProposer(k=rrf_ext_k)
 
     proposers = {
         "WholeQueryBGE": wq_proposer,
@@ -787,39 +844,50 @@ def run_dataset_gate1_evaluation(
 
     for idx_q, q in enumerate(sampled_queries, 1):
         qid = str(q["query_id"])
-        parent_shard, cutoff_shard, status_shard, universe_shard = get_shard_paths(shards_dir, dataset, qid)
+        parent_shard, cutoff_shard, status_shard, universe_shard, diag_universe_shard = get_shard_paths(shards_dir, dataset, qid)
 
         if resume and os.path.exists(parent_shard) and os.path.exists(cutoff_shard) and os.path.exists(status_shard) and os.path.exists(universe_shard):
-            try:
-                st_data = pq.read_table(status_shard).to_pydict()
-                st_status = {k: v[0] for k, v in st_data.items()}
-                expected_hashes = {
-                    "config_hash": config_hash,
-                    "dataset_hash": dataset_hash,
-                    "qrels_hash": qrels_hash,
-                    "pool_hash": pool_hash,
-                }
-                validate_shard_hashes(st_status, expected_hashes, qid)
-                p_rows = pq.read_metadata(parent_shard).num_rows
-                c_rows = pq.read_metadata(cutoff_shard).num_rows
-                total_variants += p_rows
-                total_cutoff_entries += c_rows
-                print(f"  [{idx_q}/{len(sampled_queries)}] QID {qid}: Resumed from shard ({p_rows} variants, {c_rows} cutoff entries)")
-                continue
-            except Exception as e:
-                if "FATAL" in str(e):
-                    raise
+            if measure_fidelity and not os.path.exists(diag_universe_shard):
                 pass
+            else:
+                try:
+                    st_data = pq.read_table(status_shard).to_pydict()
+                    st_status = {k: v[0] for k, v in st_data.items()}
+                    expected_hashes = {
+                        "config_hash": config_hash,
+                        "dataset_hash": dataset_hash,
+                        "qrels_hash": qrels_hash,
+                        "pool_hash": pool_hash,
+                    }
+                    validate_shard_hashes(st_status, expected_hashes, qid)
+                    p_rows = pq.read_metadata(parent_shard).num_rows
+                    c_rows = pq.read_metadata(cutoff_shard).num_rows
+                    total_variants += p_rows
+                    total_cutoff_entries += c_rows
+                    print(f"  [{idx_q}/{len(sampled_queries)}] QID {qid}: Resumed from shard ({p_rows} variants, {c_rows} cutoff entries)")
+                    continue
+                except Exception as e:
+                    if "FATAL" in str(e):
+                        raise
+                    pass
 
         t0_q = time.perf_counter()
-        df_p, df_c, q_status, df_u = evaluate_query_gate1(
+        q_exclusions = set(str(x) for x in q.get("excluded_doc_ids", q.get("exclusions", [])))
+        if q_exclusions:
+            k_fetch_q = min(num_docs, 1000 + len(q_exclusions))
+            bm25_q = pt.terrier.Retriever(index, wmodel="BM25", num_results=k_fetch_q)
+        else:
+            bm25_q = bm25
+
+        df_p, df_c, q_status, df_u, df_diag_u = evaluate_query_gate1(
             dataset=dataset,
             query_obj=q,
             index=index,
             analyzer=analyzer,
-            bm25=bm25,
+            bm25=bm25_q,
             proposers=proposers,
-            rrf_proposer=rrf_proposer,
+            rrf_core3_proposer=rrf_core3_proposer,
+            rrf_ext_proposer=rrf_ext_proposer,
             pool_set=pool_set,
             phase1_cands_for_q=phase1_map.get(qid, set()),
             weights=weights,
@@ -838,13 +906,15 @@ def run_dataset_gate1_evaluation(
         df_c.to_parquet(cutoff_shard, index=False)
         pd.DataFrame([q_status]).to_parquet(status_shard, index=False)
         df_u.to_parquet(universe_shard, index=False)
+        if df_diag_u is not None:
+            df_diag_u.to_parquet(diag_universe_shard, index=False)
 
         total_variants += len(df_p)
         total_cutoff_entries += len(df_c)
         v_rate = len(df_p) / max(t_q, 0.001)
         print(f"  [{idx_q}/{len(sampled_queries)}] QID {qid}: Evaluated {len(df_p)} variants ({len(df_c)} cutoff entries) in {t_q:.2f}s ({v_rate:.1f} var/s)")
 
-        del df_p, df_c, df_u
+        del df_p, df_c, df_u, df_diag_u
         gc.collect()
 
     total_time = time.perf_counter() - t0_retrieval
@@ -892,7 +962,7 @@ def run_dataset_gate1_evaluation(
         rbos = []
         for q in sampled_queries:
             qid = str(q["query_id"])
-            _, _, s_shard, _ = get_shard_paths(shards_dir, dataset, qid)
+            _, _, s_shard, _, _ = get_shard_paths(shards_dir, dataset, qid)
             if os.path.exists(s_shard):
                 df_s = pd.read_parquet(s_shard)
                 if "ppmi_recall500" in df_s.columns:
@@ -927,6 +997,14 @@ def run_dataset_gate1_evaluation(
         "total_cutoff_entries": total_cutoff_entries,
         "retrieval_time_sec": total_time,
         "fidelity_meta": fidelity_meta,
+        "input_hashes": input_hashes,
+        "index_manifest_sha256": index_manifest_file_sha256,
+        "sidecars_provenance": {
+            "bge": bge_sidecar.get("metadata", {}),
+            "ppmi": ppmi_sidecar.get("metadata", {}),
+            "acronym": acronym_sidecar.get("metadata", {}),
+            "lexical": lex_sidecar.get("metadata", {}),
+        },
     }
 
 
@@ -934,18 +1012,23 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
     """
     Streams individual query Parquet shards into a single master Parquet file
     using pyarrow.ParquetWriter with fail-closed schema and QID verification.
-    shard_type: 'audit', 'cutoff', or 'status'
+    shard_type: 'audit', 'cutoff', 'status', 'universe', or 'diag_universe'
     """
     if shard_type == "cutoff":
         all_files = sorted(glob.glob(os.path.join(shards_dir, "*_cutoff_entries.parquet")))
     elif shard_type == "status":
         all_files = sorted(glob.glob(os.path.join(shards_dir, "*_status.parquet")))
     elif shard_type == "universe":
-        all_files = sorted(glob.glob(os.path.join(shards_dir, "*_universe.parquet")))
+        all_files = sorted([
+            f for f in glob.glob(os.path.join(shards_dir, "*_universe.parquet"))
+            if not f.endswith("_diag_universe.parquet")
+        ])
+    elif shard_type == "diag_universe":
+        all_files = sorted(glob.glob(os.path.join(shards_dir, "*_diag_universe.parquet")))
     elif shard_type == "audit":
         all_files = sorted([
             f for f in glob.glob(os.path.join(shards_dir, "*.parquet"))
-            if not f.endswith("_cutoff_entries.parquet") and not f.endswith("_status.parquet") and not f.endswith("_universe.parquet")
+            if not f.endswith("_cutoff_entries.parquet") and not f.endswith("_status.parquet") and not f.endswith("_universe.parquet") and not f.endswith("_diag_universe.parquet")
         ])
     else:
         raise ValueError(f"Unknown shard_type: {shard_type}")
@@ -955,7 +1038,7 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
         return
 
     # Check for expected QIDs
-    if expected_qids is not None and shard_type in ("status", "universe", "audit"):
+    if expected_qids is not None and shard_type in ("status", "universe", "diag_universe", "audit"):
         if shard_type == "status":
             st_dfs = [pd.read_parquet(f) for f in all_files]
             assembled_qids = set(pd.concat(st_dfs, ignore_index=True)["qid"].astype(str))
@@ -1024,6 +1107,7 @@ def parse_args():
     parser.add_argument("--clean-output", action="store_true", help="Clean output directory if it already exists")
     parser.add_argument("--no-resume", action="store_true", help="Disable auto-resumption")
     parser.add_argument("--measure-fidelity", action="store_true", help="Measure PPMI sidecar fidelity vs live PPMI")
+    parser.add_argument("--force-rebuild-sidecars", action="store_true", help="Force rebuild all sidecars before running evaluation")
     parser.add_argument("--bge-model", type=str, default="BAAI/bge-small-en-v1.5", help="BGE model name")
     parser.add_argument("--config-hash", type=str, default="gate1_core_dev_v1", help="Configuration hash")
     parser.add_argument("--qids-manifest", type=str, default=None, help="Name of query manifest to use from frozen config (e.g. micro_smoke_qids, probe_40_qids, dev_200_qids)")
@@ -1065,7 +1149,8 @@ def main():
             raw_bytes = f.read()
             config_hash = hashlib.sha256(raw_bytes).hexdigest()
         frozen_config = yaml.safe_load(raw_bytes.decode("utf-8"))
-        print(f"Loaded frozen configuration from {args.frozen_config_path} (SHA-256: {config_hash[:12]}...)")
+        validate_gate1_config(frozen_config)
+        print(f"Loaded and validated frozen configuration from {args.frozen_config_path} (SHA-256: {config_hash[:12]}...)")
         
         # Enforce frozen parameters
         if "weights" in frozen_config:
@@ -1086,14 +1171,42 @@ def main():
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
+
+    # Force rebuild sidecars if requested
+    if args.force_rebuild_sidecars:
+        print("\n[ForceRebuild] Rebuilding sidecars for all datasets before evaluation...")
+        sidecar_mgr = Gate1SidecarManager(config=frozen_config)
+        from sentence_transformers import SentenceTransformer
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        enc_temp = SentenceTransformer(args.bge_model, device=device)
+        for ds in datasets:
+            safe_ds = ds.lower().replace("-", "_")
+            pool_path = f"data/cache/canonical_pools/{safe_ds}_canonical_pool.json"
+            if not os.path.exists(pool_path):
+                raise FileNotFoundError(f"Canonical pool missing for {ds}: {pool_path}")
+            with open(pool_path, "r", encoding="utf-8") as f:
+                pool_terms = json.load(f)["terms"]
+            idx_path = f"data/cache/terrier_indices/{safe_ds}_default/data.properties"
+            idx_temp = pt.IndexFactory.of(os.path.abspath(idx_path))
+            num_docs = idx_temp.getCollectionStatistics().getNumberOfDocuments()
+            sidecar_mgr.build_or_load_bge_sidecar(ds, pool_terms, num_docs=num_docs, encoder=enc_temp, device=device, force_rebuild=True)
+            top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
+            sidecar_mgr.build_or_load_bounded_ppmi_sidecar(ds, idx_temp, pool_terms, num_docs=num_docs, top_m=top_m, force_rebuild=True)
+            sidecar_mgr.build_or_load_acronym_rescue_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
+            sidecar_mgr.build_or_load_sparse_lexical_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
+            del idx_temp
+        del enc_temp
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print("[ForceRebuild] Completed sidecar rebuilds successfully.\n")
+
     # Load Phase 1 candidate audit if available
     phase1_audit_df = None
     if args.phase1_audit and os.path.exists(args.phase1_audit):
         print(f"Loading Phase 1 candidate audit from {args.phase1_audit}...")
         phase1_audit_df = pd.read_parquet(args.phase1_audit)
         print(f"Loaded {len(phase1_audit_df):,} Phase 1 audit rows.")
-
-    datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
 
     # Initialize encoder once on device
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1119,6 +1232,7 @@ def main():
             measure_fidelity=args.measure_fidelity,
             bge_model=args.bge_model,
             qids_manifest=args.qids_manifest,
+            force_rebuild_sidecars=args.force_rebuild_sidecars,
         )
         meta_summaries.append(ds_meta)
 
@@ -1141,16 +1255,24 @@ def main():
     master_cutoff = os.path.join(args.output_dir, "gate1_cutoff_entries.parquet")
     master_status = os.path.join(args.output_dir, "query_status.parquet")
     master_universe = os.path.join(args.output_dir, "reference_universe.parquet")
+    master_diag_universe = os.path.join(args.output_dir, "diagnostic_universe.parquet")
 
     assemble_shards_to_master(shards_dir, shard_type="audit", output_path=master_parent, expected_qids=expected_qids_all if expected_qids_all else None)
     assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
     assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=expected_qids_all if expected_qids_all else None)
     assemble_shards_to_master(shards_dir, shard_type="universe", output_path=master_universe, expected_qids=expected_qids_all if expected_qids_all else None)
+    if args.measure_fidelity:
+        assemble_shards_to_master(shards_dir, shard_type="diag_universe", output_path=master_diag_universe, expected_qids=expected_qids_all if expected_qids_all else None)
 
     print("\nValidating action coverage between candidate audit and reference universe...")
     df_audit_master = pd.read_parquet(master_parent)
-    df_univ_master = pd.read_parquet(master_universe)
-    validate_action_coverage(df_audit_master, df_univ_master, weights)
+    if args.measure_fidelity and os.path.exists(master_diag_universe):
+        df_target_univ = pd.read_parquet(master_diag_universe)
+        print("Validating against diagnostic universe (measure_fidelity=True)...")
+    else:
+        df_target_univ = pd.read_parquet(master_universe)
+        print("Validating against operational reference universe...")
+    validate_action_coverage(df_audit_master, df_target_univ, weights)
     print("Action coverage verification PASSED (exact Cartesian set equality).")
 
     import platform

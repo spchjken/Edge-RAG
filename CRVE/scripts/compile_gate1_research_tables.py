@@ -45,17 +45,22 @@ DEV_DATASETS = ["scifact", "bright_aops", "nfcorpus", "trec_covid"]
 EXT_DATASETS = ["fiqa", "scidocs", "arguana", "bright_stackoverflow"]
 ALL_DATASETS = DEV_DATASETS + EXT_DATASETS
 
-CHANNELS = [
+OPERATIONAL_CHANNELS = [
     ("WholeQueryBGE", "wq_rank"),
     ("AnchorBGEFiltered", "anchor_filt_rank"),
     ("AnchorBGEAll", "anchor_all_rank"),
     ("PPMISidecar", "ppmi_sidecar_rank"),
-    ("LivePPMI", "live_ppmi_rank"),
     ("SparseLexicalContextProfiles", "sparse_lex_rank"),
     ("AcronymDefinitionRescue", "acronym_rank"),
     ("RRF_Core3", "rrf_core3_rank"),
     ("RRF_Extended", "rrf_ext_rank"),
 ]
+
+DIAGNOSTIC_CHANNELS = [
+    ("LivePPMI", "live_ppmi_rank"),
+    ("PPMISidecar", "ppmi_sidecar_rank"),
+]
+
 
 
 def bootstrap_metric_ci(
@@ -93,6 +98,7 @@ class Gate1TableCompiler:
         cutoff_parquet_path: str,
         output_dir: str,
         universe_parquet_path: Optional[str] = None,
+        diag_universe_parquet_path: Optional[str] = None,
         run_manifest_path: Optional[str] = None,
         frozen_config_path: Optional[str] = None,
         delta: float = DEFAULT_DELTA,
@@ -104,6 +110,7 @@ class Gate1TableCompiler:
         self.cutoff_path = cutoff_parquet_path
         self.output_dir = output_dir
         self.universe_path = universe_parquet_path
+        self.diag_universe_path = diag_universe_parquet_path
         self.run_manifest_path = run_manifest_path
         self.frozen_config_path = frozen_config_path
         self.delta = delta
@@ -138,6 +145,18 @@ class Gate1TableCompiler:
             print(f"Loading reference universe from {self.universe_path}...")
             self.df_universe = pd.read_parquet(self.universe_path)
             print(f"Loaded {len(self.df_universe):,} reference universe rows.")
+
+        # Auto-detect diagnostic universe parquet if not explicitly passed
+        if not self.diag_universe_path or not os.path.exists(self.diag_universe_path):
+            candidate_diag = os.path.join(self.output_dir, "diagnostic_universe.parquet")
+            if os.path.exists(candidate_diag):
+                self.diag_universe_path = candidate_diag
+
+        self.df_diag_universe = None
+        if self.diag_universe_path and os.path.exists(self.diag_universe_path):
+            print(f"Loading diagnostic universe from {self.diag_universe_path}...")
+            self.df_diag_universe = pd.read_parquet(self.diag_universe_path)
+            print(f"Loaded {len(self.df_diag_universe):,} diagnostic universe rows.")
 
         # Auto-detect run manifest if not explicitly passed
         if not self.run_manifest_path or not os.path.exists(self.run_manifest_path):
@@ -177,7 +196,7 @@ class Gate1TableCompiler:
                 "delta_r100": float(getattr(row, "delta_r100", 0.0)),
                 "delta_r200": float(getattr(row, "delta_r200", 0.0)),
                 "delta_r500": float(getattr(row, "delta_r500", 0.0)),
-                "delta_r1000": float(row.delta_r1000),
+                "delta_r1000": float(getattr(row, "delta_r1000", 0.0)),
                 "net_rel_docs_k10": int(getattr(row, "net_rel_docs_k10", 0)),
                 "net_rel_docs_k100": int(getattr(row, "net_rel_docs_k100", 0)),
                 "net_rel_docs_k200": int(getattr(row, "net_rel_docs_k200", 0)),
@@ -277,13 +296,21 @@ class Gate1TableCompiler:
         df_q1 = pd.DataFrame(rows)
         return df_q1, macro_accum
 
-    def compile_q2_single_channel_comparison(self, budget_l: int = 200) -> pd.DataFrame:
+    def compile_q2_single_channel_comparison(
+        self,
+        budget_l: int = 200,
+        channels: Optional[List[Tuple[str, str]]] = None,
+        use_diag_universe: bool = False,
+    ) -> pd.DataFrame:
         """Q2: Channel Proposal Efficiency across channels at budget L, rendering nan% as N/A."""
+        if channels is None:
+            channels = OPERATIONAL_CHANNELS
+
         def fmt_pct(val: float) -> str:
             return f"{val * 100:.1f}%" if not np.isnan(val) else "N/A"
 
         rows = []
-        for ch_name, rank_col in CHANNELS:
+        for ch_name, rank_col in channels:
             corpus_recalls = []
             corpus_precisions = []
             corpus_bor = []
@@ -304,6 +331,11 @@ class Gate1TableCompiler:
 
                 for qid in qids:
                     term_acts = self.query_term_actions[(ds, qid)]
+                    op_cands = None
+                    if not use_diag_universe and self.df_universe is not None:
+                        op_cands = set(self.df_universe[(self.df_universe["dataset"] == ds) & (self.df_universe["qid"] == qid)]["candidate_term"])
+                        term_acts = {t: acts for t, acts in term_acts.items() if t in op_cands}
+
                     proposed = []
                     for t, acts in term_acts.items():
                         r = acts[0].get(rank_col)
@@ -335,6 +367,9 @@ class Gate1TableCompiler:
                             (self.df_cutoff["qid"] == qid) & 
                             (self.df_cutoff["cutoff"] == 1000)
                         ]
+                        if op_cands is not None:
+                            c_sub = c_sub[c_sub["candidate_term"].isin(op_cands)]
+
                         if not c_sub.empty:
                             total_raw_docs = set(c_sub[c_sub["raw_entry"] == True]["docid"])
                             total_safe_docs = set(c_sub[c_sub["recall_safe_entry"] == True]["docid"])
@@ -377,18 +412,117 @@ class Gate1TableCompiler:
 
         return pd.DataFrame(rows)
 
+    def enforce_operational_loss_gate(self, budget_l: int = 200) -> Dict[str, Any]:
+        """
+        Evaluates operational loss criteria against diagnostic universe R_q^diag:
+        - Delta-nDCG@10 loss <= 0.02
+        - RawDocOppRecall@1000 loss <= 0.02
+        against LivePPMI evaluated on the 40-query probe using the diagnostic ceiling and denominator.
+        """
+        cb_thresholds = {}
+        if self.frozen_config_path and os.path.exists(self.frozen_config_path):
+            import yaml
+            with open(self.frozen_config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+            cb_thresholds = cfg.get("checkpoint_b_thresholds", {})
+
+        max_oracle_loss_macro = float(cb_thresholds.get("max_oracle_loss_corpus_macro", 0.02))
+        max_oracle_loss_per_corpus = float(cb_thresholds.get("max_oracle_loss_per_corpus", 0.02))
+        max_doc_loss_macro = float(cb_thresholds.get("max_doc_opp_recall_loss_corpus_macro", 0.02))
+        max_doc_loss_per_corpus = float(cb_thresholds.get("max_doc_opp_recall_loss_per_corpus", 0.02))
+
+        per_corpus_results = {}
+        corpus_ndcg_losses = []
+        corpus_doc_losses = []
+
+        for ds in self.available_datasets:
+            qids = sorted(list({k[1] for k in self.query_term_actions.keys() if k[0] == ds}))
+            q_ndcg_losses = []
+            q_doc_losses = []
+
+            for qid in qids:
+                term_acts = self.query_term_actions[(ds, qid)]
+                # Diagnostic ceiling from R_q^diag
+                g_gains = {t: compute_safe_ranking_gain(acts, tau=TAU) for t, acts in term_acts.items()}
+
+                # Top-L for LivePPMI and PPMISidecar
+                live_terms = [t for t, acts in term_acts.items() if acts[0].get("live_ppmi_rank") and not np.isnan(acts[0]["live_ppmi_rank"]) and 1 <= int(acts[0]["live_ppmi_rank"]) <= budget_l]
+                sidecar_terms = [t for t, acts in term_acts.items() if acts[0].get("ppmi_sidecar_rank") and not np.isnan(acts[0]["ppmi_sidecar_rank"]) and 1 <= int(acts[0]["ppmi_sidecar_rank"]) <= budget_l]
+
+                g_live = max([g_gains[t] for t in live_terms], default=0.0)
+                g_sidecar = max([g_gains[t] for t in sidecar_terms], default=0.0)
+                ndcg_loss = max(0.0, g_live - g_sidecar)
+                q_ndcg_losses.append(ndcg_loss)
+
+                # RawDocOppRecall@1000 from df_cutoff
+                doc_loss = 0.0
+                if self.df_cutoff is not None and not self.df_cutoff.empty:
+                    c_sub = self.df_cutoff[
+                        (self.df_cutoff["dataset"] == ds) &
+                        (self.df_cutoff["qid"] == qid) &
+                        (self.df_cutoff["cutoff"] == 1000) &
+                        (self.df_cutoff["raw_entry"] == True)
+                    ]
+                    if not c_sub.empty:
+                        total_docs = set(c_sub["docid"])
+                        live_docs = set(c_sub[c_sub["candidate_term"].isin(set(live_terms))]["docid"])
+                        sidecar_docs = set(c_sub[c_sub["candidate_term"].isin(set(sidecar_terms))]["docid"])
+
+                        rec_live = len(live_docs) / len(total_docs) if total_docs else 1.0
+                        rec_sidecar = len(sidecar_docs) / len(total_docs) if total_docs else 1.0
+                        doc_loss = max(0.0, rec_live - rec_sidecar)
+                q_doc_losses.append(doc_loss)
+
+            mean_ndcg_loss = float(np.mean(q_ndcg_losses)) if q_ndcg_losses else 0.0
+            mean_doc_loss = float(np.mean(q_doc_losses)) if q_doc_losses else 0.0
+            corpus_ndcg_losses.append(mean_ndcg_loss)
+            corpus_doc_losses.append(mean_doc_loss)
+
+            per_corpus_results[ds] = {
+                "queries": len(qids),
+                "mean_delta_ndcg10_loss": round(mean_ndcg_loss, 4),
+                "mean_raw_doc_opp_recall1000_loss": round(mean_doc_loss, 4),
+                "ndcg_loss_passed": mean_ndcg_loss <= max_oracle_loss_per_corpus,
+                "doc_loss_passed": mean_doc_loss <= max_doc_loss_per_corpus,
+            }
+
+        macro_ndcg_loss = float(np.mean(corpus_ndcg_losses)) if corpus_ndcg_losses else 0.0
+        macro_doc_loss = float(np.mean(corpus_doc_losses)) if corpus_doc_losses else 0.0
+
+        all_passed = (
+            macro_ndcg_loss <= max_oracle_loss_macro and
+            macro_doc_loss <= max_doc_loss_macro and
+            all(r["ndcg_loss_passed"] and r["doc_loss_passed"] for r in per_corpus_results.values())
+        )
+
+        return {
+            "budget_l": budget_l,
+            "corpus_macro_delta_ndcg10_loss": round(macro_ndcg_loss, 4),
+            "corpus_macro_raw_doc_opp_recall1000_loss": round(macro_doc_loss, 4),
+            "max_oracle_loss_corpus_macro_threshold": max_oracle_loss_macro,
+            "max_doc_opp_recall_loss_corpus_macro_threshold": max_doc_loss_macro,
+            "per_corpus_results": per_corpus_results,
+            "gate_passed": all_passed,
+        }
+
     def compile_label_coverage_table(self) -> pd.DataFrame:
         """
         Emits 100% label-coverage audit across all tested methods and candidate terms.
         Enforces exact Cartesian set equality against reference_universe x weights without clamping.
         """
         rows = []
+        target_univ = (
+            self.df_diag_universe
+            if (self.df_diag_universe is not None and "live_ppmi_rank" in self.df_audit.columns and self.df_audit["live_ppmi_rank"].notna().any())
+            else self.df_universe
+        )
+
         for ds in self.available_datasets:
             sub = self.df_audit[self.df_audit["dataset"] == ds]
             num_queries = sub["qid"].nunique()
 
-            if self.df_universe is not None:
-                sub_univ = self.df_universe[self.df_universe["dataset"] == ds]
+            if target_univ is not None:
+                sub_univ = target_univ[target_univ["dataset"] == ds]
                 num_q_cand_pairs = len(sub_univ.drop_duplicates(subset=["qid", "candidate_term"]))
                 
                 expected_triples = set()
@@ -449,11 +583,29 @@ class Gate1TableCompiler:
         df_q1.to_csv(t1_path, index=False)
         print(f"Saved Table 1 -> {t1_path}")
 
-        print("\n--- Compiling Table 2 (Channel Comparison across channels) ---")
-        df_q2 = self.compile_q2_single_channel_comparison(budget_l=200)
+        print("\n--- Compiling Table 2 (Operational Channel Comparison at L=200) ---")
+        df_q2 = self.compile_q2_single_channel_comparison(budget_l=200, channels=OPERATIONAL_CHANNELS)
         t2_path = os.path.join(self.output_dir, "table2_channel_comparison.csv")
         df_q2.to_csv(t2_path, index=False)
         print(f"Saved Table 2 -> {t2_path}")
+
+        df_q2_diag = None
+        loss_gate_results = None
+        has_live_ppmi = "live_ppmi_rank" in self.df_audit.columns and self.df_audit["live_ppmi_rank"].notna().any()
+        if has_live_ppmi:
+            print("\n--- Compiling Table 2-Diag (LivePPMI Diagnostic Comparator) ---")
+            df_q2_diag = self.compile_q2_single_channel_comparison(budget_l=200, channels=DIAGNOSTIC_CHANNELS, use_diag_universe=True)
+            t2_diag_path = os.path.join(self.output_dir, "table2_diag_live_ppmi.csv")
+            df_q2_diag.to_csv(t2_diag_path, index=False)
+            print(f"Saved Table 2-Diag -> {t2_diag_path}")
+
+            print("\n--- Enforcing Checkpoint B Operational Loss Gate ---")
+            loss_gate_results = self.enforce_operational_loss_gate(budget_l=200)
+            loss_gate_path = os.path.join(self.output_dir, "checkpoint_b_loss_gate.json")
+            with open(loss_gate_path, "w", encoding="utf-8") as f:
+                json.dump(loss_gate_results, f, indent=2)
+            print(f"Saved Checkpoint B Loss Gate -> {loss_gate_path}")
+            print(f"Loss Gate Status: {'PASSED' if loss_gate_results['gate_passed'] else 'FAILED'}")
 
         print("\n--- Compiling Label Coverage Table ---")
         df_cov = self.compile_label_coverage_table()
@@ -468,6 +620,26 @@ class Gate1TableCompiler:
         peak_rss = self.run_manifest.get("peak_rss_gib", "N/A") if self.run_manifest else "N/A"
         peak_vram = self.run_manifest.get("peak_cuda_vram_mib", "N/A") if self.run_manifest else "N/A"
         cfg_hash = self.run_manifest.get("config_hash", "N/A") if self.run_manifest else "N/A"
+
+        diag_section = ""
+        if df_q2_diag is not None:
+            diag_section = f"""---
+
+## 2b. Table 2-Diag: LivePPMI Diagnostic Comparator ($L=200$)
+
+{df_q2_diag.to_markdown(index=False)}
+"""
+        loss_section = ""
+        if loss_gate_results is not None:
+            gate_status_str = "**PASSED**" if loss_gate_results["gate_passed"] else "**FAILED**"
+            loss_section = f"""---
+
+## 2c. Checkpoint B Operational Loss Gate Evaluation
+
+**Gate Status:** {gate_status_str}  
+- **Corpus-Macro $\\Delta$nDCG@10 Loss:** `{loss_gate_results['corpus_macro_delta_ndcg10_loss']:.4f}` (threshold: `{loss_gate_results['max_oracle_loss_corpus_macro_threshold']}`)  
+- **Corpus-Macro RawDocOppRecall@1000 Loss:** `{loss_gate_results['corpus_macro_raw_doc_opp_recall1000_loss']:.4f}` (threshold: `{loss_gate_results['max_doc_opp_recall_loss_corpus_macro_threshold']}`)  
+"""
 
         report_md = f"""# Phase 2 Gate 1 Candidate Selection Report
 
@@ -488,10 +660,12 @@ class Gate1TableCompiler:
 
 ---
 
-## 2. Table 2: Channel Comparison at Deployable Cap ($L=200$)
+## 2. Table 2: Operational Channels Comparison at Deployable Cap ($L=200$)
 
 {df_q2.to_markdown(index=False)}
 
+{diag_section}
+{loss_section}
 ---
 
 ## 3. Table: 100% Counterfactual Label Coverage Verification
@@ -509,6 +683,7 @@ def main():
     parser.add_argument("--audit-parquet", type=str, default="results/gate1_selection/dev_corrected/gate1_candidate_audit.parquet")
     parser.add_argument("--cutoff-parquet", type=str, default="results/gate1_selection/dev_corrected/gate1_cutoff_entries.parquet")
     parser.add_argument("--universe-parquet", type=str, default=None, help="Path to reference_universe.parquet")
+    parser.add_argument("--diag-universe-parquet", type=str, default=None, help="Path to diagnostic_universe.parquet")
     parser.add_argument("--run-manifest", type=str, default=None, help="Path to run_manifest.json")
     parser.add_argument("--frozen-config-path", type=str, default=None, help="Path to gate1_phase2_1a.yaml")
     parser.add_argument("--output-dir", type=str, default="results/gate1_selection/dev_corrected")
@@ -523,6 +698,7 @@ def main():
         cutoff_parquet_path=args.cutoff_parquet,
         output_dir=args.output_dir,
         universe_parquet_path=args.universe_parquet,
+        diag_universe_parquet_path=args.diag_universe_parquet,
         run_manifest_path=args.run_manifest,
         frozen_config_path=args.frozen_config_path,
         delta=args.delta,

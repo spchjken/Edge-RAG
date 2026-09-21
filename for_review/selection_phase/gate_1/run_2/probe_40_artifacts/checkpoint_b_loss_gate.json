@@ -1,0 +1,38 @@
+{
+  "budget_l": 200,
+  "corpus_macro_delta_ndcg10_loss": 0.0072,
+  "corpus_macro_raw_doc_opp_recall1000_loss": 0.0186,
+  "max_oracle_loss_corpus_macro_threshold": 0.02,
+  "max_doc_opp_recall_loss_corpus_macro_threshold": 0.02,
+  "per_corpus_results": {
+    "bright_aops": {
+      "queries": 10,
+      "mean_delta_ndcg10_loss": 0.0018,
+      "mean_raw_doc_opp_recall1000_loss": 0.0,
+      "ndcg_loss_passed": true,
+      "doc_loss_passed": true
+    },
+    "nfcorpus": {
+      "queries": 10,
+      "mean_delta_ndcg10_loss": 0.0,
+      "mean_raw_doc_opp_recall1000_loss": 0.0,
+      "ndcg_loss_passed": true,
+      "doc_loss_passed": true
+    },
+    "scifact": {
+      "queries": 10,
+      "mean_delta_ndcg10_loss": 0.0,
+      "mean_raw_doc_opp_recall1000_loss": 0.0,
+      "ndcg_loss_passed": true,
+      "doc_loss_passed": true
+    },
+    "trec_covid": {
+      "queries": 10,
+      "mean_delta_ndcg10_loss": 0.027,
+      "mean_raw_doc_opp_recall1000_loss": 0.0742,
+      "ndcg_loss_passed": false,
+      "doc_loss_passed": false
+    }
+  },
+  "gate_passed": false
+}

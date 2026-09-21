@@ -107,6 +107,8 @@ checkpoint_b_thresholds:
   ppmi_min_rbo: 0.85
   max_oracle_loss_corpus_macro: 0.02
   max_oracle_loss_per_corpus: 0.02
+  max_doc_opp_recall_loss_corpus_macro: 0.02
+  max_doc_opp_recall_loss_per_corpus: 0.02
   max_p95_lookup_ms: 20.0
   max_rss_gib: 12.0
 query_manifests:

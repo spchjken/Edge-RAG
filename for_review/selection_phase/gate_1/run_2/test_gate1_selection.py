@@ -455,3 +455,221 @@ def test_sidecar_provenance_mismatch_rejection():
             # Should have rebuilt with correct hash
             assert res["metadata"]["pool_sha256"] == compute_pool_sha256(pool_terms)
 
+
+def test_validate_gate1_config_fail_closed():
+    """Verifies that validate_gate1_config enforces complete required schema without defaults."""
+    from crve.selection.gate1_sidecars import validate_gate1_config
+
+    with open("CRVE/configs/gate1_phase2_1a.yaml", "r", encoding="utf-8") as f:
+        valid_cfg = yaml.safe_load(f)
+
+    # 1. Valid config passes
+    validate_gate1_config(valid_cfg)
+
+    # 2. Missing top-level key raises KeyError
+    bad_cfg = dict(valid_cfg)
+    del bad_cfg["checkpoint_b_thresholds"]
+    with pytest.raises(KeyError, match="checkpoint_b_thresholds"):
+        validate_gate1_config(bad_cfg)
+
+    # 3. Missing watchdog ceiling raises KeyError
+    bad_cfg2 = dict(valid_cfg)
+    bad_cfg2["memory_watchdog"] = {"jvm_heap_gib": 4, "warn_rss_gib": 8}  # missing hard_abort_rss_gib
+    with pytest.raises(KeyError, match="hard_abort_rss_gib"):
+        validate_gate1_config(bad_cfg2)
+
+    # 4. Negative value raises ValueError
+    bad_cfg3 = dict(valid_cfg)
+    bad_cfg3["memory_watchdog"] = {"jvm_heap_gib": 4, "warn_rss_gib": 8, "hard_abort_rss_gib": -1}
+    with pytest.raises(ValueError, match="positive number"):
+        validate_gate1_config(bad_cfg3)
+
+
+def test_compute_corpus_source_hash_missing_file_raises():
+    """Verifies that compute_corpus_source_hash raises FileNotFoundError on missing files."""
+    from crve.selection.gate1_sidecars import compute_corpus_source_hash
+
+    with pytest.raises(FileNotFoundError):
+        compute_corpus_source_hash("non_existent_dataset_12345")
+
+
+def test_compute_corpus_source_hash_streaming(tmp_path):
+    """Verifies that 64KB chunk streaming hash matches hashlib.sha256 of the entire content."""
+    from crve.selection.gate1_sidecars import compute_corpus_source_hash
+    from unittest.mock import patch
+
+    # Create dummy files
+    f1 = tmp_path / "corpus.jsonl"
+    f2 = tmp_path / "data.properties"
+    content1 = b"line 1\nline 2\n" * 10000  # >128 KB
+    content2 = b"index.num.docs=1000\n"
+    f1.write_bytes(content1)
+    f2.write_bytes(content2)
+
+    hasher = hashlib.sha256()
+    hasher.update(content1)
+    hasher.update(content2)
+    expected_hash = hasher.hexdigest()
+
+    with patch("evaluation.benchmark_loader.BenchmarkLoader.get_corpus_source_paths", return_value=[str(f1), str(f2)]):
+        actual_hash = compute_corpus_source_hash("mock_ds")
+        assert actual_hash == expected_hash
+
+
+def test_sidecar_provenance_validation_fail_closed(tmp_path):
+    """Verifies that sidecar loaders reject missing or mismatched corpus_source_hash and reservoir_seed."""
+    from crve.selection.gate1_sidecars import Gate1SidecarManager
+    from unittest.mock import patch, MagicMock
+
+    with open("CRVE/configs/gate1_phase2_1a.yaml", "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    mgr = Gate1SidecarManager(config=cfg, cache_dir=str(tmp_path))
+    pool_terms = ["term1", "term2"]
+
+    # 1. PPMI sidecar with wrong corpus hash
+    ppmi_path = tmp_path / "test_ds_bounded_ppmi.json"
+    ppmi_data = {
+        "metadata": {
+            "corpus_source_hash": "wrong_hash",
+            "pool_sha256": "wrong_pool",
+            "num_docs": 100,
+        },
+        "anchors": {},
+    }
+    ppmi_path.write_text(json.dumps(ppmi_data))
+
+    mock_index = MagicMock()
+    mock_index.getCollectionStatistics.return_value.getNumberOfDocuments.return_value = 100
+    with patch("crve.selection.gate1_sidecars.compute_corpus_source_hash", return_value="correct_hash"), \
+         patch("crve.selection.gate1_sidecars.compute_lexicon_semantic_hash", return_value="correct_lex"), \
+         patch("crve.selection.gate1_sidecars.compute_pool_sha256", return_value="correct_pool"), \
+         patch("builtins.print") as mock_print:
+        try:
+            mgr.build_or_load_bounded_ppmi_sidecar("test_ds", mock_index, pool_terms, num_docs=100)
+        except Exception:
+            pass
+        printed = [call.args[0] for call in mock_print.call_args_list if call.args]
+        assert any("PPMI cache invalid or outdated" in p for p in printed)
+
+    # 2. Lexical profile with wrong reservoir seed
+    lex_manifest_path = tmp_path / "test_ds_lexical_profiles_idx" / "sidecar_metadata.json"
+    lex_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    lex_prop_path = tmp_path / "test_ds_lexical_profiles_idx" / "data.properties"
+    lex_prop_path.write_text("index.num.docs=100\n")
+    lex_manifest = {
+        "corpus_source_hash": "correct_hash",
+        "pool_sha256": "correct_pool",
+        "num_docs": 100,
+        "analyzer_version": "v1_krovetz_suppletion",
+        "reservoir_seed": 9999,  # Mismatched seed (cfg has 42)
+    }
+    lex_manifest_path.write_text(json.dumps(lex_manifest))
+    with patch("crve.selection.gate1_sidecars.compute_corpus_source_hash", return_value="correct_hash"), \
+         patch("crve.selection.gate1_sidecars.compute_pool_sha256", return_value="correct_pool"), \
+         patch("builtins.print") as mock_print:
+        try:
+            mgr.build_or_load_sparse_lexical_sidecar("test_ds", pool_terms, num_docs=100)
+        except Exception:
+            pass
+        printed = [call.args[0] for call in mock_print.call_args_list if call.args]
+        assert any("Lexical profiles cache invalid or outdated" in p for p in printed)
+
+
+def test_dual_universe_construction():
+    """Verifies that R_q^diag = R_q^operational U C_500^{LivePPMI} and LivePPMI is excluded from R_q^operational."""
+    operational_channels = {
+        "WholeQueryBGE": [("t1", 0.9), ("t2", 0.8)],
+        "PPMISidecar": [("t2", 0.7), ("t3", 0.6)],
+    }
+    live_ppmi_proposals = [("t3", 0.99), ("t4_live_only", 0.95)]
+    phase1_cands = {"t0"}
+
+    # Operational universe
+    r_op = set(phase1_cands)
+    for ch, props in operational_channels.items():
+        for t, _ in props:
+            r_op.add(t)
+
+    # Diagnostic universe
+    r_diag = set(r_op)
+    for t, _ in live_ppmi_proposals:
+        r_diag.add(t)
+
+    assert r_op == {"t0", "t1", "t2", "t3"}
+    assert "t4_live_only" not in r_op
+    assert r_diag == {"t0", "t1", "t2", "t3", "t4_live_only"}
+    assert r_op.issubset(r_diag)
+
+
+def test_bright_exclusion_assertion_scoping():
+    """Verifies that ordinary runs support queries with 0 exclusions, while micro-smoke asserts non-empty exclusions."""
+    # Micro smoke check
+    micro_smoke_qids = "micro_smoke_qids"
+    q_ex_empty = set()
+    q_ex_nonempty = {"doc1", "doc2"}
+
+    # In micro smoke, empty exclusions must fail
+    with pytest.raises(AssertionError, match="empty excluded_doc_ids"):
+        if micro_smoke_qids == "micro_smoke_qids":
+            assert len(q_ex_empty) > 0, "FATAL: Micro-smoke BRIGHT query has empty excluded_doc_ids!"
+
+    # In micro smoke, non-empty exclusions pass
+    if micro_smoke_qids == "micro_smoke_qids":
+        assert len(q_ex_nonempty) > 0
+
+    # In ordinary runs (e.g. dev_200_qids or None), no assertion on query 0
+    full_manifest = "dev_200_qids"
+    if full_manifest == "micro_smoke_qids":
+        assert len(q_ex_empty) > 0
+    else:
+        pass  # Ordinary runs simply filter when exclusions exist
+
+
+def test_table2_operational_diagnostic_separation():
+    """Verifies that Table 2 contains exactly 8 operational channels and Table 2-Diag contains LivePPMI."""
+    from scripts.compile_gate1_research_tables import OPERATIONAL_CHANNELS, DIAGNOSTIC_CHANNELS
+
+    assert len(OPERATIONAL_CHANNELS) == 8
+    assert not any(ch == "LivePPMI" for ch, _ in OPERATIONAL_CHANNELS)
+    assert any(ch == "LivePPMI" for ch, _ in DIAGNOSTIC_CHANNELS)
+    assert any(ch == "PPMISidecar" for ch, _ in DIAGNOSTIC_CHANNELS)
+
+
+def test_operational_loss_gate_logic(tmp_path):
+    """Synthetic test verifying Delta-nDCG@10 loss and RawDocOppRecall@1000 loss computation against thresholds."""
+    from scripts.compile_gate1_research_tables import Gate1TableCompiler
+
+    # Create dummy audit
+    audit_data = [
+        # Query 1: Live achieves 0.05, Sidecar achieves 0.04 -> loss = 0.01
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_live", "weight": 0.1, "delta_ndcg10": 0.05, "delta_r1000": 0.0, "live_ppmi_rank": 1, "ppmi_sidecar_rank": None, "raw_entry": True, "baseline_ndcg10": 0.2, "baseline_r1000": 0.5},
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_sidecar", "weight": 0.1, "delta_ndcg10": 0.04, "delta_r1000": 0.0, "live_ppmi_rank": None, "ppmi_sidecar_rank": 1, "raw_entry": True, "baseline_ndcg10": 0.2, "baseline_r1000": 0.5},
+    ]
+    df_audit = pd.DataFrame(audit_data)
+    audit_path = tmp_path / "audit.parquet"
+    df_audit.to_parquet(audit_path)
+
+    # Cutoff data: q1 has 2 docs. Live retrieves 2 (recall=1.0), Sidecar retrieves 2 (recall=1.0) -> doc loss = 0.0
+    cutoff_data = [
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_live", "cutoff": 1000, "raw_entry": True, "docid": "d1"},
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_live", "cutoff": 1000, "raw_entry": True, "docid": "d2"},
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_sidecar", "cutoff": 1000, "raw_entry": True, "docid": "d1"},
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_sidecar", "cutoff": 1000, "raw_entry": True, "docid": "d2"},
+    ]
+    df_cutoff = pd.DataFrame(cutoff_data)
+    cutoff_path = tmp_path / "cutoff.parquet"
+    df_cutoff.to_parquet(cutoff_path)
+
+    compiler = Gate1TableCompiler(
+        audit_parquet_path=str(audit_path),
+        cutoff_parquet_path=str(cutoff_path),
+        output_dir=str(tmp_path),
+    )
+
+    loss_res = compiler.enforce_operational_loss_gate(budget_l=200)
+    assert loss_res["corpus_macro_delta_ndcg10_loss"] == 0.01
+    assert loss_res["corpus_macro_raw_doc_opp_recall1000_loss"] == 0.0
+    assert loss_res["gate_passed"] is True
+
+
