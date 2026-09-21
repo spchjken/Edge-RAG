@@ -1096,7 +1096,8 @@ def assemble_shards_to_master(
                         continue
                 if clear_diagnostic_cols and "live_ppmi_rank" in df_shard.columns:
                     df_shard["live_ppmi_rank"] = np.nan
-                table = pa.Table.from_pandas(df_shard, schema=unified_schema if unified_schema else None)
+                df_shard.reset_index(drop=True, inplace=True)
+                table = pa.Table.from_pandas(df_shard, schema=unified_schema if unified_schema else None, preserve_index=False)
 
             if unified_schema is None:
                 unified_schema = table.schema
@@ -1335,7 +1336,8 @@ def main():
         # Assemble Stage 1 Probe artifacts
         shards_dir = os.path.join(args.output_dir, "shards")
         probe_audit_path = os.path.join(args.output_dir, "diagnostic_candidate_audit.parquet")
-        probe_cutoff_path = os.path.join(args.output_dir, "probe_cutoff_entries.parquet")
+        probe_cutoff_path = os.path.join(args.output_dir, "diagnostic_cutoff_entries.parquet")
+        probe_cutoff_legacy_path = os.path.join(args.output_dir, "probe_cutoff_entries.parquet")
         probe_status_path = os.path.join(args.output_dir, "probe_query_status.parquet")
         probe_universe_path = os.path.join(args.output_dir, "probe_reference_universe.parquet")
         probe_diag_universe_path = os.path.join(args.output_dir, "diagnostic_universe.parquet")
@@ -1343,6 +1345,7 @@ def main():
         print("\nAssembling Stage 1 probe shards for Checkpoint B verification...")
         assemble_shards_to_master(shards_dir, "audit", probe_audit_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
         assemble_shards_to_master(shards_dir, "cutoff", probe_cutoff_path, filter_qids=all_probe_qids)
+        assemble_shards_to_master(shards_dir, "cutoff", probe_cutoff_legacy_path, filter_qids=all_probe_qids)
         assemble_shards_to_master(shards_dir, "status", probe_status_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
         assemble_shards_to_master(shards_dir, "universe", probe_universe_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
         assemble_shards_to_master(shards_dir, "diag_universe", probe_diag_universe_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
@@ -1362,11 +1365,11 @@ def main():
         print("=" * 70)
         from compile_gate1_research_tables import Gate1TableCompiler
         probe_compiler = Gate1TableCompiler(
-            audit_path=probe_audit_path,
-            cutoff_path=probe_cutoff_path,
-            universe_path=probe_universe_path,
-            diag_universe_path=probe_diag_universe_path,
+            audit_parquet_path=probe_audit_path,
+            cutoff_parquet_path=probe_cutoff_path,
             output_dir=os.path.join(args.output_dir, "probe_artifacts"),
+            universe_parquet_path=probe_universe_path,
+            diag_universe_parquet_path=probe_diag_universe_path,
             frozen_config_path=args.frozen_config_path,
         )
         loss_gate_results = probe_compiler.enforce_operational_loss_gate(budget_l=200)
@@ -1448,7 +1451,12 @@ def main():
             filter_to_universe_df=df_master_univ,
             clear_diagnostic_cols=True,
         )
-        assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
+        assemble_shards_to_master(
+            shards_dir,
+            shard_type="cutoff",
+            output_path=master_cutoff,
+            filter_to_universe_df=df_master_univ,
+        )
         assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=all_200_qids)
 
         print("\nValidating action coverage between 200-query candidate audit and reference universe...")
