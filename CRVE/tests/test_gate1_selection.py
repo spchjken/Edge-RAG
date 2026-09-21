@@ -661,9 +661,36 @@ def test_operational_loss_gate_logic(tmp_path):
     cutoff_path = tmp_path / "cutoff.parquet"
     df_cutoff.to_parquet(cutoff_path)
 
+    # Config data
+    cfg_data = {
+        "datasets": ["test_ds"],
+        "weights": [0.1],
+        "checkpoint_b_thresholds": {
+            "max_oracle_loss_corpus_macro": 0.02,
+            "max_oracle_loss_per_corpus": 0.02,
+            "max_doc_opp_recall_loss_corpus_macro": 0.02,
+            "max_doc_opp_recall_loss_per_corpus": 0.02,
+            "min_queries_per_corpus": 1,
+        }
+    }
+    cfg_path = tmp_path / "test_cfg.yaml"
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg_data, f)
+
+    # Diagnostic universe
+    diag_univ_data = [
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_live"},
+        {"dataset": "test_ds", "qid": "q1", "candidate_term": "t_sidecar"},
+    ]
+    df_diag = pd.DataFrame(diag_univ_data)
+    diag_path = tmp_path / "diag_universe.parquet"
+    df_diag.to_parquet(diag_path)
+
     compiler = Gate1TableCompiler(
         audit_parquet_path=str(audit_path),
         cutoff_parquet_path=str(cutoff_path),
+        diag_universe_parquet_path=str(diag_path),
+        frozen_config_path=str(cfg_path),
         output_dir=str(tmp_path),
     )
 

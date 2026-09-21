@@ -405,7 +405,7 @@ class Gate1SidecarManager:
         table = pa.Table.from_pydict({
             "anchor_term": anchor_list,
             "candidate_term": cand_list,
-            "score": pa.array(score_list, type=pa.float32()),
+            "score": pa.array(score_list, type=pa.float64()),
         })
         custom_meta = {b"sidecar_metadata": json.dumps(metadata).encode("utf-8")}
         table = table.replace_schema_metadata(custom_meta)

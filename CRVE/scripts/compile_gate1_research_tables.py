@@ -443,6 +443,7 @@ class Gate1TableCompiler:
         max_oracle_loss_per_corpus = float(cb_thresholds["max_oracle_loss_per_corpus"])
         max_doc_loss_macro = float(cb_thresholds["max_doc_opp_recall_loss_corpus_macro"])
         max_doc_loss_per_corpus = float(cb_thresholds["max_doc_opp_recall_loss_per_corpus"])
+        min_queries_per_corpus = int(cb_thresholds.get("min_queries_per_corpus", 10))
 
         # 2. Require diagnostic universe artifact
         if not self.diag_universe_path or not os.path.exists(self.diag_universe_path):
@@ -456,8 +457,8 @@ class Gate1TableCompiler:
         if self.df_cutoff is None or self.df_cutoff.empty:
             raise ValueError("FATAL: Cutoff entries DataFrame is None or empty.")
 
-        # 4. Require all four expected corpora with probe QIDs in both audit and cutoff
-        expected_corpora = ["scifact", "bright_aops", "nfcorpus", "trec_covid"]
+        # 4. Require all expected corpora with probe QIDs in both audit and cutoff
+        expected_corpora = cfg.get("datasets", ["scifact", "bright_aops", "nfcorpus", "trec_covid"])
         missing_corpora = [c for c in expected_corpora if c not in self.available_datasets]
         if missing_corpora:
             raise ValueError(f"FATAL: Checkpoint B operational loss gate missing expected corpora in audit: {missing_corpora}")
@@ -469,8 +470,8 @@ class Gate1TableCompiler:
 
         for ds in expected_corpora:
             ds_qids = {k[1] for k in self.query_term_actions.keys() if k[0] == ds}
-            if len(ds_qids) < 10:
-                raise ValueError(f"FATAL: Corpus '{ds}' has only {len(ds_qids)} queries in audit, expected at least 10 probe queries.")
+            if len(ds_qids) < min_queries_per_corpus:
+                raise ValueError(f"FATAL: Corpus '{ds}' has only {len(ds_qids)} queries in audit, expected at least {min_queries_per_corpus} probe queries.")
 
         # 5. Require complete counterfactual audit coverage
         cov_df = self.compile_label_coverage_table()

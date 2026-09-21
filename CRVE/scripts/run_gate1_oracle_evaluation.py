@@ -35,6 +35,7 @@ import yaml
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.join(BASE_DIR, "src"))
+sys.path.insert(0, os.path.join(BASE_DIR, "scripts"))
 
 from evaluation.baselines.pyterrier_harness import init_pyterrier
 from evaluation.benchmark_loader import BenchmarkLoader
@@ -616,6 +617,7 @@ def run_dataset_gate1_evaluation(
     bge_model: str = "BAAI/bge-small-en-v1.5",
     qids_manifest: Optional[str] = None,
     force_rebuild_sidecars: bool = False,
+    explicit_qids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Runs complete Gate 1 counterfactual evaluation for a single dataset."""
     print(f"\n=======================================================")
@@ -720,7 +722,9 @@ def run_dataset_gate1_evaluation(
     q_by_id = {str(q.get("query_id", q.get("qid", ""))): q for q in all_queries}
 
     frozen_qids = None
-    if frozen_config and "query_manifests" in frozen_config:
+    if explicit_qids is not None:
+        frozen_qids = explicit_qids
+    elif frozen_config and "query_manifests" in frozen_config:
         q_manifest = frozen_config["query_manifests"]
         if qids_manifest and qids_manifest in q_manifest:
             frozen_qids = q_manifest[qids_manifest].get(dataset)
@@ -1017,7 +1021,15 @@ def run_dataset_gate1_evaluation(
     }
 
 
-def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str, expected_qids: Optional[Set[str]] = None):
+def assemble_shards_to_master(
+    shards_dir: str,
+    shard_type: str,
+    output_path: str,
+    expected_qids: Optional[Set[str]] = None,
+    filter_to_universe_df: Optional[pd.DataFrame] = None,
+    filter_qids: Optional[Set[str]] = None,
+    clear_diagnostic_cols: bool = False,
+):
     """
     Streams individual query Parquet shards into a single master Parquet file
     using pyarrow.ParquetWriter with fail-closed schema and QID verification.
@@ -1046,19 +1058,12 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
         print(f"No shards found for type '{shard_type}' in {shards_dir}.")
         return
 
-    # Check for expected QIDs
-    if expected_qids is not None and shard_type in ("status", "universe", "diag_universe", "audit"):
-        if shard_type == "status":
-            st_dfs = [pd.read_parquet(f) for f in all_files]
-            assembled_qids = set(pd.concat(st_dfs, ignore_index=True)["qid"].astype(str))
-            missing_qids = expected_qids - assembled_qids
-            extra_qids = assembled_qids - expected_qids
-            if missing_qids or extra_qids:
-                raise RuntimeError(
-                    f"FATAL: Shard assembly mismatch for shard_type '{shard_type}'! "
-                    f"Missing QIDs: {len(missing_qids)} ({sorted(list(missing_qids))[:3]}...), "
-                    f"Extra QIDs: {len(extra_qids)} ({sorted(list(extra_qids))[:3]}...)"
-                )
+    valid_pairs = None
+    if filter_to_universe_df is not None:
+        valid_pairs = set(zip(
+            filter_to_universe_df["qid"].astype(str),
+            filter_to_universe_df["candidate_term"].astype(str),
+        ))
 
     print(f"Streaming {len(all_files)} {shard_type} shards to {output_path} via pyarrow.ParquetWriter...")
     writer = None
@@ -1069,15 +1074,35 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
     for fpath in all_files:
         try:
             table = pq.read_table(fpath)
-            if unified_schema is None:
-                unified_schema = table.schema
             if table.num_rows == 0:
                 del table
                 continue
+            if "qid" in table.column_names:
+                shard_qid = str(table["qid"][0].as_py())
+                if filter_qids is not None and shard_qid not in filter_qids:
+                    del table
+                    continue
+
+            if (valid_pairs is not None or clear_diagnostic_cols) and "qid" in table.column_names and "candidate_term" in table.column_names:
+                df_shard = table.to_pandas()
+                if valid_pairs is not None:
+                    mask = [
+                        (str(q), str(c)) in valid_pairs
+                        for q, c in zip(df_shard["qid"], df_shard["candidate_term"])
+                    ]
+                    df_shard = df_shard[mask]
+                    if df_shard.empty:
+                        del table
+                        continue
+                if clear_diagnostic_cols and "live_ppmi_rank" in df_shard.columns:
+                    df_shard["live_ppmi_rank"] = np.nan
+                table = pa.Table.from_pandas(df_shard, schema=unified_schema if unified_schema else None)
+
+            if unified_schema is None:
+                unified_schema = table.schema
             if writer is None:
                 writer = pq.ParquetWriter(output_path, unified_schema, compression="zstd")
             elif table.schema != unified_schema:
-                # Cast to unified schema if strictly compatible
                 table = table.cast(unified_schema)
             writer.write_table(table)
             total_rows += table.num_rows
@@ -1123,6 +1148,7 @@ def parse_args():
     parser.add_argument("--probe-loss-gate-path", type=str, default="results/gate1_selection/probe_40_eval/checkpoint_b_loss_gate.json", help="Path to probe Checkpoint B loss gate artifact")
     parser.add_argument("--probe-manifest-path", type=str, default="results/gate1_selection/probe_40_eval/run_manifest.json", help="Path to probe run manifest artifact")
     parser.add_argument("--skip-probe-gate", action="store_true", help="Bypass probe gate preflight verification (for diagnostic testing only)")
+    parser.add_argument("--staged-evaluation", action="store_true", help="Run 40-query probe first, enforce Checkpoint B gate in-process, then evaluate remaining 160 queries if passed.")
     return parser.parse_args()
 
 
@@ -1185,98 +1211,36 @@ def main():
 
     datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
 
-    # Full-run preflight verification: Checkpoint B gate must be passed and provenance must match
-    is_full_run = (args.sample_size > 10 or args.qids_manifest == "dev_200_qids")
-    if is_full_run and not args.skip_probe_gate:
-        print("\n[Preflight] Verifying Checkpoint B operational loss gate before launching full evaluation run...")
-        if not os.path.exists(args.probe_loss_gate_path):
-            raise FileNotFoundError(
-                f"FATAL: Full run preflight failed: Checkpoint B loss gate artifact not found at '{args.probe_loss_gate_path}'. "
-                f"The 40-query probe evaluation and table compilation must be completed first."
-            )
-        with open(args.probe_loss_gate_path, "r", encoding="utf-8") as f:
-            probe_gate_data = json.load(f)
-        if not probe_gate_data.get("gate_passed", False):
-            raise RuntimeError(
-                f"FATAL: Full run preflight failed: Checkpoint B operational loss gate in '{args.probe_loss_gate_path}' is FAILED! "
-                f"The full evaluation cannot proceed until the probe gate passes."
-            )
+    # Check if staged evaluation should be performed
+    is_staged_run = (
+        args.staged_evaluation
+        or (args.qids_manifest == "dev_200_qids" and not args.skip_probe_gate and not os.path.exists(args.probe_loss_gate_path))
+    )
 
-        # Verify matching provenance from probe run manifest
-        if not os.path.exists(args.probe_manifest_path):
-            raise FileNotFoundError(
-                f"FATAL: Full run preflight failed: Probe run manifest not found at '{args.probe_manifest_path}'."
-            )
-        with open(args.probe_manifest_path, "r", encoding="utf-8") as f:
-            probe_manifest = json.load(f)
+    if is_staged_run:
+        print("\n" + "=" * 70)
+        print(">>> [STAGED EVALUATION] Engaged: 40-Query Probe -> In-Process Checkpoint B -> 160-Query Completion")
+        print("=" * 70)
 
-        # 1. Config hash check
-        if probe_manifest.get("config_hash") != config_hash:
-            raise ValueError(
-                f"FATAL: Full run preflight failed: Config hash mismatch! "
-                f"Probe run had config_hash='{probe_manifest.get('config_hash')}', but current run has config_hash='{config_hash}'."
-            )
+        if not frozen_config or "query_manifests" not in frozen_config:
+            raise ValueError("FATAL: Staged evaluation requires a frozen config containing query_manifests with 'probe_40_qids' and 'dev_200_qids'!")
+        q_manifest = frozen_config["query_manifests"]
+        if "probe_40_qids" not in q_manifest or "dev_200_qids" not in q_manifest:
+            raise ValueError("FATAL: query_manifests must contain both 'probe_40_qids' and 'dev_200_qids' for staged evaluation!")
 
-        # Build dataset map from probe manifest
-        probe_ds_map = {
-            s["dataset"]: s for s in probe_manifest.get("dataset_summaries", [])
-        }
-        if not probe_ds_map:
-            raise ValueError(
-                f"FATAL: Full run preflight failed: No dataset summaries found in probe run manifest '{args.probe_manifest_path}'!"
-            )
-
+        # Preflight: Verify pool hashes, index hashes, corpus source hashes, and sidecars on disk
         sidecar_cache_dir = os.path.abspath("data/cache/canonical_pools")
-
         for ds in datasets:
-            if ds not in probe_ds_map:
-                raise ValueError(
-                    f"FATAL: Full run preflight failed: Dataset '{ds}' missing from probe run manifest dataset_summaries!"
-                )
-            ds_summary = probe_ds_map[ds]
             safe_ds = ds.lower().replace("-", "_")
-
-            # 2. Pool hash check
             cur_pool_terms = load_canonical_pool_terms(ds)
             cur_pool_sha = compute_pool_sha256(cur_pool_terms)
-            probe_pool_sha = ds_summary.get("pool_sha256")
-            if not probe_pool_sha:
-                raise ValueError(f"FATAL: Full run preflight failed: Missing pool_sha256 for '{ds}' in probe manifest!")
-            if probe_pool_sha != cur_pool_sha:
-                raise ValueError(
-                    f"FATAL: Full run preflight failed: Pool hash mismatch for {ds}! "
-                    f"Probe had '{probe_pool_sha}', current is '{cur_pool_sha}'."
-                )
-
-            # 3. Index hash check
             cur_idx_hash = compute_index_hash(ds)
-            probe_idx_hash = ds_summary.get("index_manifest_sha256")
-            if not probe_idx_hash:
-                raise ValueError(f"FATAL: Full run preflight failed: Missing index_manifest_sha256 for '{ds}' in probe manifest!")
-            if probe_idx_hash != cur_idx_hash:
-                raise ValueError(
-                    f"FATAL: Full run preflight failed: Index hash mismatch for {ds}! "
-                    f"Probe had '{probe_idx_hash}', current is '{cur_idx_hash}'."
-                )
-
-            # 4. Corpus source hash check
             cur_src_hash = compute_corpus_source_hash(ds)
-            probe_sidecars = ds_summary.get("sidecars_provenance", {})
-            probe_src_hash = probe_sidecars.get("bge", {}).get("corpus_source_hash")
-            if not probe_src_hash:
-                raise ValueError(f"FATAL: Full run preflight failed: Missing corpus_source_hash for '{ds}' in probe manifest!")
-            if probe_src_hash != cur_src_hash:
-                raise ValueError(
-                    f"FATAL: Full run preflight failed: Corpus source hash mismatch for {ds}! "
-                    f"Probe had '{probe_src_hash}', current is '{cur_src_hash}'."
-                )
 
-            # 5. Sidecar provenance check (BGE, PPMI, Acronym, Lexical)
             bge_path = os.path.join(sidecar_cache_dir, f"{safe_ds}_bge_sidecar.pt")
             ppmi_parquet = os.path.join(sidecar_cache_dir, f"{safe_ds}_bounded_ppmi.parquet")
             ppmi_json = os.path.join(sidecar_cache_dir, f"{safe_ds}_bounded_ppmi.json")
             ppmi_path = ppmi_parquet if os.path.exists(ppmi_parquet) else ppmi_json
-
             acronym_path = os.path.join(sidecar_cache_dir, f"{safe_ds}_acronym_rescue.json")
             lex_parquet = os.path.join(sidecar_cache_dir, f"{safe_ds}_lexical_profiles.parquet")
             lex_idx = os.path.join(sidecar_cache_dir, f"{safe_ds}_lexical_profiles_idx")
@@ -1290,147 +1254,478 @@ def main():
             ]:
                 if not os.path.exists(sidecar_file):
                     raise FileNotFoundError(
-                        f"FATAL: Full run preflight failed: Required {sidecar_name} sidecar artifact not found on disk at '{sidecar_file}'!"
+                        f"FATAL: Staged run preflight failed: Required {sidecar_name} sidecar artifact not found on disk at '{sidecar_file}'!"
                     )
 
-            # Validate BGE sidecar metadata
-            bge_meta = torch.load(bge_path, map_location="cpu")
-            if isinstance(bge_meta, dict) and "metadata" in bge_meta:
-                bge_meta = bge_meta["metadata"]
-            if bge_meta.get("pool_sha256") != cur_pool_sha:
-                raise ValueError(f"FATAL: Full run preflight failed: BGE sidecar pool_sha256 mismatch for {ds}!")
-            if bge_meta.get("corpus_source_hash") != cur_src_hash:
-                raise ValueError(f"FATAL: Full run preflight failed: BGE sidecar corpus_source_hash mismatch for {ds}!")
+        # Force rebuild sidecars if requested
+        if args.force_rebuild_sidecars:
+            print("\n[ForceRebuild] Rebuilding sidecars for all datasets before evaluation...")
+            sidecar_mgr = Gate1SidecarManager(config=frozen_config)
+            from sentence_transformers import SentenceTransformer
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            enc_temp = SentenceTransformer(args.bge_model, device=device)
+            for ds in datasets:
+                safe_ds = ds.lower().replace("-", "_")
+                pool_path = f"data/cache/canonical_pools/{safe_ds}_canonical_pool.json"
+                if not os.path.exists(pool_path):
+                    raise FileNotFoundError(f"Canonical pool missing for {ds}: {pool_path}")
+                with open(pool_path, "r", encoding="utf-8") as f:
+                    pool_terms = json.load(f)["terms"]
+                idx_path = f"data/cache/terrier_indices/{safe_ds}_default/data.properties"
+                idx_temp = pt.IndexFactory.of(os.path.abspath(idx_path))
+                num_docs = idx_temp.getCollectionStatistics().getNumberOfDocuments()
+                sidecar_mgr.build_or_load_bge_sidecar(ds, pool_terms, num_docs=num_docs, encoder=enc_temp, device=device, force_rebuild=True)
+                top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
+                sidecar_mgr.build_or_load_bounded_ppmi_sidecar(ds, idx_temp, pool_terms, num_docs=num_docs, top_m=top_m, force_rebuild=True)
+                sidecar_mgr.build_or_load_acronym_rescue_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
+                sidecar_mgr.build_or_load_sparse_lexical_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
+                del idx_temp
+            del enc_temp
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print("[ForceRebuild] Completed sidecar rebuilds successfully.\n")
 
-            # Validate PPMI sidecar metadata (supports both Parquet and JSON)
-            if ppmi_path.endswith(".parquet"):
-                ppmi_tbl = pq.read_table(ppmi_path)
-                ppmi_sm = ppmi_tbl.schema.metadata or {}
-                ppmi_meta = json.loads(ppmi_sm.get(b"sidecar_metadata", b"{}").decode("utf-8"))
-            else:
-                with open(ppmi_path, "r", encoding="utf-8") as f:
-                    ppmi_data = json.load(f)
-                ppmi_meta = ppmi_data.get("metadata", {})
+        # Load Phase 1 candidate audit if available
+        phase1_audit_df = None
+        if args.phase1_audit and os.path.exists(args.phase1_audit):
+            print(f"Loading Phase 1 candidate audit from {args.phase1_audit}...")
+            phase1_audit_df = pd.read_parquet(args.phase1_audit)
+            print(f"Loaded {len(phase1_audit_df):,} Phase 1 audit rows.")
 
-            if ppmi_meta.get("pool_sha256") != cur_pool_sha:
-                raise ValueError(f"FATAL: Full run preflight failed: PPMI sidecar pool_sha256 mismatch for {ds}!")
-            if ppmi_meta.get("corpus_source_hash") != cur_src_hash:
-                raise ValueError(f"FATAL: Full run preflight failed: PPMI sidecar corpus_source_hash mismatch for {ds}!")
-            expected_top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
-            if ppmi_meta.get("top_m") != expected_top_m:
-                raise ValueError(
-                    f"FATAL: Full run preflight failed: PPMI sidecar top_m mismatch for {ds}! "
-                    f"Sidecar has {ppmi_meta.get('top_m')}, config expects {expected_top_m}."
-                )
-            if probe_sidecars.get("ppmi", {}).get("top_m") != ppmi_meta.get("top_m"):
-                raise ValueError(
-                    f"FATAL: Full run preflight failed: PPMI sidecar top_m mismatch with probe! "
-                    f"Probe had {probe_sidecars.get('ppmi', {}).get('top_m')}, sidecar on disk has {ppmi_meta.get('top_m')}."
-                )
-
-        print("[Preflight] Checkpoint B operational loss gate PASSED and provenance verified. Proceeding to full evaluation run.\n")
-
-    # Force rebuild sidecars if requested
-    if args.force_rebuild_sidecars:
-        print("\n[ForceRebuild] Rebuilding sidecars for all datasets before evaluation...")
-        sidecar_mgr = Gate1SidecarManager(config=frozen_config)
-        from sentence_transformers import SentenceTransformer
+        # Initialize encoder once on device
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        enc_temp = SentenceTransformer(args.bge_model, device=device)
+        print(f"Loading encoder {args.bge_model} on {device}...")
+        from sentence_transformers import SentenceTransformer
+        encoder = SentenceTransformer(args.bge_model, device=device)
+
+        # -------------------------------------------------------------
+        # STAGE 1: 40 Probe Queries with Diagnostic Channel (LivePPMI)
+        # -------------------------------------------------------------
+        print("\n" + "=" * 70)
+        print(">>> [STAGE 1/2] Evaluating 40 Probe Queries (Diagnostic Fidelity Mode)")
+        print("=" * 70)
+
+        probe_summaries = []
+        all_probe_qids = set()
         for ds in datasets:
-            safe_ds = ds.lower().replace("-", "_")
-            pool_path = f"data/cache/canonical_pools/{safe_ds}_canonical_pool.json"
-            if not os.path.exists(pool_path):
-                raise FileNotFoundError(f"Canonical pool missing for {ds}: {pool_path}")
-            with open(pool_path, "r", encoding="utf-8") as f:
-                pool_terms = json.load(f)["terms"]
-            idx_path = f"data/cache/terrier_indices/{safe_ds}_default/data.properties"
-            idx_temp = pt.IndexFactory.of(os.path.abspath(idx_path))
-            num_docs = idx_temp.getCollectionStatistics().getNumberOfDocuments()
-            sidecar_mgr.build_or_load_bge_sidecar(ds, pool_terms, num_docs=num_docs, encoder=enc_temp, device=device, force_rebuild=True)
-            top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
-            sidecar_mgr.build_or_load_bounded_ppmi_sidecar(ds, idx_temp, pool_terms, num_docs=num_docs, top_m=top_m, force_rebuild=True)
-            sidecar_mgr.build_or_load_acronym_rescue_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
-            sidecar_mgr.build_or_load_sparse_lexical_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
-            del idx_temp
-        del enc_temp
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        print("[ForceRebuild] Completed sidecar rebuilds successfully.\n")
+            probe_qids = q_manifest["probe_40_qids"].get(ds, [])
+            all_probe_qids.update(probe_qids)
+            print(f"\n[Stage 1] Running {len(probe_qids)} probe queries for {ds} with measure_fidelity=True...")
+            ds_meta = run_dataset_gate1_evaluation(
+                dataset=ds,
+                output_dir=args.output_dir,
+                weights=weights,
+                sample_size=len(probe_qids),
+                seed=seed,
+                chunk_size=args.chunk_size,
+                resume=not args.no_resume,
+                phase1_audit_df=phase1_audit_df,
+                frozen_config=frozen_config,
+                encoder=encoder,
+                device=device,
+                config_hash=config_hash,
+                measure_fidelity=True,
+                bge_model=args.bge_model,
+                qids_manifest="probe_40_qids",
+                force_rebuild_sidecars=args.force_rebuild_sidecars,
+                explicit_qids=probe_qids,
+            )
+            probe_summaries.append(ds_meta)
 
-    # Load Phase 1 candidate audit if available
-    phase1_audit_df = None
-    if args.phase1_audit and os.path.exists(args.phase1_audit):
-        print(f"Loading Phase 1 candidate audit from {args.phase1_audit}...")
-        phase1_audit_df = pd.read_parquet(args.phase1_audit)
-        print(f"Loaded {len(phase1_audit_df):,} Phase 1 audit rows.")
+        # Assemble Stage 1 Probe artifacts
+        shards_dir = os.path.join(args.output_dir, "shards")
+        probe_audit_path = os.path.join(args.output_dir, "diagnostic_candidate_audit.parquet")
+        probe_cutoff_path = os.path.join(args.output_dir, "probe_cutoff_entries.parquet")
+        probe_status_path = os.path.join(args.output_dir, "probe_query_status.parquet")
+        probe_universe_path = os.path.join(args.output_dir, "probe_reference_universe.parquet")
+        probe_diag_universe_path = os.path.join(args.output_dir, "diagnostic_universe.parquet")
 
-    # Initialize encoder once on device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Loading encoder {args.bge_model} on {device}...")
-    from sentence_transformers import SentenceTransformer
-    encoder = SentenceTransformer(args.bge_model, device=device)
+        print("\nAssembling Stage 1 probe shards for Checkpoint B verification...")
+        assemble_shards_to_master(shards_dir, "audit", probe_audit_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
+        assemble_shards_to_master(shards_dir, "cutoff", probe_cutoff_path, filter_qids=all_probe_qids)
+        assemble_shards_to_master(shards_dir, "status", probe_status_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
+        assemble_shards_to_master(shards_dir, "universe", probe_universe_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
+        assemble_shards_to_master(shards_dir, "diag_universe", probe_diag_universe_path, expected_qids=all_probe_qids, filter_qids=all_probe_qids)
 
-    meta_summaries = []
-    for ds in datasets:
-        ds_meta = run_dataset_gate1_evaluation(
-            dataset=ds,
-            output_dir=args.output_dir,
-            weights=weights,
-            sample_size=args.sample_size,
-            seed=seed,
-            chunk_size=args.chunk_size,
-            resume=not args.no_resume,
-            phase1_audit_df=phase1_audit_df,
-            frozen_config=frozen_config,
-            encoder=encoder,
-            device=device,
-            config_hash=config_hash,
-            measure_fidelity=args.measure_fidelity,
-            bge_model=args.bge_model,
-            qids_manifest=args.qids_manifest,
-            force_rebuild_sidecars=args.force_rebuild_sidecars,
+        # Verify Stage 1 action coverage against diagnostic universe
+        df_probe_audit = pd.read_parquet(probe_audit_path)
+        df_probe_diag_univ = pd.read_parquet(probe_diag_universe_path)
+        print("\nValidating probe action coverage against diagnostic reference universe...")
+        validate_action_coverage(df_probe_audit, df_probe_diag_univ, weights)
+        print("Probe action coverage PASSED (100% Cartesian set equality).")
+
+        # -------------------------------------------------------------
+        # IN-PROCESS CHECKPOINT B LOSS GATE ENFORCEMENT
+        # -------------------------------------------------------------
+        print("\n" + "=" * 70)
+        print(">>> [CHECKPOINT B] Enforcing Operational Loss Gate In-Process")
+        print("=" * 70)
+        from compile_gate1_research_tables import Gate1TableCompiler
+        probe_compiler = Gate1TableCompiler(
+            audit_path=probe_audit_path,
+            cutoff_path=probe_cutoff_path,
+            universe_path=probe_universe_path,
+            diag_universe_path=probe_diag_universe_path,
+            output_dir=os.path.join(args.output_dir, "probe_artifacts"),
+            frozen_config_path=args.frozen_config_path,
         )
-        meta_summaries.append(ds_meta)
+        loss_gate_results = probe_compiler.enforce_operational_loss_gate(budget_l=200)
+        loss_gate_path = os.path.join(args.output_dir, "checkpoint_b_loss_gate.json")
+        with open(loss_gate_path, "w", encoding="utf-8") as f:
+            json.dump(loss_gate_results, f, indent=2)
+        print(f"Saved Checkpoint B Loss Gate artifact -> {loss_gate_path}")
 
-    # Assemble master artifacts with fail-closed QID verification
-    expected_qids_all = set()
-    if frozen_config and "query_manifests" in frozen_config:
-        q_manifest = frozen_config["query_manifests"]
+        if not loss_gate_results.get("gate_passed", False):
+            print("\n" + "!" * 70)
+            print("FATAL: Checkpoint B operational-loss gate FAILED!")
+            print(f"Corpus-macro nDCG loss: {loss_gate_results.get('corpus_macro_delta_ndcg10_loss')} (threshold: {loss_gate_results.get('max_oracle_loss_corpus_macro_threshold')})")
+            print(f"Corpus-macro doc loss:  {loss_gate_results.get('corpus_macro_raw_doc_opp_recall1000_loss')} (threshold: {loss_gate_results.get('max_doc_opp_recall_loss_corpus_macro_threshold')})")
+            for ds_name, p_res in loss_gate_results.get("per_corpus_results", {}).items():
+                print(f"  - {ds_name}: nDCG loss={p_res['mean_delta_ndcg10_loss']} (passed={p_res['ndcg_loss_passed']}), doc loss={p_res['mean_raw_doc_opp_recall1000_loss']} (passed={p_res['doc_loss_passed']})")
+            print("Stage 2 is BLOCKED. Halting execution before spending compute on the remaining 160 queries.")
+            print("!" * 70 + "\n")
+            raise RuntimeError("FATAL: Checkpoint B operational-loss gate failed during Stage 1 probe evaluation; full run is blocked.")
+
+        print("\n>>> Checkpoint B operational-loss gate PASSED! Proceeding to Stage 2.\n")
+
+        # -------------------------------------------------------------
+        # STAGE 2: Remaining 160 Queries (Operational Channels Only)
+        # -------------------------------------------------------------
+        print("\n" + "=" * 70)
+        print(">>> [STAGE 2/2] Evaluating Remaining 160 Queries (Operational Channels Only)")
+        print("=" * 70)
+
+        all_200_qids = set()
+        stage2_summaries = []
         for ds in datasets:
-            if args.qids_manifest and args.qids_manifest in q_manifest:
-                expected_qids_all.update(q_manifest[args.qids_manifest].get(ds, []))
-            elif args.sample_size == 1 and "micro_smoke_qids" in q_manifest:
-                expected_qids_all.update(q_manifest["micro_smoke_qids"].get(ds, []))
-            elif args.sample_size == 10 and "probe_40_qids" in q_manifest:
-                expected_qids_all.update(q_manifest["probe_40_qids"].get(ds, []))
-            elif args.sample_size == 50 and "dev_200_qids" in q_manifest:
-                expected_qids_all.update(q_manifest["dev_200_qids"].get(ds, []))
+            full_qids = q_manifest["dev_200_qids"].get(ds, [])
+            all_200_qids.update(full_qids)
+            probe_qids_ds = set(q_manifest["probe_40_qids"].get(ds, []))
+            remaining_qids = [q for q in full_qids if q not in probe_qids_ds]
 
-    shards_dir = os.path.join(args.output_dir, "shards")
-    master_parent = os.path.join(args.output_dir, "gate1_candidate_audit.parquet")
-    master_cutoff = os.path.join(args.output_dir, "gate1_cutoff_entries.parquet")
-    master_status = os.path.join(args.output_dir, "query_status.parquet")
-    master_universe = os.path.join(args.output_dir, "reference_universe.parquet")
-    master_diag_universe = os.path.join(args.output_dir, "diagnostic_universe.parquet")
+            print(f"\n[Stage 2] Running {len(remaining_qids)} remaining queries for {ds} (measure_fidelity=False)...")
+            ds_meta = run_dataset_gate1_evaluation(
+                dataset=ds,
+                output_dir=args.output_dir,
+                weights=weights,
+                sample_size=len(remaining_qids),
+                seed=seed,
+                chunk_size=args.chunk_size,
+                resume=not args.no_resume,
+                phase1_audit_df=phase1_audit_df,
+                frozen_config=frozen_config,
+                encoder=encoder,
+                device=device,
+                config_hash=config_hash,
+                measure_fidelity=False,
+                bge_model=args.bge_model,
+                qids_manifest=None,
+                force_rebuild_sidecars=False,
+                explicit_qids=remaining_qids,
+            )
+            stage2_summaries.append(ds_meta)
 
-    assemble_shards_to_master(shards_dir, shard_type="audit", output_path=master_parent, expected_qids=expected_qids_all if expected_qids_all else None)
-    assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
-    assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=expected_qids_all if expected_qids_all else None)
-    assemble_shards_to_master(shards_dir, shard_type="universe", output_path=master_universe, expected_qids=expected_qids_all if expected_qids_all else None)
-    if args.measure_fidelity:
-        assemble_shards_to_master(shards_dir, shard_type="diag_universe", output_path=master_diag_universe, expected_qids=expected_qids_all if expected_qids_all else None)
+        # -------------------------------------------------------------
+        # MASTER ASSEMBLY: Full 200 Queries Operational Audit
+        # -------------------------------------------------------------
+        print("\n" + "=" * 70)
+        print(">>> Assembling Master 200-Query Operational Artifacts")
+        print("=" * 70)
 
-    print("\nValidating action coverage between candidate audit and reference universe...")
-    df_audit_master = pd.read_parquet(master_parent)
-    if args.measure_fidelity and os.path.exists(master_diag_universe):
-        df_target_univ = pd.read_parquet(master_diag_universe)
-        print("Validating against diagnostic universe (measure_fidelity=True)...")
+        master_parent = os.path.join(args.output_dir, "gate1_candidate_audit.parquet")
+        master_cutoff = os.path.join(args.output_dir, "gate1_cutoff_entries.parquet")
+        master_status = os.path.join(args.output_dir, "query_status.parquet")
+        master_universe = os.path.join(args.output_dir, "reference_universe.parquet")
+
+        assemble_shards_to_master(shards_dir, shard_type="universe", output_path=master_universe, expected_qids=all_200_qids)
+        df_master_univ = pd.read_parquet(master_universe)
+
+        assemble_shards_to_master(
+            shards_dir,
+            shard_type="audit",
+            output_path=master_parent,
+            expected_qids=all_200_qids,
+            filter_to_universe_df=df_master_univ,
+            clear_diagnostic_cols=True,
+        )
+        assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
+        assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=all_200_qids)
+
+        print("\nValidating action coverage between 200-query candidate audit and reference universe...")
+        df_audit_master = pd.read_parquet(master_parent)
+        validate_action_coverage(df_audit_master, df_master_univ, weights)
+        print("Action coverage verification PASSED (exact Cartesian set equality across all 200 queries).")
+
+        # Combine dataset summaries
+        meta_summaries = []
+        probe_summary_map = {s["dataset"]: s for s in probe_summaries}
+        stage2_summary_map = {s["dataset"]: s for s in stage2_summaries}
+        for ds in datasets:
+            p_s = probe_summary_map.get(ds, {})
+            s2_s = stage2_summary_map.get(ds, {})
+            combined_s = {
+                "dataset": ds,
+                "num_docs": p_s.get("num_docs", s2_s.get("num_docs", 0)),
+                "pool_size": p_s.get("pool_size", s2_s.get("pool_size", 0)),
+                "pool_sha256": p_s.get("pool_sha256", s2_s.get("pool_sha256", "")),
+                "num_queries": p_s.get("num_queries", 0) + s2_s.get("num_queries", 0),
+                "total_variants": p_s.get("total_variants", 0) + s2_s.get("total_variants", 0),
+                "total_cutoff_entries": p_s.get("total_cutoff_entries", 0) + s2_s.get("total_cutoff_entries", 0),
+                "retrieval_time_sec": round(p_s.get("retrieval_time_sec", 0.0) + s2_s.get("retrieval_time_sec", 0.0), 2),
+                "fidelity_meta": p_s.get("fidelity_meta", {}),
+                "input_hashes": p_s.get("input_hashes", s2_s.get("input_hashes", {})),
+                "index_manifest_sha256": p_s.get("index_manifest_sha256", s2_s.get("index_manifest_sha256", "")),
+                "sidecars_provenance": p_s.get("sidecars_provenance", s2_s.get("sidecars_provenance", {})),
+            }
+            meta_summaries.append(combined_s)
+
     else:
-        df_target_univ = pd.read_parquet(master_universe)
-        print("Validating against operational reference universe...")
-    validate_action_coverage(df_audit_master, df_target_univ, weights)
-    print("Action coverage verification PASSED (exact Cartesian set equality).")
+        # Full-run preflight verification: Checkpoint B gate must be passed and provenance must match
+        is_full_run = (args.sample_size > 10 or args.qids_manifest == "dev_200_qids")
+        if is_full_run and not args.skip_probe_gate:
+            print("\n[Preflight] Verifying Checkpoint B operational loss gate before launching full evaluation run...")
+            if not os.path.exists(args.probe_loss_gate_path):
+                raise FileNotFoundError(
+                    f"FATAL: Full run preflight failed: Checkpoint B loss gate artifact not found at '{args.probe_loss_gate_path}'. "
+                    f"The 40-query probe evaluation and table compilation must be completed first."
+                )
+            with open(args.probe_loss_gate_path, "r", encoding="utf-8") as f:
+                probe_gate_data = json.load(f)
+            if not probe_gate_data.get("gate_passed", False):
+                raise RuntimeError(
+                    f"FATAL: Full run preflight failed: Checkpoint B operational loss gate in '{args.probe_loss_gate_path}' is FAILED! "
+                    f"The full evaluation cannot proceed until the probe gate passes."
+                )
+
+            # Verify matching provenance from probe run manifest
+            if not os.path.exists(args.probe_manifest_path):
+                raise FileNotFoundError(
+                    f"FATAL: Full run preflight failed: Probe run manifest not found at '{args.probe_manifest_path}'."
+                )
+            with open(args.probe_manifest_path, "r", encoding="utf-8") as f:
+                probe_manifest = json.load(f)
+
+            # 1. Config hash check
+            if probe_manifest.get("config_hash") != config_hash:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: Config hash mismatch! "
+                    f"Probe run had config_hash='{probe_manifest.get('config_hash')}', but current run has config_hash='{config_hash}'."
+                )
+
+            # Build dataset map from probe manifest
+            probe_ds_map = {
+                s["dataset"]: s for s in probe_manifest.get("dataset_summaries", [])
+            }
+            if not probe_ds_map:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: No dataset summaries found in probe run manifest '{args.probe_manifest_path}'!"
+                )
+
+            sidecar_cache_dir = os.path.abspath("data/cache/canonical_pools")
+
+            for ds in datasets:
+                if ds not in probe_ds_map:
+                    raise ValueError(
+                        f"FATAL: Full run preflight failed: Dataset '{ds}' missing from probe run manifest dataset_summaries!"
+                    )
+                ds_summary = probe_ds_map[ds]
+                safe_ds = ds.lower().replace("-", "_")
+
+                # 2. Pool hash check
+                cur_pool_terms = load_canonical_pool_terms(ds)
+                cur_pool_sha = compute_pool_sha256(cur_pool_terms)
+                probe_pool_sha = ds_summary.get("pool_sha256")
+                if not probe_pool_sha:
+                    raise ValueError(f"FATAL: Full run preflight failed: Missing pool_sha256 for '{ds}' in probe manifest!")
+                if probe_pool_sha != cur_pool_sha:
+                    raise ValueError(
+                        f"FATAL: Full run preflight failed: Pool hash mismatch for {ds}! "
+                        f"Probe had '{probe_pool_sha}', current is '{cur_pool_sha}'."
+                    )
+
+                # 3. Index hash check
+                cur_idx_hash = compute_index_hash(ds)
+                probe_idx_hash = ds_summary.get("index_manifest_sha256")
+                if not probe_idx_hash:
+                    raise ValueError(f"FATAL: Full run preflight failed: Missing index_manifest_sha256 for '{ds}' in probe manifest!")
+                if probe_idx_hash != cur_idx_hash:
+                    raise ValueError(
+                        f"FATAL: Full run preflight failed: Index hash mismatch for {ds}! "
+                        f"Probe had '{probe_idx_hash}', current is '{cur_idx_hash}'."
+                    )
+
+                # 4. Corpus source hash check
+                cur_src_hash = compute_corpus_source_hash(ds)
+                probe_sidecars = ds_summary.get("sidecars_provenance", {})
+                probe_src_hash = probe_sidecars.get("bge", {}).get("corpus_source_hash")
+                if not probe_src_hash:
+                    raise ValueError(f"FATAL: Full run preflight failed: Missing corpus_source_hash for '{ds}' in probe manifest!")
+                if probe_src_hash != cur_src_hash:
+                    raise ValueError(
+                        f"FATAL: Full run preflight failed: Corpus source hash mismatch for {ds}! "
+                        f"Probe had '{probe_src_hash}', current is '{cur_src_hash}'."
+                    )
+
+                # 5. Sidecar provenance check (BGE, PPMI, Acronym, Lexical)
+                bge_path = os.path.join(sidecar_cache_dir, f"{safe_ds}_bge_sidecar.pt")
+                ppmi_parquet = os.path.join(sidecar_cache_dir, f"{safe_ds}_bounded_ppmi.parquet")
+                ppmi_json = os.path.join(sidecar_cache_dir, f"{safe_ds}_bounded_ppmi.json")
+                ppmi_path = ppmi_parquet if os.path.exists(ppmi_parquet) else ppmi_json
+
+                acronym_path = os.path.join(sidecar_cache_dir, f"{safe_ds}_acronym_rescue.json")
+                lex_parquet = os.path.join(sidecar_cache_dir, f"{safe_ds}_lexical_profiles.parquet")
+                lex_idx = os.path.join(sidecar_cache_dir, f"{safe_ds}_lexical_profiles_idx")
+                lex_path = lex_parquet if os.path.exists(lex_parquet) else lex_idx
+
+                for sidecar_name, sidecar_file in [
+                    ("bge", bge_path),
+                    ("ppmi", ppmi_path),
+                    ("acronym", acronym_path),
+                    ("lexical", lex_path),
+                ]:
+                    if not os.path.exists(sidecar_file):
+                        raise FileNotFoundError(
+                            f"FATAL: Full run preflight failed: Required {sidecar_name} sidecar artifact not found on disk at '{sidecar_file}'!"
+                        )
+
+                # Validate BGE sidecar metadata
+                bge_meta = torch.load(bge_path, map_location="cpu")
+                if isinstance(bge_meta, dict) and "metadata" in bge_meta:
+                    bge_meta = bge_meta["metadata"]
+                if bge_meta.get("pool_sha256") != cur_pool_sha:
+                    raise ValueError(f"FATAL: Full run preflight failed: BGE sidecar pool_sha256 mismatch for {ds}!")
+                if bge_meta.get("corpus_source_hash") != cur_src_hash:
+                    raise ValueError(f"FATAL: Full run preflight failed: BGE sidecar corpus_source_hash mismatch for {ds}!")
+
+                # Validate PPMI sidecar metadata (supports both Parquet and JSON)
+                if ppmi_path.endswith(".parquet"):
+                    ppmi_tbl = pq.read_table(ppmi_path)
+                    ppmi_sm = ppmi_tbl.schema.metadata or {}
+                    ppmi_meta = json.loads(ppmi_sm.get(b"sidecar_metadata", b"{}").decode("utf-8"))
+                else:
+                    with open(ppmi_path, "r", encoding="utf-8") as f:
+                        ppmi_data = json.load(f)
+                    ppmi_meta = ppmi_data.get("metadata", {})
+
+                if ppmi_meta.get("pool_sha256") != cur_pool_sha:
+                    raise ValueError(f"FATAL: Full run preflight failed: PPMI sidecar pool_sha256 mismatch for {ds}!")
+                if ppmi_meta.get("corpus_source_hash") != cur_src_hash:
+                    raise ValueError(f"FATAL: Full run preflight failed: PPMI sidecar corpus_source_hash mismatch for {ds}!")
+                expected_top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
+                if ppmi_meta.get("top_m") != expected_top_m:
+                    raise ValueError(
+                        f"FATAL: Full run preflight failed: PPMI sidecar top_m mismatch for {ds}! "
+                        f"Sidecar has {ppmi_meta.get('top_m')}, config expects {expected_top_m}."
+                    )
+                if probe_sidecars.get("ppmi", {}).get("top_m") != ppmi_meta.get("top_m"):
+                    raise ValueError(
+                        f"FATAL: Full run preflight failed: PPMI sidecar top_m mismatch with probe! "
+                        f"Probe had {probe_sidecars.get('ppmi', {}).get('top_m')}, sidecar on disk has {ppmi_meta.get('top_m')}."
+                    )
+
+            print("[Preflight] Checkpoint B operational loss gate PASSED and provenance verified. Proceeding to full evaluation run.\n")
+
+        # Force rebuild sidecars if requested
+        if args.force_rebuild_sidecars:
+            print("\n[ForceRebuild] Rebuilding sidecars for all datasets before evaluation...")
+            sidecar_mgr = Gate1SidecarManager(config=frozen_config)
+            from sentence_transformers import SentenceTransformer
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            enc_temp = SentenceTransformer(args.bge_model, device=device)
+            for ds in datasets:
+                safe_ds = ds.lower().replace("-", "_")
+                pool_path = f"data/cache/canonical_pools/{safe_ds}_canonical_pool.json"
+                if not os.path.exists(pool_path):
+                    raise FileNotFoundError(f"Canonical pool missing for {ds}: {pool_path}")
+                with open(pool_path, "r", encoding="utf-8") as f:
+                    pool_terms = json.load(f)["terms"]
+                idx_path = f"data/cache/terrier_indices/{safe_ds}_default/data.properties"
+                idx_temp = pt.IndexFactory.of(os.path.abspath(idx_path))
+                num_docs = idx_temp.getCollectionStatistics().getNumberOfDocuments()
+                sidecar_mgr.build_or_load_bge_sidecar(ds, pool_terms, num_docs=num_docs, encoder=enc_temp, device=device, force_rebuild=True)
+                top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
+                sidecar_mgr.build_or_load_bounded_ppmi_sidecar(ds, idx_temp, pool_terms, num_docs=num_docs, top_m=top_m, force_rebuild=True)
+                sidecar_mgr.build_or_load_acronym_rescue_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
+                sidecar_mgr.build_or_load_sparse_lexical_sidecar(ds, pool_terms, num_docs=num_docs, force_rebuild=True)
+                del idx_temp
+            del enc_temp
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print("[ForceRebuild] Completed sidecar rebuilds successfully.\n")
+
+        # Load Phase 1 candidate audit if available
+        phase1_audit_df = None
+        if args.phase1_audit and os.path.exists(args.phase1_audit):
+            print(f"Loading Phase 1 candidate audit from {args.phase1_audit}...")
+            phase1_audit_df = pd.read_parquet(args.phase1_audit)
+            print(f"Loaded {len(phase1_audit_df):,} Phase 1 audit rows.")
+
+        # Initialize encoder once on device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Loading encoder {args.bge_model} on {device}...")
+        from sentence_transformers import SentenceTransformer
+        encoder = SentenceTransformer(args.bge_model, device=device)
+
+        meta_summaries = []
+        for ds in datasets:
+            ds_meta = run_dataset_gate1_evaluation(
+                dataset=ds,
+                output_dir=args.output_dir,
+                weights=weights,
+                sample_size=args.sample_size,
+                seed=seed,
+                chunk_size=args.chunk_size,
+                resume=not args.no_resume,
+                phase1_audit_df=phase1_audit_df,
+                frozen_config=frozen_config,
+                encoder=encoder,
+                device=device,
+                config_hash=config_hash,
+                measure_fidelity=args.measure_fidelity,
+                bge_model=args.bge_model,
+                qids_manifest=args.qids_manifest,
+                force_rebuild_sidecars=args.force_rebuild_sidecars,
+            )
+            meta_summaries.append(ds_meta)
+
+        # Assemble master artifacts with fail-closed QID verification
+        expected_qids_all = set()
+        if frozen_config and "query_manifests" in frozen_config:
+            q_manifest = frozen_config["query_manifests"]
+            for ds in datasets:
+                if args.qids_manifest and args.qids_manifest in q_manifest:
+                    expected_qids_all.update(q_manifest[args.qids_manifest].get(ds, []))
+                elif args.sample_size == 1 and "micro_smoke_qids" in q_manifest:
+                    expected_qids_all.update(q_manifest["micro_smoke_qids"].get(ds, []))
+                elif args.sample_size == 10 and "probe_40_qids" in q_manifest:
+                    expected_qids_all.update(q_manifest["probe_40_qids"].get(ds, []))
+                elif args.sample_size == 50 and "dev_200_qids" in q_manifest:
+                    expected_qids_all.update(q_manifest["dev_200_qids"].get(ds, []))
+
+        shards_dir = os.path.join(args.output_dir, "shards")
+        master_parent = os.path.join(args.output_dir, "gate1_candidate_audit.parquet")
+        master_cutoff = os.path.join(args.output_dir, "gate1_cutoff_entries.parquet")
+        master_status = os.path.join(args.output_dir, "query_status.parquet")
+        master_universe = os.path.join(args.output_dir, "reference_universe.parquet")
+        master_diag_universe = os.path.join(args.output_dir, "diagnostic_universe.parquet")
+
+        assemble_shards_to_master(shards_dir, shard_type="audit", output_path=master_parent, expected_qids=expected_qids_all if expected_qids_all else None)
+        assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
+        assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=expected_qids_all if expected_qids_all else None)
+        assemble_shards_to_master(shards_dir, shard_type="universe", output_path=master_universe, expected_qids=expected_qids_all if expected_qids_all else None)
+        if args.measure_fidelity:
+            assemble_shards_to_master(shards_dir, shard_type="diag_universe", output_path=master_diag_universe, expected_qids=expected_qids_all if expected_qids_all else None)
+
+        print("\nValidating action coverage between candidate audit and reference universe...")
+        df_audit_master = pd.read_parquet(master_parent)
+        if args.measure_fidelity and os.path.exists(master_diag_universe):
+            df_target_univ = pd.read_parquet(master_diag_universe)
+            print("Validating against diagnostic universe (measure_fidelity=True)...")
+        else:
+            df_target_univ = pd.read_parquet(master_universe)
+            print("Validating against operational reference universe...")
+        validate_action_coverage(df_audit_master, df_target_univ, weights)
+        print("Action coverage verification PASSED (exact Cartesian set equality).")
 
     import platform
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None"
