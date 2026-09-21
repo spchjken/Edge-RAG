@@ -7,6 +7,11 @@
 > Pipeline V2 V7 is an archived implementation and experimental control, not an active experiment.
 > This document proposes future research; it does not describe an implemented system or supersede
 > [the current architecture](ARCHITECTURE.md).
+> **Historical proposal, not the current implementation plan.** Its term-centered `+/-50` windows,
+> 20-sample default, 50-100-candidate handoff, and fixed 3-10 final terms have been superseded.
+> Current source of truth: [architecture](ARCHITECTURE.md) and [research roadmap](CRVE_RESEARCH_ROADMAP.md).
+> Current research uses canonical shared chunks with term-to-chunk references; sweeps 5/10/15/20/30
+> chunks per term; uses the frozen eligible pool and Gate 1 cap 200; and leaves Gate 3 weighting open.
 
 ## 1. Research objective and deployment setting
 
@@ -73,7 +78,7 @@ development evidence for the new design, not ongoing experiments or directly reu
 
 ### 3.1 Large vocabulary tail
 
-The archived [bailout grid](../results/legacy/v7_legacy/v7_calibration/v7_bailout_grid_summary.md)
+The archived [bailout grid](../../results/legacy/v7_legacy/v7_calibration/v7_bailout_grid_summary.md)
 compared the 1,000-term pool with gated access to a 50,000-term store across ten document-level
 benchmarks:
 
@@ -88,7 +93,7 @@ not prove that every 10k or 15k pool is optimal: bailout used particular gates a
 
 ### 3.2 Salience versus coverage
 
-The archived [pool-selection study](../results/legacy/v7_legacy/v7_calibration/coverage_vs_salience_pool_summary.md)
+The archived [pool-selection study](../../results/legacy/v7_legacy/v7_calibration/coverage_vs_salience_pool_summary.md)
 found at pool size 1,000:
 
 | Selection | Strict@10 | DocRec@10 | Strict@50 | Mean latency |
@@ -104,7 +109,7 @@ before reuse.
 
 ### 3.3 Scaling lesson
 
-Archived [large-corpus results](../results/legacy/v7_legacy/v7_large_scale/v7_streaming_large_summary.md)
+Archived [large-corpus results](../../results/legacy/v7_legacy/v7_large_scale/v7_streaming_large_summary.md)
 show severe V7 latency on multi-million-document collections. Profiling identified corpus-sized score
 accumulation in the legacy streaming scorer as a likely contributor, but expansion fan-out and postings
 touched also matter. A small expansion weight still triggers a posting list. The new method must bound
@@ -165,11 +170,13 @@ Pure coverage may waste slots on embedding outliers, while pure salience may omi
 vocabulary. The hybrid is a hypothesis, not the assumed winner. Pool construction and query-time
 candidate scoring are separate ablations.
 
-## 6. Collecting representative term contexts
+## 6. Historical term-centered context proposal (superseded)
 
 ### 6.1 What a sample represents
 
-For a selected term `t`, a raw sample is a short occurrence window centered on an exact analyzed-term
+The following window design is preserved for historical comparison only. The current design instead
+stores small canonical shared chunks with term-to-chunk references, avoiding duplicate near-identical
+windows when neighboring terms occur in the same text. For a selected term `t`, a raw sample is a short occurrence window centered on an exact analyzed-term
 match, initially up to 50 tokens before and 50 tokens after the target. Preserve sentence and document
 boundaries; never cross documents. Compare fixed windows with sentence-bounded and +/-16 or +/-32
 token alternatives because a 101-token passage may dilute the target term.
@@ -306,7 +313,7 @@ These are upper-bound or diagnostic comparisons, not mandatory edge configuratio
 state is not automatically compatible with a pooled BGE query vector, and a cross-encoder invocation
 per candidate can invalidate the latency objective.
 
-## 9. Weight, term-count and posting-cost budgets
+## 9. Historical weight, term-count and posting-cost proposal (not selected Gate 3)
 
 Reranking many candidates in a small dense matrix is cheap; executing many additional BM25 posting
 lists is not. Initially retain 50–100 candidates for context reranking but emit only 3–10 terms.
@@ -376,7 +383,7 @@ Mandatory local controls:
 - `DPH`, `DPH_RM3_Terrier_Default` and `DPH_Bo1_Terrier_Default`;
 - the fixed `BGE_Vocab_QE` term-neighbour baseline and local-model
   `LLM_Q2E_ZS` keyword baseline defined in
-  [the dedicated testing plan](bgeqe_llmqe_testing_plan.md). These retain their
+  the former dedicated testing plan (not present in the active checkout). These retain their
   literature-aligned mechanics rather than being rewritten to share CRVE's
   candidate, final-term, or weighting budgets.
 

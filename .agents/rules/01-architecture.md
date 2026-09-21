@@ -25,14 +25,14 @@ trigger: always_on
 - `gate1_proposers.py` — Multi-channel candidate proposers:
   - `WholeQueryBGEProposer`: Global query-to-pool cosine matching ($S_{\text{WQ}}$).
   - `AnchorBGEProposer`: Fine-grained anchor-to-term specificity matching ($S_{\text{ABGE}}$).
-  - `LexicalPPMIProposer`: Positive Pointwise Mutual Information ($S_{\text{PPMI}}$) evaluated from PyTerrier posting lists.
+- `PPMISidecarProposer`: Bounded, prebuilt co-occurrence evidence for the frozen Gate 1 core RRF; `LexicalPPMIProposer` computes from live PyTerrier postings as a higher-latency diagnostic or generic-orchestrator variant.
   - `RRFHybridProposer`: Reciprocal Rank Fusion ($k=60$) over top candidate lists with unique refill.
 - `gate1_metrics.py` — Mathematical evaluation of selection under uncertainty: Recall@K, NDCG@K, ReferenceBOR, NearBestHit, TermRecall, TermPrecision, and transition dynamics.
 - `pathway_gate1_selection.md` — Authoritative co-located Tier 2 specification for Gate 1 selection.
 
 ### 2.3 Orchestration & Configuration
 - `orchestrator.py` — `CRVEOrchestrator`: End-to-end 1st-stage runner connecting Indexer $\to$ Vocab Builder $\to$ Dense Matrix $\to$ Gate 1 Proposers $\to$ PyTerrier Retrieval.
-- `CRVE/configs/crve.yaml`: Authoritative single source of truth for all CRVE hyperparameters.
+- `CRVE/configs/crve.yaml`: Generic orchestrator runtime defaults. A frozen experiment config and its `for_review/` run manifest own that experiment's tested hyperparameters and results; do not overwrite their provenance with generic defaults. `CRVE/docs/ARCHITECTURE.md` owns stage boundaries and implementation status.
 
 ---
 

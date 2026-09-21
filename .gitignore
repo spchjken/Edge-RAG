@@ -72,6 +72,8 @@ temp*
 
 # Ignore Some Others
 tests/
+!CRVE/tests/
+!CRVE/tests/**
 scripts/*
 !scripts/benchmark_creation/
 !scripts/data_adapters/

@@ -1,5 +1,11 @@
 # 🏛️ Theoretical Foundations of Anchored Lexical-Semantic Query Expansion: The Information-Theoretic Mass-Preserving Expansion (IT-MPE) Theorem
 
+> **Historical V7-era weighting theory; not the selected CRVE Gate 3 method.** Its statements and
+> proofs apply only under their stated assumptions and do not establish retrieval utility or the
+> current three-gate architecture. [ARCHITECTURE.md](ARCHITECTURE.md) owns current status; Gate 3
+> weighting remains open. References below to absent legacy documents are historical provenance,
+> not links to active CRVE specifications.
+
 ---
 
 ## 1. Epistemic Status & Scope
@@ -25,7 +31,7 @@ This document establishes the **weighting law** for anchored lexical-semantic qu
 
 These are operational parameters of the retrieval architecture, not part of the theorem; they are specified in the V7 architectural plan.
 
-*Consolidation:* this document supersedes [`legacy_theoretical_foundations_query_expansion_weighting.md`](legacy_theoretical_foundations_query_expansion_weighting.md) and [`legacy_theoretical_foundations_expansion_capacity.md`](legacy_theoretical_foundations_expansion_capacity.md). The former *"Theorem 1 (Information-Theoretic Optimality of Saliency-Proportional Capacity)"* from the capacity document is **retired**: its optimality claim rested on unverified assumptions (a linear candidate-utility model $\rho(a) = \alpha \cdot I(a)$ and an unmeasurable noise-entropy rate $\epsilon$). Capacity is treated here purely as an operational parameter (§5.3, Remark 2).
+*Consolidation:* this historical note superseded [`legacy_theoretical_foundations_query_expansion_weighting.md`](../../docs/legacy/legacy_theoretical_foundations_query_expansion_weighting.md) and [`legacy_theoretical_foundations_expansion_capacity.md`](../../docs/legacy/legacy_theoretical_foundations_expansion_capacity.md). The former *"Theorem 1 (Information-Theoretic Optimality of Saliency-Proportional Capacity)"* from the capacity document is **retired**: its optimality claim rested on unverified assumptions (a linear candidate-utility model $\rho(a) = \alpha \cdot I(a)$ and an unmeasurable noise-entropy rate $\epsilon$). Capacity is treated here purely as an operational parameter (§5.3, Remark 2).
 
 ### 1.3 Core Invariant
 

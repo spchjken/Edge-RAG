@@ -1,6 +1,6 @@
 # Edge-RAG Evaluation Metrics & Benchmarking Protocol
 
-This document defines the formal evaluation metrics, per-query telemetry signals, and benchmarking protocols used to evaluate the **Edge-RAG Retriever** (`src/pipeline_v2/`) against baseline models (Lucene BM25, Dense BGE, SPLADE-v3). All metrics adhere to the reproducibility standards defined in `.agents/rules/02-reproducibility.md`.
+This document defines retrieval metrics and benchmarking protocols for active **CRVE first-stage retrieval** (`CRVE/src/crve/` and `CRVE/src/evaluation/`) against lexical and neural baselines. Historical downstream-generation metrics later in this file are archival and do not expand CRVE's active scope. See [ARCHITECTURE.md](ARCHITECTURE.md) for stage boundaries. All active retrieval measurements follow `.agents/rules/02-reproducibility.md`.
 
 ---
 
@@ -16,7 +16,7 @@ The evaluation framework evaluates retrieval systems under the **ephemeral edge 
    - `torch.cuda.empty_cache()` is called between benchmark iterations.
    - Host RAM is monitored via `psutil.Process().memory_info().rss`.
 4. **Subprocess Execution Isolation:** Each `(dataset, model)` evaluation should execute inside a dedicated, isolated subprocess worker (`subprocess.run`) to prevent cross-model process-state accumulation. The supervisor used for the completed classical PyTerrier artifact is not retained in the current checkout, so historical compliance is **Not verified**; process isolation also cannot literally guarantee zero CUDA fragmentation.
-5. **Direct Raw Streaming (`BenchmarkLoader`):** Documents and queries are streamed directly from official raw archives (`corpus.jsonl`, `qrels/test.tsv`, parquets) using [`BenchmarkLoader`](file:///home/donghv/Projects/Edge-RAG/src/evaluation/benchmark_loader.py), ensuring uniform text concatenation (`f"{title} {text}".strip()`) and zero loss of graded relevance.
+5. **Direct Raw Streaming (`BenchmarkLoader`):** Documents and queries are streamed directly from official raw archives (`corpus.jsonl`, `qrels/test.tsv`, parquets) using [`BenchmarkLoader`](../src/evaluation/benchmark_loader.py), ensuring uniform text concatenation (`f"{title} {text}".strip()`) and zero loss of graded relevance.
 6. **Warm-Boot Assumption:** Model loading time from disk into GPU memory is excluded from per-query retrieval latency.
 
 ---
@@ -149,7 +149,7 @@ In the BRIGHT reasoning benchmark, each query specifies a set of excluded docume
 2. **Pass 2 Candidate Funnel Depth Clamping:**
    To ensure that the candidate ranking preserves full depth ($K = 1,000$) after post-filtering:
    $$K_2 = \min(1000 + \text{max\_ex}, 3000)$$
-   Post-exclusion filtering removes disqualified documents and slices to `.head(1000)`. The bounded padding is intended to preserve 1,000 eligible candidates. However, the current aggregate result artifact does not retain per-query requested/realized depths or the raw candidate runs needed to verify a universal guarantee. Treat full-depth preservation as **Not verified** until those traces are regenerated or recovered; see [`docs/pyterrier_classical_baselines_plan.md`](pyterrier_classical_baselines_plan.md).
+   Post-exclusion filtering removes disqualified documents and slices to `.head(1000)`. The bounded padding is intended to preserve 1,000 eligible candidates. However, the current aggregate result artifact does not retain per-query requested/realized depths or the raw candidate runs needed to verify a universal guarantee. Treat full-depth preservation as **Not verified** until those traces are regenerated or recovered. The earlier `pyterrier_classical_baselines_plan.md` is not present in the active CRVE checkout.
 
 ---
 
@@ -286,9 +286,9 @@ Evaluated by `src/evaluation/pyterrier_harness.py` under two distinct operationa
 
 ---
 
-## 5. Downstream Generation Metrics (Future Extensions)
+## 5. Historical downstream generation metrics (outside active CRVE scope)
 
-Maintained for full end-to-end RAG pipeline evaluations (Cascade Routing $\to$ LLM Reranking $\to$ Late Expansion $\to$ Final Generation):
+Retained only for historical full end-to-end RAG pipeline evaluations (Cascade Routing $\to$ LLM Reranking $\to$ Late Expansion $\to$ Final Generation). These are not CRVE first-stage retrieval endpoints:
 
 ### 5.1 Time-to-First-Token (TTFT)
 - **Definition:** Total wall-clock time from query submission to the moment the generative LLM yields its first output token.

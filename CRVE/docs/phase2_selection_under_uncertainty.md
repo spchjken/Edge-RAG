@@ -2,7 +2,9 @@
 
 > Status: research design and debate record, 2026-09-17. This note covers the phase after static
 > vocabulary-pool construction and before final lexical weighting. It does not describe implemented
-> behavior or freeze a final method.
+> behavior or freeze a final method. [ARCHITECTURE.md](ARCHITECTURE.md) owns current stage boundaries.
+> The frozen Gate 1 pool uses DF >= 2, CF >= 3 and size `min(10,000, |V_eligible|)`;
+> its deployable candidate cap is 200.
 
 CRVE means **Context-Reranked Vocabulary Expansion**, the current working name for the proposed
 method.
@@ -11,7 +13,8 @@ Related documents:
 
 - [Capacity-bounded corpus-informed QE plan](corpus_informed_query_expansion_plan.md)
 - [CRVE design refinement notes](crve_design_refinement_notes.md)
-- [Phase-2 implementation plan](phase2_selection_implementation_plan.md)
+- Former Phase-2 implementation plan (not present in the active CRVE checkout); use the
+  [research roadmap](CRVE_RESEARCH_ROADMAP.md) and [architecture](ARCHITECTURE.md).
 
 ## 1. Objective
 
@@ -390,8 +393,9 @@ Output: \(C_1(q)\), usually larger than the final expansion set.
 
 Purpose: reduce semantic ambiguity and estimate whether the candidate's corpus usage supports the query.
 
-The sidecar should store canonical context chunks once and a term-to-context-ID map. If many terms
-occur in the same window, one embedding is reused rather than recomputed for each term. Track:
+The sidecar should store small canonical context chunks once and a term-to-context-ID map. Chunk
+segmentation is independent of the target term; do not save overlapping term-centered windows for
+nearby terms. If many terms occur in the same chunk, one embedding is reused. Track:
 
 - unique context embeddings \(N_{\mathrm{ctx}}\);
 - term-context references \(N_{\mathrm{ref}}\);
@@ -427,9 +431,9 @@ Interpretations:
 Do not apply a sigmoid to raw cosine and call the result a probability. The threshold and temperature
 must be calibrated on development data.
 
-Retain up to 30 contexts per term. If a term has at most 30 distinct retained occurrence contexts,
-store all of them. If it has more than 30, store a declared representative/diversity sample. At query
-time, score all stored contexts in one batch. Do not introduce iterative 8 -> 16 -> 30 scoring: the
+Sweep 5, 10, 15, 20, and 30 retained canonical chunks per term. At each capacity, retain all distinct
+eligible chunks when fewer exist; otherwise use a declared representative/diversity policy. At query
+time, fetch and score all retained evidence for a candidate in one batch. Do not introduce iterative 8 -> 16 -> 30 scoring: the
 embeddings are already local, so repeated rounds add control-flow and aggregation overhead without
 avoiding the embedding work. Deduplicate context IDs across candidate terms before scoring so a shared
 context is evaluated once.
@@ -483,9 +487,11 @@ related and invite overfitting on the limited oracle data. Judge the optional bo
 pruning-versus-material-helpful-recall curve. If its conservative upper values saturate or it removes
 too few candidates to reduce later work, retire it rather than retaining it for theoretical appearance.
 
-### Gate 3 — lexical influence, risk, and abstention
+### Gate 2 lexical checks and Gate 3 abstention
 
-Purpose: prevent a context-compatible term from corrupting the lexical candidate funnel.
+The lexical-influence and calibrated-risk checks below are candidate Gate 2 rejection signals;
+Gate 3 owns the separate, still-open weighting choice and abstention decision. These checks do not
+constitute an implemented or selected Gate 3 method.
 
 #### 6.3.1 Lexical influence bound
 
@@ -535,7 +541,7 @@ Weighting asks:
 Do not assume that the score best for selection is the score best for weighting. This distinction is
 also emphasized in [Robertson's term-selection analysis](https://doi.org/10.1108/eb026866).
 
-Recommended initial protocol:
+Possible study protocol, not a selected weighting policy:
 
 1. select terms using opportunity, risk, influence, redundancy, and cost;
 2. calibrate weights only for selected terms;
@@ -671,9 +677,10 @@ Test dormant-term pruning using posting statistics and score bounds.
 Report bound validity, pruning rate, postings touched, and whether any potentially helpful term is
 incorrectly removed.
 
-### E5 — Adaptive context budget
+### E5 — Fixed context-capacity sweep
 
-Compare fixed 1/3/5/10/20 samples with adaptive 2 -> 4 -> 8 -> 20 sampling.
+Compare 5/10/15/20/30 retained canonical chunks per term, fetching and scoring all retained evidence
+in one batch at query time. The former adaptive `2 -> 4 -> 8 -> 20` proposal is retired.
 
 Report utility-risk-cost curves and unique embeddings, not only average cosine.
 
