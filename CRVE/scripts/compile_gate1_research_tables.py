@@ -418,18 +418,66 @@ class Gate1TableCompiler:
         - Delta-nDCG@10 loss <= 0.02
         - RawDocOppRecall@1000 loss <= 0.02
         against LivePPMI evaluated on the 40-query probe using the diagnostic ceiling and denominator.
+        Fails closed on missing evidence or incomplete coverage.
         """
-        cb_thresholds = {}
-        if self.frozen_config_path and os.path.exists(self.frozen_config_path):
-            import yaml
-            with open(self.frozen_config_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
-            cb_thresholds = cfg.get("checkpoint_b_thresholds", {})
+        # 1. Require frozen configuration with non-default, positive thresholds
+        if not self.frozen_config_path or not os.path.exists(self.frozen_config_path):
+            raise FileNotFoundError(f"FATAL: Checkpoint B operational loss gate requires a valid --frozen-config-path: {self.frozen_config_path}")
+        import yaml
+        with open(self.frozen_config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        if not cfg or "checkpoint_b_thresholds" not in cfg:
+            raise KeyError("FATAL: 'checkpoint_b_thresholds' missing from frozen configuration!")
+        cb_thresholds = cfg["checkpoint_b_thresholds"]
+        required_thresh_keys = [
+            "max_oracle_loss_corpus_macro",
+            "max_oracle_loss_per_corpus",
+            "max_doc_opp_recall_loss_corpus_macro",
+            "max_doc_opp_recall_loss_per_corpus",
+        ]
+        for k in required_thresh_keys:
+            if k not in cb_thresholds or cb_thresholds[k] is None or float(cb_thresholds[k]) <= 0:
+                raise ValueError(f"FATAL: Missing or invalid positive threshold for '{k}' in checkpoint_b_thresholds")
 
-        max_oracle_loss_macro = float(cb_thresholds.get("max_oracle_loss_corpus_macro", 0.02))
-        max_oracle_loss_per_corpus = float(cb_thresholds.get("max_oracle_loss_per_corpus", 0.02))
-        max_doc_loss_macro = float(cb_thresholds.get("max_doc_opp_recall_loss_corpus_macro", 0.02))
-        max_doc_loss_per_corpus = float(cb_thresholds.get("max_doc_opp_recall_loss_per_corpus", 0.02))
+        max_oracle_loss_macro = float(cb_thresholds["max_oracle_loss_corpus_macro"])
+        max_oracle_loss_per_corpus = float(cb_thresholds["max_oracle_loss_per_corpus"])
+        max_doc_loss_macro = float(cb_thresholds["max_doc_opp_recall_loss_corpus_macro"])
+        max_doc_loss_per_corpus = float(cb_thresholds["max_doc_opp_recall_loss_per_corpus"])
+
+        # 2. Require diagnostic universe artifact
+        if not self.diag_universe_path or not os.path.exists(self.diag_universe_path):
+            raise FileNotFoundError(f"FATAL: Checkpoint B operational loss gate requires --diag-universe-parquet: {self.diag_universe_path}")
+        if self.df_diag_universe is None or self.df_diag_universe.empty:
+            raise ValueError("FATAL: Diagnostic universe is empty or unreadable.")
+
+        # 3. Require cutoff artifact
+        if not self.cutoff_path or not os.path.exists(self.cutoff_path):
+            raise FileNotFoundError(f"FATAL: Checkpoint B operational loss gate requires --cutoff-parquet: {self.cutoff_path}")
+        if self.df_cutoff is None or self.df_cutoff.empty:
+            raise ValueError("FATAL: Cutoff entries DataFrame is None or empty.")
+
+        # 4. Require all four expected corpora with probe QIDs in both audit and cutoff
+        expected_corpora = ["scifact", "bright_aops", "nfcorpus", "trec_covid"]
+        missing_corpora = [c for c in expected_corpora if c not in self.available_datasets]
+        if missing_corpora:
+            raise ValueError(f"FATAL: Checkpoint B operational loss gate missing expected corpora in audit: {missing_corpora}")
+
+        cutoff_datasets = set(self.df_cutoff["dataset"].unique())
+        missing_cutoff_corpora = [c for c in expected_corpora if c not in cutoff_datasets]
+        if missing_cutoff_corpora:
+            raise ValueError(f"FATAL: Checkpoint B operational loss gate missing expected corpora in cutoff entries: {missing_cutoff_corpora}")
+
+        for ds in expected_corpora:
+            ds_qids = {k[1] for k in self.query_term_actions.keys() if k[0] == ds}
+            if len(ds_qids) < 10:
+                raise ValueError(f"FATAL: Corpus '{ds}' has only {len(ds_qids)} queries in audit, expected at least 10 probe queries.")
+
+        # 5. Require complete counterfactual audit coverage
+        cov_df = self.compile_label_coverage_table()
+        missing_triples = cov_df["Missing Triples"].sum() if "Missing Triples" in cov_df.columns else 0
+        extra_triples = cov_df["Extra Triples"].sum() if "Extra Triples" in cov_df.columns else 0
+        if missing_triples > 0 or extra_triples > 0:
+            raise RuntimeError(f"FATAL: Incomplete audit coverage for Checkpoint B: missing={missing_triples}, extra={extra_triples}")
 
         per_corpus_results = {}
         corpus_ndcg_losses = []
@@ -675,6 +723,16 @@ class Gate1TableCompiler:
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(report_md)
         print(f"\nSaved Report -> {report_path}")
+
+        # Hard fail-closed enforcement if loss gate failed
+        if loss_gate_results is not None and not loss_gate_results.get("gate_passed", False):
+            raise RuntimeError(
+                f"FATAL: Checkpoint B operational-loss gate failed; full run is blocked.\n"
+                f"  Macro Delta-nDCG Loss: {loss_gate_results['corpus_macro_delta_ndcg10_loss']} (threshold: {loss_gate_results['max_oracle_loss_corpus_macro_threshold']})\n"
+                f"  Macro Doc Opp Recall Loss: {loss_gate_results['corpus_macro_raw_doc_opp_recall1000_loss']} (threshold: {loss_gate_results['max_doc_opp_recall_loss_corpus_macro_threshold']})\n"
+                f"  Per-Corpus Results: {json.dumps(loss_gate_results['per_corpus_results'], indent=2)}"
+            )
+
         return report_path
 
 

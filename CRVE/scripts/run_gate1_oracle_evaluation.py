@@ -250,12 +250,13 @@ def evaluate_query_gate1(
     qrels_hash: str = "",
     pool_hash: str = "",
     chunk_size: int = 100,
+    frozen_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any], pd.DataFrame, pd.DataFrame]:
     """
     Evaluates all candidate actions for a single query.
     Emits parent candidate audit, cutoff entries, and query status.
     """
-    check_memory_watchdog()
+    check_memory_watchdog(frozen_config)
     qid = str(query_obj.get("query_id", query_obj.get("qid", "")))
     q_text = str(query_obj.get("question", query_obj.get("query", "")))
     qrels = {str(k): float(v) for k, v in query_obj.get("qrels", {}).items()}
@@ -446,7 +447,7 @@ def evaluate_query_gate1(
     cand_variant_outcomes = defaultdict(list)
 
     for i in range(0, len(variants_to_eval), chunk_size):
-        check_memory_watchdog()
+        check_memory_watchdog(frozen_config)
         chunk = variants_to_eval[i:i + chunk_size]
         df_chunk = pd.DataFrame([{"qid": item["var_id"], "query_toks": item["query_toks"]} for item in chunk])
         res_chunk = bm25.transform(df_chunk)
@@ -897,6 +898,7 @@ def run_dataset_gate1_evaluation(
             qrels_hash=qrels_hash,
             pool_hash=pool_hash,
             chunk_size=chunk_size,
+            frozen_config=frozen_config,
         )
 
         t_q = time.perf_counter() - t0_q
@@ -979,8 +981,15 @@ def run_dataset_gate1_evaluation(
             "bge_scoring_p95_ms": float(np.percentile(bge_scoring_latencies, 95)) if bge_scoring_latencies else 0.0,
             "bge_full_p50_ms": float(np.percentile(bge_full_latencies, 50)) if bge_full_latencies else 0.0,
             "bge_full_p95_ms": float(np.percentile(bge_full_latencies, 95)) if bge_full_latencies else 0.0,
-            "ppmi_disk_mb": round(os.path.getsize(os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_bounded_ppmi.json")) / (1024 ** 2), 2),
+            "ppmi_disk_mb": round(os.path.getsize(
+                os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_bounded_ppmi.parquet")
+                if os.path.exists(os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_bounded_ppmi.parquet"))
+                else os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_bounded_ppmi.json")
+            ) / (1024 ** 2), 2),
             "bge_disk_mb": round(os.path.getsize(os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_bge_sidecar.pt")) / (1024 ** 2), 2),
+            "lexical_disk_mb": round(os.path.getsize(
+                os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_lexical_profiles.parquet")
+            ) / (1024 ** 2), 2) if os.path.exists(os.path.join(sidecar_mgr.cache_dir, f"{safe_ds}_lexical_profiles.parquet")) else 0.0,
         }
         print(f"  PPMI Fidelity: Recall@500 = {fidelity_meta['ppmi_recall500_mean']:.4f}, RBO = {fidelity_meta['ppmi_rbo_mean']:.4f}")
         print(f"  PPMI Latency: p50 = {fidelity_meta['ppmi_lookup_p50_ms']:.2f}ms, p95 = {fidelity_meta['ppmi_lookup_p95_ms']:.2f}ms")
@@ -1111,6 +1120,9 @@ def parse_args():
     parser.add_argument("--bge-model", type=str, default="BAAI/bge-small-en-v1.5", help="BGE model name")
     parser.add_argument("--config-hash", type=str, default="gate1_core_dev_v1", help="Configuration hash")
     parser.add_argument("--qids-manifest", type=str, default=None, help="Name of query manifest to use from frozen config (e.g. micro_smoke_qids, probe_40_qids, dev_200_qids)")
+    parser.add_argument("--probe-loss-gate-path", type=str, default="results/gate1_selection/probe_40_eval/checkpoint_b_loss_gate.json", help="Path to probe Checkpoint B loss gate artifact")
+    parser.add_argument("--probe-manifest-path", type=str, default="results/gate1_selection/probe_40_eval/run_manifest.json", help="Path to probe run manifest artifact")
+    parser.add_argument("--skip-probe-gate", action="store_true", help="Bypass probe gate preflight verification (for diagnostic testing only)")
     return parser.parse_args()
 
 
@@ -1172,6 +1184,151 @@ def main():
     torch.manual_seed(seed)
 
     datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
+
+    # Full-run preflight verification: Checkpoint B gate must be passed and provenance must match
+    is_full_run = (args.sample_size > 10 or args.qids_manifest == "dev_200_qids")
+    if is_full_run and not args.skip_probe_gate:
+        print("\n[Preflight] Verifying Checkpoint B operational loss gate before launching full evaluation run...")
+        if not os.path.exists(args.probe_loss_gate_path):
+            raise FileNotFoundError(
+                f"FATAL: Full run preflight failed: Checkpoint B loss gate artifact not found at '{args.probe_loss_gate_path}'. "
+                f"The 40-query probe evaluation and table compilation must be completed first."
+            )
+        with open(args.probe_loss_gate_path, "r", encoding="utf-8") as f:
+            probe_gate_data = json.load(f)
+        if not probe_gate_data.get("gate_passed", False):
+            raise RuntimeError(
+                f"FATAL: Full run preflight failed: Checkpoint B operational loss gate in '{args.probe_loss_gate_path}' is FAILED! "
+                f"The full evaluation cannot proceed until the probe gate passes."
+            )
+
+        # Verify matching provenance from probe run manifest
+        if not os.path.exists(args.probe_manifest_path):
+            raise FileNotFoundError(
+                f"FATAL: Full run preflight failed: Probe run manifest not found at '{args.probe_manifest_path}'."
+            )
+        with open(args.probe_manifest_path, "r", encoding="utf-8") as f:
+            probe_manifest = json.load(f)
+
+        # 1. Config hash check
+        if probe_manifest.get("config_hash") != config_hash:
+            raise ValueError(
+                f"FATAL: Full run preflight failed: Config hash mismatch! "
+                f"Probe run had config_hash='{probe_manifest.get('config_hash')}', but current run has config_hash='{config_hash}'."
+            )
+
+        # Build dataset map from probe manifest
+        probe_ds_map = {
+            s["dataset"]: s for s in probe_manifest.get("dataset_summaries", [])
+        }
+        if not probe_ds_map:
+            raise ValueError(
+                f"FATAL: Full run preflight failed: No dataset summaries found in probe run manifest '{args.probe_manifest_path}'!"
+            )
+
+        sidecar_cache_dir = os.path.abspath("data/cache/canonical_pools")
+
+        for ds in datasets:
+            if ds not in probe_ds_map:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: Dataset '{ds}' missing from probe run manifest dataset_summaries!"
+                )
+            ds_summary = probe_ds_map[ds]
+            safe_ds = ds.lower().replace("-", "_")
+
+            # 2. Pool hash check
+            cur_pool_terms = load_canonical_pool_terms(ds)
+            cur_pool_sha = compute_pool_sha256(cur_pool_terms)
+            probe_pool_sha = ds_summary.get("pool_sha256")
+            if not probe_pool_sha:
+                raise ValueError(f"FATAL: Full run preflight failed: Missing pool_sha256 for '{ds}' in probe manifest!")
+            if probe_pool_sha != cur_pool_sha:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: Pool hash mismatch for {ds}! "
+                    f"Probe had '{probe_pool_sha}', current is '{cur_pool_sha}'."
+                )
+
+            # 3. Index hash check
+            cur_idx_hash = compute_index_hash(ds)
+            probe_idx_hash = ds_summary.get("index_manifest_sha256")
+            if not probe_idx_hash:
+                raise ValueError(f"FATAL: Full run preflight failed: Missing index_manifest_sha256 for '{ds}' in probe manifest!")
+            if probe_idx_hash != cur_idx_hash:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: Index hash mismatch for {ds}! "
+                    f"Probe had '{probe_idx_hash}', current is '{cur_idx_hash}'."
+                )
+
+            # 4. Corpus source hash check
+            cur_src_hash = compute_corpus_source_hash(ds)
+            probe_sidecars = ds_summary.get("sidecars_provenance", {})
+            probe_src_hash = probe_sidecars.get("bge", {}).get("corpus_source_hash")
+            if not probe_src_hash:
+                raise ValueError(f"FATAL: Full run preflight failed: Missing corpus_source_hash for '{ds}' in probe manifest!")
+            if probe_src_hash != cur_src_hash:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: Corpus source hash mismatch for {ds}! "
+                    f"Probe had '{probe_src_hash}', current is '{cur_src_hash}'."
+                )
+
+            # 5. Sidecar provenance check (BGE, PPMI, Acronym, Lexical)
+            bge_path = os.path.join(sidecar_cache_dir, f"{safe_ds}_bge_sidecar.pt")
+            ppmi_parquet = os.path.join(sidecar_cache_dir, f"{safe_ds}_bounded_ppmi.parquet")
+            ppmi_json = os.path.join(sidecar_cache_dir, f"{safe_ds}_bounded_ppmi.json")
+            ppmi_path = ppmi_parquet if os.path.exists(ppmi_parquet) else ppmi_json
+
+            acronym_path = os.path.join(sidecar_cache_dir, f"{safe_ds}_acronym_rescue.json")
+            lex_parquet = os.path.join(sidecar_cache_dir, f"{safe_ds}_lexical_profiles.parquet")
+            lex_idx = os.path.join(sidecar_cache_dir, f"{safe_ds}_lexical_profiles_idx")
+            lex_path = lex_parquet if os.path.exists(lex_parquet) else lex_idx
+
+            for sidecar_name, sidecar_file in [
+                ("bge", bge_path),
+                ("ppmi", ppmi_path),
+                ("acronym", acronym_path),
+                ("lexical", lex_path),
+            ]:
+                if not os.path.exists(sidecar_file):
+                    raise FileNotFoundError(
+                        f"FATAL: Full run preflight failed: Required {sidecar_name} sidecar artifact not found on disk at '{sidecar_file}'!"
+                    )
+
+            # Validate BGE sidecar metadata
+            bge_meta = torch.load(bge_path, map_location="cpu")
+            if isinstance(bge_meta, dict) and "metadata" in bge_meta:
+                bge_meta = bge_meta["metadata"]
+            if bge_meta.get("pool_sha256") != cur_pool_sha:
+                raise ValueError(f"FATAL: Full run preflight failed: BGE sidecar pool_sha256 mismatch for {ds}!")
+            if bge_meta.get("corpus_source_hash") != cur_src_hash:
+                raise ValueError(f"FATAL: Full run preflight failed: BGE sidecar corpus_source_hash mismatch for {ds}!")
+
+            # Validate PPMI sidecar metadata (supports both Parquet and JSON)
+            if ppmi_path.endswith(".parquet"):
+                ppmi_tbl = pq.read_table(ppmi_path)
+                ppmi_sm = ppmi_tbl.schema.metadata or {}
+                ppmi_meta = json.loads(ppmi_sm.get(b"sidecar_metadata", b"{}").decode("utf-8"))
+            else:
+                with open(ppmi_path, "r", encoding="utf-8") as f:
+                    ppmi_data = json.load(f)
+                ppmi_meta = ppmi_data.get("metadata", {})
+
+            if ppmi_meta.get("pool_sha256") != cur_pool_sha:
+                raise ValueError(f"FATAL: Full run preflight failed: PPMI sidecar pool_sha256 mismatch for {ds}!")
+            if ppmi_meta.get("corpus_source_hash") != cur_src_hash:
+                raise ValueError(f"FATAL: Full run preflight failed: PPMI sidecar corpus_source_hash mismatch for {ds}!")
+            expected_top_m = int(frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600)) if frozen_config else 600
+            if ppmi_meta.get("top_m") != expected_top_m:
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: PPMI sidecar top_m mismatch for {ds}! "
+                    f"Sidecar has {ppmi_meta.get('top_m')}, config expects {expected_top_m}."
+                )
+            if probe_sidecars.get("ppmi", {}).get("top_m") != ppmi_meta.get("top_m"):
+                raise ValueError(
+                    f"FATAL: Full run preflight failed: PPMI sidecar top_m mismatch with probe! "
+                    f"Probe had {probe_sidecars.get('ppmi', {}).get('top_m')}, sidecar on disk has {ppmi_meta.get('top_m')}."
+                )
+
+        print("[Preflight] Checkpoint B operational loss gate PASSED and provenance verified. Proceeding to full evaluation run.\n")
 
     # Force rebuild sidecars if requested
     if args.force_rebuild_sidecars:
@@ -1303,6 +1460,9 @@ def main():
         "total_variants": sum(s["total_variants"] for s in meta_summaries),
         "total_cutoff_entries": sum(s["total_cutoff_entries"] for s in meta_summaries),
         "total_retrieval_time_sec": round(sum(s["retrieval_time_sec"] for s in meta_summaries), 2),
+        "pool_hashes": {s["dataset"]: s["pool_sha256"] for s in meta_summaries},
+        "index_hashes": {s["dataset"]: s["index_manifest_sha256"] for s in meta_summaries},
+        "dataset_hashes": {s["dataset"]: s.get("sidecars_provenance", {}).get("bge", {}).get("corpus_source_hash", "") for s in meta_summaries},
         "environment": {
             "cpu_model": platform.processor() or "x86_64",
             "gpu_name": gpu_name,

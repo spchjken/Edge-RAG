@@ -29,6 +29,8 @@ from collections import defaultdict, Counter
 import numpy as np
 import torch
 import psutil
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pyterrier as pt
 
 from evaluation.benchmark_loader import BenchmarkLoader
@@ -385,6 +387,35 @@ class Gate1SidecarManager:
         }
 
     # -------------------------------------------------------------------------
+    def _save_ppmi_parquet(
+        self,
+        out_path: str,
+        anchor_ppmi: Dict[str, List[Tuple[str, float]]],
+        metadata: Dict[str, Any],
+    ) -> None:
+        anchor_list = []
+        cand_list = []
+        score_list = []
+        for a, cands in anchor_ppmi.items():
+            for c, s in cands:
+                anchor_list.append(a)
+                cand_list.append(c)
+                score_list.append(float(s))
+
+        table = pa.Table.from_pydict({
+            "anchor_term": anchor_list,
+            "candidate_term": cand_list,
+            "score": pa.array(score_list, type=pa.float32()),
+        })
+        custom_meta = {b"sidecar_metadata": json.dumps(metadata).encode("utf-8")}
+        table = table.replace_schema_metadata(custom_meta)
+
+        tmp_path = out_path + ".tmp"
+        pq.write_table(table, tmp_path, compression="zstd")
+        self._check_disk_footprint(tmp_path, max_mb=self.disk_caps.get("ppmi", 250.0))
+        os.replace(tmp_path, out_path)
+
+    # -------------------------------------------------------------------------
     # 2. Bounded PPMI Sidecar (Precomputed top-M=600, Exact Float)
     # -------------------------------------------------------------------------
     def build_or_load_bounded_ppmi_sidecar(
@@ -398,19 +429,49 @@ class Gate1SidecarManager:
         timeout_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
-        Builds or loads precomputed top-M=600 PPMI neighbors per anchor with exact floats.
+        Builds or loads precomputed top-M=600 PPMI neighbors per anchor with exact floats (Parquet format).
         """
         if timeout_sec is None:
             timeout_sec = self.ceilings.get("ppmi", DEFAULT_BUILD_CEILINGS_SEC["ppmi"])
         safe_ds = self._get_safe_ds(dataset)
-        out_path = os.path.join(self.cache_dir, f"{safe_ds}_bounded_ppmi.json")
+        out_path = os.path.join(self.cache_dir, f"{safe_ds}_bounded_ppmi.parquet")
+        legacy_json_path = os.path.join(self.cache_dir, f"{safe_ds}_bounded_ppmi.json")
         expected_sha = compute_pool_sha256(pool_terms)
 
         corpus_source_hash = compute_corpus_source_hash(dataset)
         lexicon_semantic_hash = compute_lexicon_semantic_hash(index)
+
         if not force_rebuild and os.path.exists(out_path):
             try:
-                with open(out_path, "r", encoding="utf-8") as f:
+                table = pq.read_table(out_path)
+                schema_meta = table.schema.metadata or {}
+                meta = {}
+                if b"sidecar_metadata" in schema_meta:
+                    meta = json.loads(schema_meta[b"sidecar_metadata"].decode("utf-8"))
+                if (
+                    meta.get("pool_sha256") == expected_sha
+                    and meta.get("num_docs") == num_docs
+                    and meta.get("analyzer_version") == ANALYZER_VERSION
+                    and meta.get("top_m") == top_m
+                    and meta.get("corpus_source_hash") == corpus_source_hash
+                    and meta.get("lexicon_semantic_hash") == lexicon_semantic_hash
+                ):
+                    df_p = table.to_pandas()
+                    anchor_ppmi = defaultdict(list)
+                    for a, c, s in zip(df_p["anchor_term"], df_p["candidate_term"], df_p["score"]):
+                        anchor_ppmi[a].append((c, float(s)))
+                    return {
+                        "anchor_ppmi": dict(anchor_ppmi),
+                        "metadata": meta,
+                        "timing_s": 0.0,
+                    }
+                else:
+                    print(f"[Sidecar] PPMI cache invalid or outdated for {dataset}. Rebuilding...")
+            except Exception as e:
+                print(f"[Sidecar] Failed to load PPMI cache for {dataset} ({e}). Rebuilding...")
+        elif not force_rebuild and os.path.exists(legacy_json_path):
+            try:
+                with open(legacy_json_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 meta = data.get("metadata", {})
                 if (
@@ -421,8 +482,11 @@ class Gate1SidecarManager:
                     and meta.get("corpus_source_hash") == corpus_source_hash
                     and meta.get("lexicon_semantic_hash") == lexicon_semantic_hash
                 ):
+                    anchor_ppmi = {a: [(t, float(s)) for t, s in cands] for a, cands in data["anchors"].items()}
+                    # Convert to parquet for compact storage and fast subsequent loads
+                    self._save_ppmi_parquet(out_path, anchor_ppmi, meta)
                     return {
-                        "anchor_ppmi": {a: [(t, float(s)) for t, s in cands] for a, cands in data["anchors"].items()},
+                        "anchor_ppmi": anchor_ppmi,
                         "metadata": meta,
                         "timing_s": 0.0,
                     }
@@ -431,7 +495,7 @@ class Gate1SidecarManager:
             except Exception as e:
                 print(f"[Sidecar] Failed to load PPMI cache for {dataset} ({e}). Rebuilding...")
 
-        print(f"[Sidecar] Building Bounded PPMI Sidecar for {dataset} (top_m={top_m}, exact float)...")
+        print(f"[Sidecar] Building Bounded PPMI Sidecar for {dataset} (top_m={top_m}, exact float, Parquet)...")
         t0 = time.perf_counter()
         pool_set = set(pool_terms)
         lex = index.getLexicon()
@@ -513,15 +577,8 @@ class Gate1SidecarManager:
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
 
-        # Atomic write
-        tmp_path = out_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "metadata": metadata,
-                "anchors": anchor_ppmi,
-            }, f)
-        self._check_disk_footprint(tmp_path, max_mb=self.disk_caps.get("ppmi", 250.0))
-        os.replace(tmp_path, out_path)
+        # Atomic write to Parquet
+        self._save_ppmi_parquet(out_path, anchor_ppmi, metadata)
 
         timing_s = elapsed_sec
         print(f"[Sidecar] Bounded PPMI Sidecar built in {timing_s}s for {len(anchor_ppmi):,} anchors (peak pairs: {peak_pairs:,}, peak RSS: {running_peak_rss:.2f} GiB) -> {out_path}")
@@ -669,8 +726,27 @@ class Gate1SidecarManager:
             "timing_s": timing_s,
         }
 
+    def _save_lexical_parquet(
+        self,
+        out_path: str,
+        docnos: List[str],
+        texts: List[str],
+        metadata: Dict[str, Any],
+    ) -> None:
+        table = pa.Table.from_pydict({
+            "docno": docnos,
+            "text": texts,
+        })
+        custom_meta = {b"sidecar_metadata": json.dumps(metadata).encode("utf-8")}
+        table = table.replace_schema_metadata(custom_meta)
+
+        tmp_path = out_path + ".tmp"
+        pq.write_table(table, tmp_path, compression="zstd")
+        self._check_disk_footprint(tmp_path, max_mb=self.disk_caps.get("lexical", 350.0))
+        os.replace(tmp_path, out_path)
+
     # -------------------------------------------------------------------------
-    # 4. Sparse Lexical Context Sidecar (Passage Context BM25 Index)
+    # 4. Sparse Lexical Context Sidecar (Passage Context BM25 Index / Parquet)
     # -------------------------------------------------------------------------
     def build_or_load_sparse_lexical_sidecar(
         self,
@@ -682,11 +758,12 @@ class Gate1SidecarManager:
     ) -> Dict[str, Any]:
         """
         Builds or loads auxiliary BM25 index over candidate terms' passage context profiles
-        using deterministic reservoir sampling (up to 50 passages per candidate).
+        using deterministic reservoir sampling (up to 50 passages per candidate), persisted in Parquet.
         """
         if timeout_sec is None:
             timeout_sec = self.ceilings.get("lexical", DEFAULT_BUILD_CEILINGS_SEC["lexical"])
         safe_ds = self._get_safe_ds(dataset)
+        parquet_path = os.path.join(self.cache_dir, f"{safe_ds}_lexical_profiles.parquet")
         aux_index_dir = os.path.join(self.cache_dir, f"{safe_ds}_lexical_profiles_idx")
         prop_path = os.path.join(aux_index_dir, "data.properties")
         meta_path = os.path.join(aux_index_dir, "sidecar_metadata.json")
@@ -698,28 +775,74 @@ class Gate1SidecarManager:
             if self.config else 42
         )
 
-        if not force_rebuild and os.path.exists(prop_path) and os.path.exists(meta_path):
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                if (
-                    meta.get("pool_sha256") == expected_sha
-                    and meta.get("num_docs") == num_docs
-                    and meta.get("analyzer_version") == ANALYZER_VERSION
-                    and meta.get("corpus_source_hash") == corpus_source_hash
-                    and meta.get("reservoir_seed") == configured_seed
-                ):
-                    retriever = pt.terrier.Retriever(os.path.abspath(aux_index_dir), wmodel="BM25", num_results=500)
-                    return {
-                        "index_path": aux_index_dir,
-                        "retriever": retriever,
-                        "metadata": meta,
-                        "timing_s": 0.0,
-                    }
-                else:
-                    print(f"[Sidecar] Lexical profiles cache invalid or outdated for {dataset}. Rebuilding...")
-            except Exception as e:
-                print(f"[Sidecar] Failed to load Lexical profiles cache for {dataset} ({e}). Rebuilding...")
+        if not force_rebuild:
+            if os.path.exists(parquet_path):
+                try:
+                    table = pq.read_table(parquet_path)
+                    schema_meta = table.schema.metadata or {}
+                    meta = {}
+                    if b"sidecar_metadata" in schema_meta:
+                        meta = json.loads(schema_meta[b"sidecar_metadata"].decode("utf-8"))
+                    if (
+                        meta.get("pool_sha256") == expected_sha
+                        and meta.get("num_docs") == num_docs
+                        and meta.get("analyzer_version") == ANALYZER_VERSION
+                        and meta.get("corpus_source_hash") == corpus_source_hash
+                        and meta.get("reservoir_seed") == configured_seed
+                    ):
+                        if not os.path.exists(prop_path):
+                            print(f"[Sidecar] Building auxiliary index from lexical profiles Parquet for {dataset}...")
+                            df_lex = table.to_pandas()
+                            def doc_gen() -> Iterator[Dict[str, str]]:
+                                for d, txt in zip(df_lex["docno"], df_lex["text"]):
+                                    yield {"docno": str(d), "text": str(txt)}
+                            tmp_idx_dir = aux_index_dir + ".tmp"
+                            if os.path.exists(tmp_idx_dir):
+                                shutil.rmtree(tmp_idx_dir)
+                            os.makedirs(tmp_idx_dir, exist_ok=True)
+                            indexer = pt.IterDictIndexer(os.path.abspath(tmp_idx_dir), overwrite=True)
+                            indexer.index(doc_gen())
+                            with open(os.path.join(tmp_idx_dir, "sidecar_metadata.json"), "w", encoding="utf-8") as f:
+                                json.dump(meta, f)
+                            if os.path.exists(aux_index_dir):
+                                shutil.rmtree(aux_index_dir)
+                            os.rename(tmp_idx_dir, aux_index_dir)
+
+                        retriever = pt.terrier.Retriever(os.path.abspath(aux_index_dir), wmodel="BM25", num_results=500)
+                        return {
+                            "index_path": aux_index_dir,
+                            "parquet_path": parquet_path,
+                            "retriever": retriever,
+                            "metadata": meta,
+                            "timing_s": 0.0,
+                        }
+                    else:
+                        print(f"[Sidecar] Lexical profiles cache invalid or outdated for {dataset}. Rebuilding...")
+                except Exception as e:
+                    print(f"[Sidecar] Failed to load Lexical profiles cache for {dataset} ({e}). Rebuilding...")
+            elif os.path.exists(prop_path) and os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    if (
+                        meta.get("pool_sha256") == expected_sha
+                        and meta.get("num_docs") == num_docs
+                        and meta.get("analyzer_version") == ANALYZER_VERSION
+                        and meta.get("corpus_source_hash") == corpus_source_hash
+                        and meta.get("reservoir_seed") == configured_seed
+                    ):
+                        retriever = pt.terrier.Retriever(os.path.abspath(aux_index_dir), wmodel="BM25", num_results=500)
+                        return {
+                            "index_path": aux_index_dir,
+                            "parquet_path": None,
+                            "retriever": retriever,
+                            "metadata": meta,
+                            "timing_s": 0.0,
+                        }
+                    else:
+                        print(f"[Sidecar] Lexical profiles cache invalid or outdated for {dataset}. Rebuilding...")
+                except Exception as e:
+                    print(f"[Sidecar] Failed to load Lexical profiles cache for {dataset} ({e}). Rebuilding...")
 
         print(f"[Sidecar] Building Sparse Lexical Context Sidecar for {dataset} ({len(pool_terms)} terms, reservoir sampling, seed={configured_seed})...")
         t0 = time.perf_counter()
@@ -762,21 +885,6 @@ class Gate1SidecarManager:
                             if j < 50:
                                 reservoirs[t][j] = passage_str
 
-        # Stream documents to IterDictIndexer
-        def doc_generator() -> Iterator[Dict[str, str]]:
-            for t in pool_terms:
-                passages = reservoirs.get(t, [])
-                combined_text = " ".join(passages) if passages else t
-                yield {"docno": t, "text": combined_text}
-
-        tmp_idx_dir = aux_index_dir + ".tmp"
-        if os.path.exists(tmp_idx_dir):
-            shutil.rmtree(tmp_idx_dir)
-        os.makedirs(tmp_idx_dir, exist_ok=True)
-
-        indexer = pt.IterDictIndexer(os.path.abspath(tmp_idx_dir), overwrite=True)
-        indexer.index(doc_generator())
-
         # Write metadata
         metadata = {
             "dataset": dataset,
@@ -789,6 +897,32 @@ class Gate1SidecarManager:
             "reservoir_seed": configured_seed,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+
+        # Collect docnos and texts
+        docnos = []
+        texts = []
+        for t in pool_terms:
+            passages = reservoirs.get(t, [])
+            combined_text = " ".join(passages) if passages else t
+            docnos.append(t)
+            texts.append(combined_text)
+
+        # Write Parquet table
+        self._save_lexical_parquet(parquet_path, docnos, texts, metadata)
+
+        # Stream documents to IterDictIndexer
+        def doc_generator() -> Iterator[Dict[str, str]]:
+            for d, txt in zip(docnos, texts):
+                yield {"docno": d, "text": txt}
+
+        tmp_idx_dir = aux_index_dir + ".tmp"
+        if os.path.exists(tmp_idx_dir):
+            shutil.rmtree(tmp_idx_dir)
+        os.makedirs(tmp_idx_dir, exist_ok=True)
+
+        indexer = pt.IterDictIndexer(os.path.abspath(tmp_idx_dir), overwrite=True)
+        indexer.index(doc_generator())
+
         with open(os.path.join(tmp_idx_dir, "sidecar_metadata.json"), "w", encoding="utf-8") as f:
             json.dump(metadata, f)
 
@@ -800,10 +934,11 @@ class Gate1SidecarManager:
 
         retriever = pt.terrier.Retriever(os.path.abspath(aux_index_dir), wmodel="BM25", num_results=500)
         timing_s = round(time.perf_counter() - t0, 2)
-        print(f"[Sidecar] Sparse Lexical Sidecar built in {timing_s}s -> {aux_index_dir}")
+        print(f"[Sidecar] Sparse Lexical Sidecar built in {timing_s}s -> {parquet_path} & {aux_index_dir}")
 
         return {
             "index_path": aux_index_dir,
+            "parquet_path": parquet_path,
             "retriever": retriever,
             "metadata": metadata,
             "timing_s": timing_s,
