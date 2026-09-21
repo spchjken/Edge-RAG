@@ -1,10 +1,28 @@
 {
-  "timestamp": "2026-09-20T14:27:10Z",
-  "config_hash": "40c7e047ac7bfa304a006cb5222a734c81ecc0f1d9a360f12a55ef21a7c3c9e4",
-  "datasets": [
-    "scifact"
+  "timestamp": "2026-09-20T18:26:08Z",
+  "config_hash": "2a6b5bed6a5e18acfbd2ac51b4cd46d9833886bf23e9eb7b658e971af6b8e7db",
+  "git_commit": "0b39cc86dd2b0f19875cb054130ba5996865297c",
+  "git_dirty": true,
+  "command_args": [
+    "CRVE/scripts/run_gate1_oracle_evaluation.py",
+    "--datasets",
+    "scifact,bright_aops,nfcorpus,trec_covid",
+    "--qids-manifest",
+    "micro_smoke_qids",
+    "--output-dir",
+    "results/gate1_selection/run_2/micro_smoke_corrected",
+    "--frozen-config-path",
+    "CRVE/configs/gate1_phase2_1a.yaml",
+    "--measure-fidelity",
+    "--clean-output"
   ],
-  "sample_size": 5,
+  "datasets": [
+    "scifact",
+    "bright_aops",
+    "nfcorpus",
+    "trec_covid"
+  ],
+  "sample_size": 50,
   "seed": 42,
   "weights": [
     0.05,
@@ -13,21 +31,108 @@
     0.5,
     1.0
   ],
-  "peak_rss_gib": 3.725,
-  "total_variants": 37680,
-  "total_cutoff_entries": 0,
-  "total_retrieval_time_sec": 760.06,
+  "peak_rss_gib": 5.134,
+  "peak_cuda_vram_mib": 218.29,
+  "total_variants": 41420,
+  "total_cutoff_entries": 22035,
+  "total_retrieval_time_sec": 2244.59,
+  "environment": {
+    "cpu_model": "x86_64",
+    "gpu_name": "NVIDIA GeForce RTX 5060 Ti",
+    "driver_version": "N/A",
+    "cuda_version": "13.0",
+    "python_version": "3.12.3",
+    "torch_version": "2.12.0+cu130",
+    "pyterrier_version": "1.1.2"
+  },
   "dataset_summaries": [
     {
       "dataset": "scifact",
       "num_docs": 5183,
       "pool_size": 5595,
       "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
-      "num_queries": 5,
-      "total_variants": 37680,
+      "num_queries": 1,
+      "total_variants": 7090,
       "total_cutoff_entries": 0,
-      "retrieval_time_sec": 760.0623747649952,
-      "fidelity_meta": {}
+      "retrieval_time_sec": 62.21981519200199,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 0.944,
+        "ppmi_rbo_mean": 0.8995192472347442,
+        "ppmi_lookup_p50_ms": 0.7127909921109676,
+        "ppmi_lookup_p95_ms": 0.7841030019335449,
+        "bge_scoring_p50_ms": 0.06313501216936857,
+        "bge_scoring_p95_ms": 4.9742640054319045,
+        "bge_full_p50_ms": 17.626368993660435,
+        "bge_full_p95_ms": 18.035265398793854,
+        "ppmi_disk_mb": 44.64,
+        "bge_disk_mb": 4.38
+      }
+    },
+    {
+      "dataset": "bright_aops",
+      "num_docs": 188002,
+      "pool_size": 10000,
+      "pool_sha256": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+      "num_queries": 1,
+      "total_variants": 9230,
+      "total_cutoff_entries": 1,
+      "retrieval_time_sec": 1728.0001365149947,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 0.838,
+        "ppmi_rbo_mean": 0.7670242388423956,
+        "ppmi_lookup_p50_ms": 2.5617759965825826,
+        "ppmi_lookup_p95_ms": 2.707289205864072,
+        "bge_scoring_p50_ms": 0.0659669894957915,
+        "bge_scoring_p95_ms": 1.082356597180478,
+        "bge_full_p50_ms": 21.96760498918593,
+        "bge_full_p95_ms": 22.78176480322145,
+        "ppmi_disk_mb": 75.82,
+        "bge_disk_mb": 7.76
+      }
+    },
+    {
+      "dataset": "nfcorpus",
+      "num_docs": 3633,
+      "pool_size": 7783,
+      "pool_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+      "num_queries": 1,
+      "total_variants": 8170,
+      "total_cutoff_entries": 157,
+      "retrieval_time_sec": 170.06118053100363,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 1.0,
+        "ppmi_rbo_mean": 0.9999589760148537,
+        "ppmi_lookup_p50_ms": 0.17958499665837735,
+        "ppmi_lookup_p95_ms": 0.2532712009269744,
+        "bge_scoring_p50_ms": 0.04300000728107989,
+        "bge_scoring_p95_ms": 0.5917445989325641,
+        "bge_full_p50_ms": 19.378985991352238,
+        "bge_full_p95_ms": 19.45729380240664,
+        "ppmi_disk_mb": 43.34,
+        "bge_disk_mb": 6.11
+      }
+    },
+    {
+      "dataset": "trec_covid",
+      "num_docs": 171331,
+      "pool_size": 10000,
+      "pool_sha256": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39",
+      "num_queries": 1,
+      "total_variants": 16930,
+      "total_cutoff_entries": 21877,
+      "retrieval_time_sec": 284.30959043299663,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 1.0,
+        "ppmi_rbo_mean": 0.9999589760148537,
+        "ppmi_lookup_p50_ms": 0.24125899653881788,
+        "ppmi_lookup_p95_ms": 0.2992493973579258,
+        "bge_scoring_p50_ms": 0.06594699516426772,
+        "bge_scoring_p95_ms": 0.6913238001288845,
+        "bge_full_p50_ms": 16.77537198702339,
+        "bge_full_p95_ms": 20.887110597686842,
+        "ppmi_disk_mb": 223.02,
+        "bge_disk_mb": 7.81
+      }
     }
   ]
 }

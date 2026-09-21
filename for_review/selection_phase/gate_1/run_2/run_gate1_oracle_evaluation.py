@@ -18,6 +18,7 @@ import argparse
 import gc
 import glob
 import shutil
+import subprocess
 from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict
 
@@ -85,8 +86,22 @@ class MemorySafetyError(RuntimeError):
     pass
 
 
+PEAK_PROCESS_TREE_RSS_BYTES: int = 0
+
+
+def get_git_info() -> Dict[str, Any]:
+    """Retrieves current git commit hash and dirty status."""
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+        return {"git_commit": commit, "git_dirty": bool(status)}
+    except Exception:
+        return {"git_commit": "UNKNOWN", "git_dirty": False}
+
+
 def get_process_tree_rss_bytes() -> int:
     """Calculates total RSS memory consumed by this process and all children (e.g. JVM)."""
+    global PEAK_PROCESS_TREE_RSS_BYTES
     try:
         parent = psutil.Process()
         total = parent.memory_info().rss
@@ -95,6 +110,8 @@ def get_process_tree_rss_bytes() -> int:
                 total += child.memory_info().rss
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+        if total > PEAK_PROCESS_TREE_RSS_BYTES:
+            PEAK_PROCESS_TREE_RSS_BYTES = total
         return total
     except Exception:
         return 0
@@ -113,13 +130,71 @@ def check_memory_watchdog(warn_rss_gib: float = 8.0, abort_rss_gib: float = 12.0
             torch.cuda.empty_cache()
 
 
-def get_shard_paths(shards_dir: str, dataset: str, qid: str) -> Tuple[str, str, str]:
-    """Generates shard paths for parent candidate audit, cutoff entries, and query status."""
+def validate_manifest_qids(manifest_qids: List[str], dataset: str) -> None:
+    """Validates frozen manifest QIDs: non-empty, no duplicates."""
+    if not manifest_qids:
+        raise ValueError(f"FATAL: Manifest QIDs for dataset '{dataset}' cannot be empty!")
+    if len(manifest_qids) != len(set(manifest_qids)):
+        raise RuntimeError(f"FATAL: Duplicate QIDs detected in frozen manifest for dataset '{dataset}'!")
+
+
+def validate_shard_hashes(status_dict: Dict[str, Any], expected_hashes: Dict[str, str], qid: str) -> None:
+    """Validates shard hashes match expected config, dataset, qrels, and pool hashes."""
+    st_cfg = status_dict.get("config_hash", "")
+    st_ds = status_dict.get("dataset_hash", "")
+    st_qrels = status_dict.get("qrels_hash", "")
+    st_pool = status_dict.get("pool_hash", "")
+
+    exp_cfg = expected_hashes.get("config_hash", "")
+    exp_ds = expected_hashes.get("dataset_hash", "")
+    exp_qrels = expected_hashes.get("qrels_hash", "")
+    exp_pool = expected_hashes.get("pool_hash", "")
+
+    if st_cfg != exp_cfg or st_ds != exp_ds or st_qrels != exp_qrels or st_pool != exp_pool:
+        raise RuntimeError(
+            f"FATAL: Stale shard for QID {qid} has mismatched hashes: "
+            f"config={st_cfg[:8]} vs {exp_cfg[:8]}, dataset={st_ds[:8]} vs {exp_ds[:8]}, "
+            f"qrels={st_qrels[:8]} vs {exp_qrels[:8]}, pool={st_pool[:8]} vs {exp_pool[:8]}. Clean output directory."
+        )
+
+
+def validate_action_coverage(audit_df: pd.DataFrame, universe_df: pd.DataFrame, weights: List[float]) -> None:
+    """Validates exact Cartesian set equality between actual audit actions and reference universe x weights."""
+    expected_triples = set()
+    for _, row in universe_df.iterrows():
+        qid = str(row["qid"])
+        t = str(row["candidate_term"])
+        for w in weights:
+            expected_triples.add((qid, t, round(float(w), 4)))
+
+    actual_triples = set()
+    for _, row in audit_df.iterrows():
+        qid = str(row["qid"])
+        t = str(row["candidate_term"])
+        w = round(float(row["weight"]), 4)
+        actual_triples.add((qid, t, w))
+
+    if len(audit_df) != len(actual_triples):
+        raise RuntimeError(
+            f"FATAL: Duplicate action evaluations found in audit: {len(audit_df)} rows vs {len(actual_triples)} unique triples!"
+        )
+
+    missing = expected_triples - actual_triples
+    extra = actual_triples - expected_triples
+    if missing or extra:
+        raise RuntimeError(
+            f"FATAL: Action coverage set equality failed! Missing triples: {len(missing)}, Extra triples: {len(extra)}."
+        )
+
+
+def get_shard_paths(shards_dir: str, dataset: str, qid: str) -> Tuple[str, str, str, str]:
+    """Generates shard paths for parent candidate audit, cutoff entries, query status, and reference universe."""
     q_hash = hashlib.md5(qid.encode("utf-8")).hexdigest()[:12]
     parent_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}.parquet")
     cutoff_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_cutoff_entries.parquet")
     status_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_status.parquet")
-    return parent_shard, cutoff_shard, status_shard
+    universe_shard = os.path.join(shards_dir, f"{dataset}_{q_hash}_universe.parquet")
+    return parent_shard, cutoff_shard, status_shard, universe_shard
 
 
 def compute_ir_metrics(
@@ -176,7 +251,7 @@ def evaluate_query_gate1(
     qid = str(query_obj.get("query_id", query_obj.get("qid", "")))
     q_text = str(query_obj.get("question", query_obj.get("query", "")))
     qrels = {str(k): float(v) for k, v in query_obj.get("qrels", {}).items()}
-    exclusions = set(str(x) for x in query_obj.get("exclusions", []))
+    exclusions = set(str(x) for x in query_obj.get("excluded_doc_ids", query_obj.get("exclusions", [])))
     gold_dids = {d for d, r in qrels.items() if r >= 1 and d not in exclusions}
 
     # 1. Baseline retrieval
@@ -232,13 +307,43 @@ def evaluate_query_gate1(
         for r, (t, _) in enumerate(ranking, 1):
             proposer_ranks_map[t][f"{ch_name}_rank"] = r
 
-    # 3. Form Core Reference Universe R_q: (T_Phase1 n P_q) U U_m C_{500}^m
+    OPERATIONAL_CHANNELS = [
+        "WholeQueryBGE",
+        "AnchorBGEFiltered",
+        "AnchorBGEAll",
+        "PPMISidecar",
+        "SparseLexicalContextProfiles",
+        "AcronymDefinitionRescue",
+        "RRF_Core3",
+        "RRF_Extended",
+    ]
+
+    # 3. Form Core Reference Universe R_q: (T_Phase1 n P_q) U U_{m in OPERATIONAL} C_{500}^m
     clean_phase1_cands = {t for t in phase1_cands_for_q if t in pool_set and t not in query_excluded_terms}
     r_core = set(clean_phase1_cands)
-    for ranking in channel_proposals.values():
-        r_core.update([t for t, _ in ranking])
+    candidate_sources = defaultdict(set)
+    for t in clean_phase1_cands:
+        candidate_sources[t].add("phase1")
 
-    # Compute PPMI fidelity if both sidecar and live PPMI are present
+    for ch_name in OPERATIONAL_CHANNELS:
+        if ch_name in channel_proposals:
+            for t, _ in channel_proposals[ch_name]:
+                r_core.add(t)
+                candidate_sources[t].add(ch_name)
+
+    universe_rows = [
+        {
+            "dataset": dataset,
+            "qid": qid,
+            "candidate_term": t,
+            "is_phase1": bool("phase1" in candidate_sources[t]),
+            "proposer_sources": ",".join(sorted(candidate_sources[t])),
+        }
+        for t in sorted(r_core)
+    ]
+    df_universe = pd.DataFrame(universe_rows)
+
+    # Compute PPMI fidelity if both sidecar and live PPMI are present (diagnostic only)
     live_ppmi_terms = [t for t, _ in channel_proposals.get("LivePPMI", [])]
     sidecar_ppmi_terms = [t for t, _ in channel_proposals.get("PPMISidecar", [])]
     if live_ppmi_terms:
@@ -250,6 +355,8 @@ def evaluate_query_gate1(
         ppmi_recall500 = 1.0
         ppmi_rbo = 1.0
 
+    sorted_r_core = sorted(list(r_core))
+    r_core_sha = hashlib.sha256("\n".join(sorted_r_core).encode("utf-8")).hexdigest()
     status_meta = {
         "dataset": dataset,
         "qid": qid,
@@ -262,6 +369,9 @@ def evaluate_query_gate1(
         "num_variants": len(r_core) * len(weights),
         "num_cutoff_entries": 0,
         "is_empty_reference": len(r_core) == 0,
+        "reference_universe_size": len(r_core),
+        "reference_universe_sha256": r_core_sha,
+        "expected_action_count": len(r_core) * len(weights),
         "ppmi_recall500": float(ppmi_recall500),
         "ppmi_rbo": float(ppmi_rbo),
         "channel_latencies_json": json.dumps(channel_latencies),
@@ -269,9 +379,8 @@ def evaluate_query_gate1(
         "error_msg": "",
     }
 
-
     if not r_core:
-        return pd.DataFrame(), pd.DataFrame(), status_meta
+        return pd.DataFrame(), pd.DataFrame(), status_meta, df_universe
 
     candidates_list = sorted(list(r_core))
 
@@ -289,19 +398,6 @@ def evaluate_query_gate1(
                 "query_toks": q_toks,
             })
 
-    # 5. Batch retrieval execution
-    results_by_var = defaultdict(list)
-    for i in range(0, len(variants_to_eval), chunk_size):
-        check_memory_watchdog()
-        chunk = variants_to_eval[i:i + chunk_size]
-        df_chunk = pd.DataFrame([{"qid": item["var_id"], "query_toks": item["query_toks"]} for item in chunk])
-        res_chunk = bm25.transform(df_chunk)
-        if not res_chunk.empty:
-            q_arr = res_chunk["qid"].values
-            d_arr = res_chunk["docno"].values
-            for q_id, doc in zip(q_arr, d_arr):
-                results_by_var[q_id].append(str(doc))
-
     # Precompute ideal DCG@10 and total relevant docs
     n_rel = sum(1 for r in qrels.values() if r >= 1)
     ideal_rels = sorted([r for r in qrels.values() if r >= 1], reverse=True)[:10]
@@ -311,110 +407,127 @@ def evaluate_query_gate1(
     epsilon_thresh = thresholds.get("epsilon", EPSILON)
     tau_thresh = thresholds.get("tau", TAU)
 
-    # 6. Evaluate metrics & cutoff entries
+    # 5. Stream batch retrieval execution and evaluate metrics chunk-by-chunk
     parent_records = []
     cutoff_records = []
-
-    # Map candidate -> list of variant outcomes to compute deduplicated cutoff entries
     cand_variant_outcomes = defaultdict(list)
 
-    for item in variants_to_eval:
-        var_id = item["var_id"]
-        cand = item["candidate"]
-        w = item["weight"]
+    for i in range(0, len(variants_to_eval), chunk_size):
+        check_memory_watchdog()
+        chunk = variants_to_eval[i:i + chunk_size]
+        df_chunk = pd.DataFrame([{"qid": item["var_id"], "query_toks": item["query_toks"]} for item in chunk])
+        res_chunk = bm25.transform(df_chunk)
 
-        raw_docs = results_by_var.get(var_id, [])
-        if exclusions:
-            exp_docs = [d for d in raw_docs if d not in exclusions][:1000]
-        else:
-            exp_docs = raw_docs[:1000]
-        exp_ranks = {docno: r for r, docno in enumerate(exp_docs, 1)}
+        # Map var_id to filtered top-1000 document list for this chunk only
+        chunk_results = defaultdict(list)
+        if not res_chunk.empty:
+            q_arr = res_chunk["qid"].values
+            d_arr = res_chunk["docno"].values
+            for q_id, doc in zip(q_arr, d_arr):
+                chunk_results[q_id].append(str(doc))
 
-        dcg = sum(qrels.get(d, 0.0) / math.log2(i + 2) for i, d in enumerate(exp_docs[:10]))
-        ndcg10_val = float(dcg / idcg10) if idcg10 > 0.0 else 0.0
-        r100_val = (sum(1 for d in exp_docs[:100] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
-        r200_val = (sum(1 for d in exp_docs[:200] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
-        r500_val = (sum(1 for d in exp_docs[:500] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
-        r1000_val = (sum(1 for d in exp_docs[:1000] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
+        # Evaluate each variant in this chunk immediately
+        for item in chunk:
+            var_id = item["var_id"]
+            cand = item["candidate"]
+            w = item["weight"]
 
-        d_ndcg10 = ndcg10_val - base_metrics["ndcg10"]
-        d_r100 = r100_val - base_metrics["r100"]
-        d_r200 = r200_val - base_metrics["r200"]
-        d_r500 = r500_val - base_metrics["r500"]
-        d_r1000 = r1000_val - base_metrics["r1000"]
+            raw_docs = chunk_results.get(var_id, [])
+            if exclusions:
+                exp_docs = [d for d in raw_docs if d not in exclusions][:1000]
+            else:
+                exp_docs = raw_docs[:1000]
+            exp_ranks = {docno: r for r, docno in enumerate(exp_docs, 1)}
 
-        # Calculate cutoff entry / leaving / net counts
-        cutoff_net = {}
-        for k in TRACKED_CUTOFFS:
-            ent = sum(1 for d in gold_dids if base_ranks.get(d, 9999) > k and exp_ranks.get(d, 9999) <= k)
-            lea = sum(1 for d in gold_dids if base_ranks.get(d, 9999) <= k and exp_ranks.get(d, 9999) > k)
-            cutoff_net[f"net_rel_docs_k{k}"] = ent - lea
+            dcg = sum(qrels.get(d, 0.0) / math.log2(idx + 2) for idx, d in enumerate(exp_docs[:10]))
+            ndcg10_val = float(dcg / idcg10) if idcg10 > 0.0 else 0.0
+            r100_val = (sum(1 for d in exp_docs[:100] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
+            r200_val = (sum(1 for d in exp_docs[:200] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
+            r500_val = (sum(1 for d in exp_docs[:500] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
+            r1000_val = (sum(1 for d in exp_docs[:1000] if qrels.get(d, 0) >= 1) / n_rel) if n_rel > 0 else 0.0
 
-        net_k1000 = cutoff_net["net_rel_docs_k1000"]
+            d_ndcg10 = ndcg10_val - base_metrics["ndcg10"]
+            d_r100 = r100_val - base_metrics["r100"]
+            d_r200 = r200_val - base_metrics["r200"]
+            d_r500 = r500_val - base_metrics["r500"]
+            d_r1000 = r1000_val - base_metrics["r1000"]
 
-        # Exhaustive Mutually Exclusive Action Partition:
-        # Helpful: d_ndcg10 >= delta and net_rel_docs_k1000 >= 0
-        # Harmful: d_ndcg10 < -epsilon or net_rel_docs_k1000 < 0
-        # Neutral: otherwise
-        is_helpful_act = (d_ndcg10 >= delta_thresh) and (net_k1000 >= 0)
-        is_harmful_act = (d_ndcg10 < -epsilon_thresh) or (net_k1000 < 0)
-        is_neutral_act = (not is_helpful_act) and (not is_harmful_act)
-        is_waste_act = (d_ndcg10 <= 0.0) and (d_r1000 <= 0.0)
+            # Calculate cutoff entry / leaving / net counts
+            cutoff_net = {}
+            for k in TRACKED_CUTOFFS:
+                ent = sum(1 for d in gold_dids if base_ranks.get(d, 9999) > k and exp_ranks.get(d, 9999) <= k)
+                lea = sum(1 for d in gold_dids if base_ranks.get(d, 9999) <= k and exp_ranks.get(d, 9999) > k)
+                cutoff_net[f"net_rel_docs_k{k}"] = ent - lea
 
-        p_row = {
-            "dataset": dataset,
-            "qid": qid,
-            "candidate_term": cand,
-            "weight": float(w),
-            "config_hash": config_hash,
-            "dataset_hash": dataset_hash,
-            "qrels_hash": qrels_hash,
-            "baseline_ndcg10": float(base_metrics["ndcg10"]),
-            "expanded_ndcg10": float(ndcg10_val),
-            "delta_ndcg10": float(d_ndcg10),
-            "baseline_r1000": float(base_metrics["r1000"]),
-            "expanded_r1000": float(r1000_val),
-            "delta_r100": float(d_r100),
-            "delta_r200": float(d_r200),
-            "delta_r500": float(d_r500),
-            "delta_r1000": float(d_r1000),
-            "net_rel_docs_k10": int(cutoff_net.get("net_rel_docs_k10", 0)),
-            "net_rel_docs_k100": int(cutoff_net["net_rel_docs_k100"]),
-            "net_rel_docs_k200": int(cutoff_net["net_rel_docs_k200"]),
-            "net_rel_docs_k500": int(cutoff_net["net_rel_docs_k500"]),
-            "net_rel_docs_k1000": int(cutoff_net["net_rel_docs_k1000"]),
-            "is_ranking_helpful_action": bool(is_helpful_act),
-            "is_recall_helpful_k10": bool(cutoff_net.get("net_rel_docs_k10", 0) >= 1 and d_ndcg10 >= -epsilon_thresh),
-            "is_recall_helpful_k100": bool(cutoff_net["net_rel_docs_k100"] >= 1 and d_ndcg10 >= -epsilon_thresh),
-            "is_recall_helpful_k200": bool(cutoff_net["net_rel_docs_k200"] >= 1 and d_ndcg10 >= -epsilon_thresh),
-            "is_recall_helpful_k500": bool(cutoff_net["net_rel_docs_k500"] >= 1 and d_ndcg10 >= -epsilon_thresh),
-            "is_recall_helpful_k1000": bool(cutoff_net["net_rel_docs_k1000"] >= 1 and d_ndcg10 >= -epsilon_thresh),
-            "action_helpful": bool(is_helpful_act),
-            "action_harmful": bool(is_harmful_act),
-            "action_neutral": bool(is_neutral_act),
-            "action_waste": bool(is_waste_act),
-            "in_phase1": bool(cand in clean_phase1_cands),
-        }
-        p_ranks = proposer_ranks_map.get(cand, {})
-        p_row["wq_rank"] = float(p_ranks.get("WholeQueryBGE_rank", np.nan))
-        p_row["anchor_filt_rank"] = float(p_ranks.get("AnchorBGEFiltered_rank", np.nan))
-        p_row["anchor_all_rank"] = float(p_ranks.get("AnchorBGEAll_rank", np.nan))
-        p_row["ppmi_sidecar_rank"] = float(p_ranks.get("PPMISidecar_rank", np.nan))
-        p_row["live_ppmi_rank"] = float(p_ranks.get("LivePPMI_rank", np.nan))
-        p_row["lex_rank"] = float(p_ranks.get("LivePPMI_rank", p_ranks.get("PPMISidecar_rank", np.nan)))
-        p_row["sparse_lex_rank"] = float(p_ranks.get("SparseLexicalContextProfiles_rank", np.nan))
-        p_row["acronym_rank"] = float(p_ranks.get("AcronymDefinitionRescue_rank", np.nan))
-        p_row["rrf_core3_rank"] = float(p_ranks.get("RRF_Core3_rank", np.nan))
-        p_row["rrf_ext_rank"] = float(p_ranks.get("RRF_Extended_rank", np.nan))
-        parent_records.append(p_row)
+            net_k1000 = cutoff_net["net_rel_docs_k1000"]
 
-        # Store variant outcome for cutoff entries
-        cand_variant_outcomes[cand].append({
-            "weight": w,
-            "exp_ranks": exp_ranks,
-            "d_ndcg10": d_ndcg10,
-            "cutoff_net": cutoff_net,
-        })
+            # Exhaustive Mutually Exclusive Action Partition:
+            # Helpful: d_ndcg10 >= delta and net_rel_docs_k1000 >= 0
+            # Harmful: d_ndcg10 < -epsilon or net_rel_docs_k1000 < 0
+            # Neutral: otherwise
+            is_helpful_act = (d_ndcg10 >= delta_thresh) and (net_k1000 >= 0)
+            is_harmful_act = (d_ndcg10 < -epsilon_thresh) or (net_k1000 < 0)
+            is_neutral_act = (not is_helpful_act) and (not is_harmful_act)
+            is_waste_act = (d_ndcg10 <= 0.0) and (d_r1000 <= 0.0)
+
+            p_row = {
+                "dataset": dataset,
+                "qid": qid,
+                "candidate_term": cand,
+                "weight": float(w),
+                "config_hash": config_hash,
+                "dataset_hash": dataset_hash,
+                "qrels_hash": qrels_hash,
+                "baseline_ndcg10": float(base_metrics["ndcg10"]),
+                "expanded_ndcg10": float(ndcg10_val),
+                "delta_ndcg10": float(d_ndcg10),
+                "baseline_r1000": float(base_metrics["r1000"]),
+                "expanded_r1000": float(r1000_val),
+                "delta_r100": float(d_r100),
+                "delta_r200": float(d_r200),
+                "delta_r500": float(d_r500),
+                "delta_r1000": float(d_r1000),
+                "net_rel_docs_k10": int(cutoff_net.get("net_rel_docs_k10", 0)),
+                "net_rel_docs_k100": int(cutoff_net["net_rel_docs_k100"]),
+                "net_rel_docs_k200": int(cutoff_net["net_rel_docs_k200"]),
+                "net_rel_docs_k500": int(cutoff_net["net_rel_docs_k500"]),
+                "net_rel_docs_k1000": int(cutoff_net["net_rel_docs_k1000"]),
+                "is_ranking_helpful_action": bool(is_helpful_act),
+                "is_recall_helpful_k10": bool(cutoff_net.get("net_rel_docs_k10", 0) >= 1 and d_ndcg10 >= -epsilon_thresh),
+                "is_recall_helpful_k100": bool(cutoff_net["net_rel_docs_k100"] >= 1 and d_ndcg10 >= -epsilon_thresh),
+                "is_recall_helpful_k200": bool(cutoff_net["net_rel_docs_k200"] >= 1 and d_ndcg10 >= -epsilon_thresh),
+                "is_recall_helpful_k500": bool(cutoff_net["net_rel_docs_k500"] >= 1 and d_ndcg10 >= -epsilon_thresh),
+                "is_recall_helpful_k1000": bool(cutoff_net["net_rel_docs_k1000"] >= 1 and d_ndcg10 >= -epsilon_thresh),
+                "action_helpful": bool(is_helpful_act),
+                "action_harmful": bool(is_harmful_act),
+                "action_neutral": bool(is_neutral_act),
+                "action_waste": bool(is_waste_act),
+                "in_phase1": bool(cand in clean_phase1_cands),
+            }
+            p_ranks = proposer_ranks_map.get(cand, {})
+            p_row["wq_rank"] = float(p_ranks.get("WholeQueryBGE_rank", np.nan))
+            p_row["anchor_filt_rank"] = float(p_ranks.get("AnchorBGEFiltered_rank", np.nan))
+            p_row["anchor_all_rank"] = float(p_ranks.get("AnchorBGEAll_rank", np.nan))
+            p_row["ppmi_sidecar_rank"] = float(p_ranks.get("PPMISidecar_rank", np.nan))
+            p_row["live_ppmi_rank"] = float(p_ranks.get("LivePPMI_rank", np.nan))
+            p_row["lex_rank"] = float(p_ranks.get("LivePPMI_rank", p_ranks.get("PPMISidecar_rank", np.nan)))
+            p_row["sparse_lex_rank"] = float(p_ranks.get("SparseLexicalContextProfiles_rank", np.nan))
+            p_row["acronym_rank"] = float(p_ranks.get("AcronymDefinitionRescue_rank", np.nan))
+            p_row["rrf_core3_rank"] = float(p_ranks.get("RRF_Core3_rank", np.nan))
+            p_row["rrf_ext_rank"] = float(p_ranks.get("RRF_Extended_rank", np.nan))
+            parent_records.append(p_row)
+
+            # Store variant outcome for cutoff entries (only track ranks of gold relevant docs for memory efficiency)
+            gold_ranks = {did: exp_ranks.get(did, 9999) for did in gold_dids}
+            cand_variant_outcomes[cand].append({
+                "weight": w,
+                "gold_ranks": gold_ranks,
+                "d_ndcg10": d_ndcg10,
+                "cutoff_net": cutoff_net,
+            })
+
+        del chunk_results, res_chunk, df_chunk
+
 
     # Deduplicate cutoff entries over weights for each candidate term
     for cand, v_list in cand_variant_outcomes.items():
@@ -425,7 +538,7 @@ def evaluate_query_gate1(
                     raw_in = False
                     safe_in = False
                     for v in v_list:
-                        e_r = v["exp_ranks"].get(did, 9999)
+                        e_r = v.get("gold_ranks", v.get("exp_ranks", {})).get(did, 9999)
                         if e_r <= k:
                             raw_in = True
                             # Recall-safe entry: d_ndcg10 >= -epsilon and net_rel_docs_k >= 1
@@ -449,7 +562,7 @@ def evaluate_query_gate1(
         "dataset", "qid", "candidate_term", "cutoff", "docid", "raw_entry", "recall_safe_entry"
     ])
 
-    return parent_df, cutoff_df, status_meta
+    return parent_df, cutoff_df, status_meta, df_universe
 
 
 def run_dataset_gate1_evaluation(
@@ -467,6 +580,7 @@ def run_dataset_gate1_evaluation(
     config_hash: str = "core_dev_v1",
     measure_fidelity: bool = False,
     bge_model: str = "BAAI/bge-small-en-v1.5",
+    qids_manifest: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Runs complete Gate 1 counterfactual evaluation for a single dataset."""
     print(f"\n=======================================================")
@@ -508,12 +622,37 @@ def run_dataset_gate1_evaluation(
     pool_set = set(pool_terms)
     print(f"  [Canonical Pool] Loaded {pool_size:,} terms (SHA-256: {pool_hash[:12]}...)")
 
-    # Compute dataset and qrels content hashes
-    q_file, qrels_file = BenchmarkLoader.get_query_qrels_paths(dataset)
-    with open(q_file, "rb") as f:
-        dataset_hash = hashlib.sha256(f.read()).hexdigest()
-    with open(qrels_file, "rb") as f:
-        qrels_hash = hashlib.sha256(f.read()).hexdigest()
+    # Compute dataset and qrels content hashes from consumed input paths
+    consumed_inputs = BenchmarkLoader.get_consumed_input_paths(dataset)
+    input_hashes = {}
+    for name, path in consumed_inputs.items():
+        with open(path, "rb") as f:
+            input_hashes[name] = hashlib.sha256(f.read()).hexdigest()
+
+    if "examples" in input_hashes:
+        dataset_hash = input_hashes["examples"]
+        qrels_hash = input_hashes["examples"]
+    else:
+        dataset_hash = input_hashes.get("queries", "")
+        qrels_hash = input_hashes.get("qrels", "")
+
+    # Recompute and validate recorded index files at runtime
+    idx_manifest_path = os.path.join(os.path.dirname(idx_path), "index_manifest.json")
+    if not os.path.exists(idx_manifest_path):
+        raise FileNotFoundError(f"FATAL: index_manifest.json not found at {idx_manifest_path}!")
+    with open(idx_manifest_path, "r", encoding="utf-8") as f:
+        idx_manifest = json.load(f)
+
+    for fname, exp_hash in idx_manifest.get("index_files", {}).items():
+        fpath = os.path.join(os.path.dirname(idx_path), fname)
+        if not os.path.exists(fpath):
+            raise FileNotFoundError(f"FATAL: Required index file missing: {fpath}")
+        with open(fpath, "rb") as f:
+            actual_hash = hashlib.sha256(f.read()).hexdigest()
+        if actual_hash != exp_hash:
+            raise RuntimeError(f"FATAL: Index file {fname} has changed! Actual {actual_hash} != recorded {exp_hash}")
+
+    index_manifest_hash = idx_manifest.get("manifest_sha256", "")
 
     # 2. Build full-lexicon statistics for query anchors
     lex = index.getLexicon()
@@ -533,19 +672,25 @@ def run_dataset_gate1_evaluation(
     frozen_qids = None
     if frozen_config and "query_manifests" in frozen_config:
         q_manifest = frozen_config["query_manifests"]
-        if sample_size == 10 and "probe_40_qids" in q_manifest:
+        if qids_manifest and qids_manifest in q_manifest:
+            frozen_qids = q_manifest[qids_manifest].get(dataset)
+        elif sample_size == 1 and "micro_smoke_qids" in q_manifest:
+            frozen_qids = q_manifest["micro_smoke_qids"].get(dataset)
+        elif sample_size == 10 and "probe_40_qids" in q_manifest:
             frozen_qids = q_manifest["probe_40_qids"].get(dataset)
         elif sample_size == 50 and "dev_200_qids" in q_manifest:
             frozen_qids = q_manifest["dev_200_qids"].get(dataset)
 
     if frozen_qids:
-        if len(frozen_qids) != len(set(frozen_qids)):
-            raise RuntimeError(f"FATAL: Duplicate QIDs detected in frozen manifest for dataset '{dataset}'!")
+        validate_manifest_qids(frozen_qids, dataset)
         missing_qids = set(frozen_qids) - set(q_by_id.keys())
         if missing_qids:
             raise RuntimeError(f"FATAL: Dataset '{dataset}' is missing {len(missing_qids)} QIDs from frozen manifest: {list(missing_qids)[:5]}")
         sampled_queries = [q_by_id[qid] for qid in frozen_qids]
         print(f"  [Queries] Loaded {len(sampled_queries)} queries from frozen manifest for {dataset}.")
+        if dataset == "bright_aops":
+            q_ex = sampled_queries[0].get("excluded_doc_ids", sampled_queries[0].get("exclusions", []))
+            assert len(q_ex) > 0, f"FATAL: Micro-smoke BRIGHT query {frozen_qids[0]} has 0 exclusions!"
     else:
         rng = random.Random(seed)
         if len(all_queries) <= sample_size:
@@ -554,7 +699,7 @@ def run_dataset_gate1_evaluation(
             sampled_queries = rng.sample(all_queries, sample_size)
         print(f"  [Queries] Sampled {len(sampled_queries)} queries using seed={seed}.")
 
-    max_ex = max((len(q.get("exclusions", [])) for q in all_queries), default=0)
+    max_ex = max((len(q.get("excluded_doc_ids", q.get("exclusions", []))) for q in all_queries), default=0)
     k_fetch = min(num_docs, 1000 + max_ex)
     bm25 = pt.terrier.Retriever(index, wmodel="BM25", num_results=k_fetch)
 
@@ -564,7 +709,7 @@ def run_dataset_gate1_evaluation(
     pool_embeddings = bge_sidecar["pool_embeddings"]
     surf_to_idx = bge_sidecar["surf_to_idx"]
 
-    ppmi_top_m = frozen_config.get("ppmi", {}).get("top_m", 600) if frozen_config else 600
+    ppmi_top_m = frozen_config.get("sidecars", {}).get("ppmi", {}).get("top_m", 600) if frozen_config else 600
     ppmi_sidecar = sidecar_mgr.build_or_load_bounded_ppmi_sidecar(dataset, index, pool_terms, num_docs=num_docs, top_m=ppmi_top_m)
     anchor_ppmi = ppmi_sidecar["anchor_ppmi"]
 
@@ -642,20 +787,19 @@ def run_dataset_gate1_evaluation(
 
     for idx_q, q in enumerate(sampled_queries, 1):
         qid = str(q["query_id"])
-        parent_shard, cutoff_shard, status_shard = get_shard_paths(shards_dir, dataset, qid)
+        parent_shard, cutoff_shard, status_shard, universe_shard = get_shard_paths(shards_dir, dataset, qid)
 
-        if resume and os.path.exists(parent_shard) and os.path.exists(cutoff_shard) and os.path.exists(status_shard):
+        if resume and os.path.exists(parent_shard) and os.path.exists(cutoff_shard) and os.path.exists(status_shard) and os.path.exists(universe_shard):
             try:
                 st_data = pq.read_table(status_shard).to_pydict()
-                st_cfg = st_data.get("config_hash", [""])[0]
-                st_ds = st_data.get("dataset_hash", [""])[0]
-                st_qrels = st_data.get("qrels_hash", [""])[0]
-                st_pool = st_data.get("pool_hash", [""])[0]
-                if st_cfg != config_hash or st_ds != dataset_hash or st_qrels != qrels_hash or st_pool != pool_hash:
-                    raise RuntimeError(
-                        f"FATAL: Stale shard for QID {qid} has mismatched hashes: "
-                        f"config={st_cfg[:8]} vs {config_hash[:8]}, qrels={st_qrels[:8]} vs {qrels_hash[:8]}, pool={st_pool[:8]} vs {pool_hash[:8]}. Clean output directory."
-                    )
+                st_status = {k: v[0] for k, v in st_data.items()}
+                expected_hashes = {
+                    "config_hash": config_hash,
+                    "dataset_hash": dataset_hash,
+                    "qrels_hash": qrels_hash,
+                    "pool_hash": pool_hash,
+                }
+                validate_shard_hashes(st_status, expected_hashes, qid)
                 p_rows = pq.read_metadata(parent_shard).num_rows
                 c_rows = pq.read_metadata(cutoff_shard).num_rows
                 total_variants += p_rows
@@ -668,7 +812,7 @@ def run_dataset_gate1_evaluation(
                 pass
 
         t0_q = time.perf_counter()
-        df_p, df_c, q_status = evaluate_query_gate1(
+        df_p, df_c, q_status, df_u = evaluate_query_gate1(
             dataset=dataset,
             query_obj=q,
             index=index,
@@ -693,13 +837,14 @@ def run_dataset_gate1_evaluation(
         df_p.to_parquet(parent_shard, index=False)
         df_c.to_parquet(cutoff_shard, index=False)
         pd.DataFrame([q_status]).to_parquet(status_shard, index=False)
+        df_u.to_parquet(universe_shard, index=False)
 
         total_variants += len(df_p)
         total_cutoff_entries += len(df_c)
         v_rate = len(df_p) / max(t_q, 0.001)
         print(f"  [{idx_q}/{len(sampled_queries)}] QID {qid}: Evaluated {len(df_p)} variants ({len(df_c)} cutoff entries) in {t_q:.2f}s ({v_rate:.1f} var/s)")
 
-        del df_p, df_c
+        del df_p, df_c, df_u
         gc.collect()
 
     total_time = time.perf_counter() - t0_retrieval
@@ -729,7 +874,7 @@ def run_dataset_gate1_evaluation(
                 q_emb = encoder.encode([q_text], normalize_embeddings=True, show_progress_bar=False)[0]
             else:
                 q_emb = encoder.encode_queries([q_text])[0]
-            q_tensor = torch.tensor(q_emb, device=device).unsqueeze(0)
+            q_tensor = torch.tensor(q_emb, device=device, dtype=pool_embeddings.dtype).unsqueeze(0)
             for _ in range(5):
                 t0 = time.perf_counter()
                 _ = torch.matmul(q_tensor, pool_embeddings.T).squeeze(0)
@@ -747,7 +892,7 @@ def run_dataset_gate1_evaluation(
         rbos = []
         for q in sampled_queries:
             qid = str(q["query_id"])
-            _, _, s_shard = get_shard_paths(shards_dir, dataset, qid)
+            _, _, s_shard, _ = get_shard_paths(shards_dir, dataset, qid)
             if os.path.exists(s_shard):
                 df_s = pd.read_parquet(s_shard)
                 if "ppmi_recall500" in df_s.columns:
@@ -795,17 +940,33 @@ def assemble_shards_to_master(shards_dir: str, shard_type: str, output_path: str
         all_files = sorted(glob.glob(os.path.join(shards_dir, "*_cutoff_entries.parquet")))
     elif shard_type == "status":
         all_files = sorted(glob.glob(os.path.join(shards_dir, "*_status.parquet")))
+    elif shard_type == "universe":
+        all_files = sorted(glob.glob(os.path.join(shards_dir, "*_universe.parquet")))
     elif shard_type == "audit":
         all_files = sorted([
             f for f in glob.glob(os.path.join(shards_dir, "*.parquet"))
-            if not f.endswith("_cutoff_entries.parquet") and not f.endswith("_status.parquet")
+            if not f.endswith("_cutoff_entries.parquet") and not f.endswith("_status.parquet") and not f.endswith("_universe.parquet")
         ])
     else:
         raise ValueError(f"Unknown shard_type: {shard_type}")
 
     if not all_files:
-        print(f"No target files found in {shards_dir} for shard_type={shard_type}")
+        print(f"No shards found for type '{shard_type}' in {shards_dir}.")
         return
+
+    # Check for expected QIDs
+    if expected_qids is not None and shard_type in ("status", "universe", "audit"):
+        if shard_type == "status":
+            st_dfs = [pd.read_parquet(f) for f in all_files]
+            assembled_qids = set(pd.concat(st_dfs, ignore_index=True)["qid"].astype(str))
+            missing_qids = expected_qids - assembled_qids
+            extra_qids = assembled_qids - expected_qids
+            if missing_qids or extra_qids:
+                raise RuntimeError(
+                    f"FATAL: Shard assembly mismatch for shard_type '{shard_type}'! "
+                    f"Missing QIDs: {len(missing_qids)} ({sorted(list(missing_qids))[:3]}...), "
+                    f"Extra QIDs: {len(extra_qids)} ({sorted(list(extra_qids))[:3]}...)"
+                )
 
     print(f"Streaming {len(all_files)} {shard_type} shards to {output_path} via pyarrow.ParquetWriter...")
     writer = None
@@ -865,6 +1026,7 @@ def parse_args():
     parser.add_argument("--measure-fidelity", action="store_true", help="Measure PPMI sidecar fidelity vs live PPMI")
     parser.add_argument("--bge-model", type=str, default="BAAI/bge-small-en-v1.5", help="BGE model name")
     parser.add_argument("--config-hash", type=str, default="gate1_core_dev_v1", help="Configuration hash")
+    parser.add_argument("--qids-manifest", type=str, default=None, help="Name of query manifest to use from frozen config (e.g. micro_smoke_qids, probe_40_qids, dev_200_qids)")
     return parser.parse_args()
 
 
@@ -956,6 +1118,7 @@ def main():
             config_hash=config_hash,
             measure_fidelity=args.measure_fidelity,
             bge_model=args.bge_model,
+            qids_manifest=args.qids_manifest,
         )
         meta_summaries.append(ds_meta)
 
@@ -964,7 +1127,11 @@ def main():
     if frozen_config and "query_manifests" in frozen_config:
         q_manifest = frozen_config["query_manifests"]
         for ds in datasets:
-            if args.sample_size == 10 and "probe_40_qids" in q_manifest:
+            if args.qids_manifest and args.qids_manifest in q_manifest:
+                expected_qids_all.update(q_manifest[args.qids_manifest].get(ds, []))
+            elif args.sample_size == 1 and "micro_smoke_qids" in q_manifest:
+                expected_qids_all.update(q_manifest["micro_smoke_qids"].get(ds, []))
+            elif args.sample_size == 10 and "probe_40_qids" in q_manifest:
                 expected_qids_all.update(q_manifest["probe_40_qids"].get(ds, []))
             elif args.sample_size == 50 and "dev_200_qids" in q_manifest:
                 expected_qids_all.update(q_manifest["dev_200_qids"].get(ds, []))
@@ -973,10 +1140,18 @@ def main():
     master_parent = os.path.join(args.output_dir, "gate1_candidate_audit.parquet")
     master_cutoff = os.path.join(args.output_dir, "gate1_cutoff_entries.parquet")
     master_status = os.path.join(args.output_dir, "query_status.parquet")
+    master_universe = os.path.join(args.output_dir, "reference_universe.parquet")
 
     assemble_shards_to_master(shards_dir, shard_type="audit", output_path=master_parent, expected_qids=expected_qids_all if expected_qids_all else None)
     assemble_shards_to_master(shards_dir, shard_type="cutoff", output_path=master_cutoff)
     assemble_shards_to_master(shards_dir, shard_type="status", output_path=master_status, expected_qids=expected_qids_all if expected_qids_all else None)
+    assemble_shards_to_master(shards_dir, shard_type="universe", output_path=master_universe, expected_qids=expected_qids_all if expected_qids_all else None)
+
+    print("\nValidating action coverage between candidate audit and reference universe...")
+    df_audit_master = pd.read_parquet(master_parent)
+    df_univ_master = pd.read_parquet(master_universe)
+    validate_action_coverage(df_audit_master, df_univ_master, weights)
+    print("Action coverage verification PASSED (exact Cartesian set equality).")
 
     import platform
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None"
@@ -988,14 +1163,21 @@ def main():
     except Exception:
         pass
 
+    git_info = get_git_info()
+    peak_vram_mib = round(torch.cuda.max_memory_allocated() / (1024 ** 2), 2) if torch.cuda.is_available() else 0.0
+
     manifest = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "config_hash": config_hash,
+        "git_commit": git_info["git_commit"],
+        "git_dirty": git_info["git_dirty"],
+        "command_args": sys.argv,
         "datasets": datasets,
         "sample_size": args.sample_size,
         "seed": seed,
         "weights": weights,
-        "peak_rss_gib": round(get_process_tree_rss_bytes() / (1024 ** 3), 3),
+        "peak_rss_gib": round(PEAK_PROCESS_TREE_RSS_BYTES / (1024 ** 3), 3),
+        "peak_cuda_vram_mib": peak_vram_mib,
         "total_variants": sum(s["total_variants"] for s in meta_summaries),
         "total_cutoff_entries": sum(s["total_cutoff_entries"] for s in meta_summaries),
         "total_retrieval_time_sec": round(sum(s["retrieval_time_sec"] for s in meta_summaries), 2),

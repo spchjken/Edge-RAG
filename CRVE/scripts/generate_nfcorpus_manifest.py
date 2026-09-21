@@ -61,6 +61,30 @@ def main():
     assert total_accounted == total_lex_size, f"Mismatch: {total_accounted} vs {total_lex_size}"
     assert counts["eligible"] == 7783, f"Eligible count mismatch: {counts['eligible']} vs 7783"
 
+    # Canonical pool comparison
+    pool_file = os.path.abspath("data/cache/canonical_pools/nfcorpus_canonical_pool.json")
+    with open(pool_file, "r", encoding="utf-8") as f:
+        pool_data = json.load(f)
+    canonical_terms = pool_data["terms"]
+
+    # Duplicate check on pool
+    num_duplicates = len(canonical_terms) - len(set(canonical_terms))
+    assert num_duplicates == 0, f"Found {num_duplicates} duplicate terms in canonical pool!"
+
+    # Set equality assertion
+    eligible_set = set(eligible_terms)
+    canonical_set = set(canonical_terms)
+    missing_in_pool = sorted(list(eligible_set - canonical_set))
+    extra_in_pool = sorted(list(canonical_set - eligible_set))
+    assert eligible_set == canonical_set, (
+        f"Set equality failed! Missing in pool: {len(missing_in_pool)}, Extra in pool: {len(extra_in_pool)}"
+    )
+
+    # Sorted hashes
+    sorted_eligible_sha = hashlib.sha256("\n".join(sorted(eligible_terms)).encode("utf-8")).hexdigest()
+    sorted_canonical_sha = hashlib.sha256("\n".join(sorted(canonical_terms)).encode("utf-8")).hexdigest()
+    assert sorted_eligible_sha == sorted_canonical_sha, "Sorted SHA-256 hashes do not match!"
+
     # Index fingerprint
     prop_file = index_path
     with open(prop_file, "rb") as f:
@@ -79,6 +103,13 @@ def main():
         "frozen_pool_size": 7783,
         "pool_policy_formula": "min(10000, |V_eligible|)",
         "computed_pool_size": min(10000, counts["eligible"]),
+        "duplicate_terms_in_pool": num_duplicates,
+        "missing_terms_count": len(missing_in_pool),
+        "extra_terms_count": len(extra_in_pool),
+        "set_equality_asserted": True,
+        "sorted_eligible_set_sha256": sorted_eligible_sha,
+        "sorted_canonical_pool_sha256": sorted_canonical_sha,
+        "canonical_pool_file_sha256": pool_data.get("sha256"),
     }
 
     os.makedirs("for_review/pool_phase", exist_ok=True)

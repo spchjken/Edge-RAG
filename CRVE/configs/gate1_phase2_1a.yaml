@@ -87,11 +87,21 @@ memory_watchdog:
   jvm_heap_gib: 4
   warn_rss_gib: 8
   hard_abort_rss_gib: 12
+sidecars:
+  ppmi:
+    top_m: 600
+  lexical_profiles:
+    reservoir_seed: 42
 build_ceilings_sec:
   bge_sidecar: 1800
   ppmi_sidecar: 3600
   lexical_profiles: 2700
   acronym_rescue: 900
+build_disk_caps_mb:
+  bge_sidecar: 100
+  ppmi_sidecar: 250
+  lexical_profiles: 350
+  acronym_rescue: 50
 checkpoint_b_thresholds:
   ppmi_min_recall500: 0.9
   ppmi_min_rbo: 0.85
@@ -100,6 +110,15 @@ checkpoint_b_thresholds:
   max_p95_lookup_ms: 20.0
   max_rss_gib: 12.0
 query_manifests:
+  micro_smoke_qids:
+    scifact:
+    - q_beir_scifact_1014
+    bright_aops:
+    - q_bright_aops_aops_2019_AMC_12A_Problems/Problem_17
+    nfcorpus:
+    - q_beir_nfcorpus_PLAIN-1028
+    trec_covid:
+    - q_beir_trec_covid_1
   dev_200_qids:
     scifact:
     - q_beir_scifact_1014

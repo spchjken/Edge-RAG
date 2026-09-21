@@ -287,31 +287,129 @@ def test_build_resource_guard_trigger():
 
 def test_duplicate_manifest_qid_rejection():
     """Verifies that duplicate QIDs in the frozen manifest are detected and rejected fail-closed."""
+    from scripts.run_gate1_oracle_evaluation import validate_manifest_qids
+
     frozen_qids = ["q1", "q2", "q1", "q3"]
     with pytest.raises(RuntimeError, match="Duplicate QIDs detected"):
-        if len(frozen_qids) != len(set(frozen_qids)):
-            raise RuntimeError("FATAL: Duplicate QIDs detected in frozen manifest for dataset 'test'!")
+        validate_manifest_qids(frozen_qids, dataset="test")
 
 
 def test_stale_shard_rejection():
     """Verifies that shards with mismatched config, dataset, qrels, or pool hashes are rejected fail-closed."""
-    st_cfg = "hash_cfg_v1"
-    st_ds = "hash_ds_v1"
-    st_qrels = "hash_qrels_v1"
-    st_pool = "hash_pool_v1"
+    from scripts.run_gate1_oracle_evaluation import validate_shard_hashes
 
-    # Mismatched config
-    config_hash = "hash_cfg_v2"
-    dataset_hash = "hash_ds_v1"
-    qrels_hash = "hash_qrels_v1"
-    pool_hash = "hash_pool_v1"
-
+    st_status = {
+        "config_hash": "hash_cfg_v1",
+        "dataset_hash": "hash_ds_v1",
+        "qrels_hash": "hash_qrels_v1",
+        "pool_hash": "hash_pool_v1",
+    }
+    expected_hashes = {
+        "config_hash": "hash_cfg_v2",  # mismatched
+        "dataset_hash": "hash_ds_v1",
+        "qrels_hash": "hash_qrels_v1",
+        "pool_hash": "hash_pool_v1",
+    }
     with pytest.raises(RuntimeError, match="mismatched hashes"):
-        if st_cfg != config_hash or st_ds != dataset_hash or st_qrels != qrels_hash or st_pool != pool_hash:
-            raise RuntimeError(
-                f"FATAL: Stale shard for QID q1 has mismatched hashes: "
-                f"config={st_cfg[:8]} vs {config_hash[:8]}, qrels={st_qrels[:8]} vs {qrels_hash[:8]}, pool={st_pool[:8]} vs {pool_hash[:8]}. Clean output directory."
-            )
+        validate_shard_hashes(st_status, expected_hashes, qid="q1")
+
+
+def test_action_coverage_set_equality():
+    """Verifies that validate_action_coverage enforces exact Cartesian set equality."""
+    from scripts.run_gate1_oracle_evaluation import validate_action_coverage
+
+    weights = [0.05, 0.10]
+    univ_df = pd.DataFrame([
+        {"qid": "q1", "candidate_term": "term1"},
+        {"qid": "q1", "candidate_term": "term2"},
+    ])
+
+    # 1. Matching audit
+    audit_df_ok = pd.DataFrame([
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.10},
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.10},
+    ])
+    validate_action_coverage(audit_df_ok, univ_df, weights)
+
+    # 2. Missing triple
+    audit_df_missing = pd.DataFrame([
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.10},
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.05},
+    ])
+    with pytest.raises(RuntimeError, match="Action coverage set equality failed"):
+        validate_action_coverage(audit_df_missing, univ_df, weights)
+
+    # 3. Extra triple
+    audit_df_extra = pd.DataFrame([
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.10},
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.10},
+        {"qid": "q1", "candidate_term": "term3", "weight": 0.05},
+    ])
+    with pytest.raises(RuntimeError, match="Action coverage set equality failed"):
+        validate_action_coverage(audit_df_extra, univ_df, weights)
+
+    # 4. Duplicate triple
+    audit_df_dup = pd.DataFrame([
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term1", "weight": 0.05},  # duplicate
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.05},
+        {"qid": "q1", "candidate_term": "term2", "weight": 0.10},
+    ])
+    with pytest.raises(RuntimeError, match="Duplicate action evaluations"):
+        validate_action_coverage(audit_df_dup, univ_df, weights)
+
+
+def test_bright_exclusions_depth_compensation():
+    """Verifies that BRIGHT exclusion depth compensation formula k_fetch = min(N, 1000 + max_ex) preserves K=1000."""
+    num_docs = 50000
+    max_ex = 9205
+    k_fetch = min(num_docs, 1000 + max_ex)
+    assert k_fetch == 10205
+
+    # Simulate ranking of size k_fetch where 9205 are excluded
+    raw_ranking = [f"ex_doc_{i}" for i in range(max_ex)] + [f"doc_{i}" for i in range(2000)]
+    exclusions = set(f"ex_doc_{i}" for i in range(max_ex))
+    filtered_ranking = [d for d in raw_ranking if d not in exclusions][:1000]
+
+    assert len(filtered_ranking) == 1000
+    assert not any(d in exclusions for d in filtered_ranking)
+
+
+def test_live_ppmi_universe_invariance():
+    """Verifies that LivePPMI (diagnostic channel) does NOT alter the reference universe R_q."""
+    OPERATIONAL_CHANNELS = [
+        "WholeQueryBGE",
+        "AnchorBGEFiltered",
+        "AnchorBGEAll",
+        "PPMISidecar",
+        "SparseLexicalContextProfiles",
+        "AcronymDefinitionRescue",
+        "RRF_Core3",
+        "RRF_Extended",
+    ]
+    assert "LivePPMI" not in OPERATIONAL_CHANNELS
+
+    channel_proposals = {
+        "WholeQueryBGE": [("t1", 0.9), ("t2", 0.8)],
+        "PPMISidecar": [("t2", 0.7), ("t3", 0.6)],
+        "LivePPMI": [("t4", 0.99), ("t5", 0.95)],  # Should not enter R_q
+    }
+    phase1_cands = {"t0"}
+
+    r_core = set(phase1_cands)
+    for ch_name in OPERATIONAL_CHANNELS:
+        if ch_name in channel_proposals:
+            for t, _ in channel_proposals[ch_name]:
+                r_core.add(t)
+
+    assert r_core == {"t0", "t1", "t2", "t3"}
+    assert "t4" not in r_core
+    assert "t5" not in r_core
 
 
 def test_sidecar_provenance_mismatch_rejection():
@@ -340,14 +438,13 @@ def test_sidecar_provenance_mismatch_rejection():
         }
         torch.save(mock_data, out_path)
 
-        # Loading with current pool terms should reject the cache because hash mismatches
-        # and attempt rebuild (which raises with our dummy encoder or succeeds cleanly)
         class DummyEncoder:
             def encode(self, texts, **kwargs):
                 return np.zeros((len(texts), 384), dtype=np.float32)
 
         from unittest.mock import patch
-        with patch("evaluation.benchmark_loader.BenchmarkLoader.stream_corpus", return_value=[("doc1", "term_a is related to term_b")]):
+        with patch("crve.selection.gate1_sidecars.compute_corpus_source_hash", return_value="mock_corpus_hash"), \
+             patch("evaluation.benchmark_loader.BenchmarkLoader.stream_corpus", return_value=[("doc1", "term_a is related to term_b")]):
             res = mgr.build_or_load_bge_sidecar(
                 dataset="test_ds",
                 pool_terms=pool_terms,

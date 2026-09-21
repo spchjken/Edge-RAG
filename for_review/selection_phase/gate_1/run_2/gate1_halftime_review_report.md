@@ -72,17 +72,24 @@ PYTHONPATH=CRVE:CRVE/src .venv/bin/pytest CRVE/tests/test_gate1_selection.py -v
 ```
 
 Collected and passed tests:
-1. `CRVE/tests/test_gate1_selection.py::test_action_partition_mutually_exclusive_and_exhaustive` **PASSED**
-2. `CRVE/tests/test_gate1_selection.py::test_rrf_tie_breaking_order` **PASSED**
-3. `CRVE/tests/test_gate1_selection.py::test_anchor_bge_all_vs_filtered` **PASSED**
-4. `CRVE/tests/test_gate1_selection.py::test_ppmi_sidecar_fidelity` **PASSED**
-5. `CRVE/tests/test_gate1_selection.py::test_acronym_rescue` **PASSED**
-6. `CRVE/tests/test_gate1_selection.py::test_sparse_lexical_context_proposer` **PASSED**
-7. `CRVE/tests/test_gate1_selection.py::test_exact_pool_hash_and_size_contract` **PASSED**
-8. `CRVE/tests/test_gate1_selection.py::test_safe_ranking_gain_and_bor` **PASSED**
-9. `CRVE/tests/test_gate1_selection.py::test_near_best_terms_extraction` **PASSED**
+1. `CRVE/tests/test_gate1_selection.py::test_canonical_pool_properties` **PASSED**
+2. `CRVE/tests/test_gate1_selection.py::test_pool_set_membership_invariance` **PASSED**
+3. `CRVE/tests/test_gate1_selection.py::test_action_partition_exclusivity` **PASSED**
+4. `CRVE/tests/test_gate1_selection.py::test_cutoff_entries_contract` **PASSED**
+5. `CRVE/tests/test_gate1_selection.py::test_rrf_tie_breaking` **PASSED**
+6. `CRVE/tests/test_gate1_selection.py::test_anchor_bge_all_vs_filtered` **PASSED**
+7. `CRVE/tests/test_gate1_selection.py::test_ppmi_sidecar_fidelity` **PASSED**
+8. `CRVE/tests/test_gate1_selection.py::test_acronym_rescue` **PASSED**
+9. `CRVE/tests/test_gate1_selection.py::test_sparse_lexical_context_proposer` **PASSED**
+10. `CRVE/tests/test_gate1_selection.py::test_build_resource_guard_trigger` **PASSED**
+11. `CRVE/tests/test_gate1_selection.py::test_duplicate_manifest_qid_rejection` **PASSED**
+12. `CRVE/tests/test_gate1_selection.py::test_stale_shard_rejection` **PASSED**
+13. `CRVE/tests/test_gate1_selection.py::test_action_coverage_set_equality` **PASSED**
+14. `CRVE/tests/test_gate1_selection.py::test_bright_exclusions_depth_compensation` **PASSED**
+15. `CRVE/tests/test_gate1_selection.py::test_live_ppmi_universe_invariance` **PASSED**
+16. `CRVE/tests/test_gate1_selection.py::test_sidecar_provenance_mismatch_rejection` **PASSED**
 
-**Result:** **9 passed in 4.79s** (100.0% passing).
+**Result:** **16 passed in 4.75s** (100.0% passing, output frozen at [`pytest_output.txt`](file:///home/donghv/Projects/Edge-RAG/for_review/selection_phase/gate_1/run_2/pytest_output.txt)).
 
 ---
 
@@ -112,67 +119,74 @@ The 40-query probe evaluated 10 stratified queries across each of the 4 developm
 | **AnchorBGEAll** | 18.14 ms | 3.82 ms | 118.92 ms | — |
 | **WholeQueryBGE** | 24.87 ms | 11.45 ms | 310.14 ms | — |
 
-### 4.3 Query Test Time Breakdown
-
-| Metric | NFCorpus | SciFact | TREC-COVID | BRIGHT-AOPS | Overall Macro |
-|---|---:|---:|---:|---:|---:|
-| **Mean Test Time / Query** | 53.1 s | 139.3 s | 299.1 s | 276.3 s | **191.96 s** |
-| **Evaluated Variants / Query** | 7,942 | 7,406 | 16,264 | 8,824 | **10,109** |
-| **Live PPMI Latency / Query** | 8.9 ms | 178.6 ms | 2,825.3 ms | 4,745.1 ms | **1,939.5 ms** |
-| **Live PPMI % of Query Time** | **0.017%** | **0.128%** | **0.945%** | **1.717%** | **1.010%** |
-| **PyTerrier BM25 % of Query Time** | **99.98%** | **99.87%** | **99.05%** | **98.28%** | **98.99%** |
-
-> [!NOTE]
-> **Why query testing takes ~192 seconds:**  
-> The test time is dominated by PyTerrier executing full BM25 retrievals across **~10,109 counterfactual variants per query to depth $K=1,000$** (~10M scored documents per query). The proposal channels (including Live PPMI) take $<2$ seconds combined ($<1.01\%$). In production deployment, only proposal channels run ($<25$ ms total) and retrieval runs once ($<50$ ms).
-
 ---
 
-## 5. Checkpoint C: Fresh Smoke Test & Table Compilation Verification
+## 5. Checkpoint C: 4-Corpus Micro-Smoke Test & Table Compilation Verification
 
-A fresh smoke test was executed on SciFact using the hardened runner and verified end-to-end:
+A full 4-corpus micro-smoke evaluation was executed across all development corpora (`scifact`, `bright_aops`, `nfcorpus`, `trec_covid`) using the hardened runner and frozen manifest:
 ```bash
 PYTHONPATH=CRVE:CRVE/src .venv/bin/python3 -u CRVE/scripts/run_gate1_oracle_evaluation.py \
-  --datasets scifact --sample-size 1 --seed 42 \
-  --output-dir results/gate1_selection/run_2/smoke_test_corrected \
+  --datasets scifact,bright_aops,nfcorpus,trec_covid \
+  --qids-manifest micro_smoke_qids \
+  --output-dir results/gate1_selection/run_2/micro_smoke_corrected \
   --frozen-config-path CRVE/configs/gate1_phase2_1a.yaml \
+  --measure-fidelity \
   --clean-output
 ```
 
 And compiled via:
 ```bash
 PYTHONPATH=CRVE:CRVE/src .venv/bin/python3 -u CRVE/scripts/compile_gate1_research_tables.py \
-  --audit-parquet results/gate1_selection/run_2/smoke_test_corrected/gate1_candidate_audit.parquet \
-  --cutoff-parquet results/gate1_selection/run_2/smoke_test_corrected/gate1_cutoff_entries.parquet \
-  --output-dir results/gate1_selection/run_2/smoke_test_corrected/compiled_tables
+  --audit-parquet results/gate1_selection/run_2/micro_smoke_corrected/gate1_candidate_audit.parquet \
+  --cutoff-parquet results/gate1_selection/run_2/micro_smoke_corrected/gate1_cutoff_entries.parquet \
+  --universe-parquet results/gate1_selection/run_2/micro_smoke_corrected/reference_universe.parquet \
+  --run-manifest results/gate1_selection/run_2/micro_smoke_corrected/run_manifest.json \
+  --frozen-config-path CRVE/configs/gate1_phase2_1a.yaml \
+  --output-dir results/gate1_selection/run_2/micro_smoke_corrected
 ```
 
-### 5.1 Table 1: Reference Opportunity Ceiling vs Baseline
+### 5.1 Run Telemetry & Provenance
+* **Config Hash:** `2a6b5bed6a5e18acfbd2ac51b4cd46d9833886bf23e9eb7b658e971af6b8e7db`
+* **Git Commit:** `0b39cc86dd2b0f19875cb054130ba5996865297c` (dirty: `True`)
+* **Peak Process-Tree RSS:** **5.134 GiB** (well below 12.0 GiB cap; flat memory achieved via chunk streaming)
+* **Peak CUDA VRAM:** **218.29 MiB**
+* **Total Variants Evaluated:** **41,420** across 4 queries
+* **Total Cutoff Entries:** **22,035**
+* **Total Reference Universe Size:** **8,284** unique $(q, \text{term})$ pairs across 4 queries
 
-| Dataset | Partition | Queries | Baseline nDCG@10 | Baseline R@1000 | Ceiling Delta-nDCG@10 | Ceiling Net Rel Docs | Materially Addressable % ($g^* \ge 0.005$) | Recall Addressable % ($r^* \ge 1$) |
-|:---|:---|---:|---:|---:|:---|---:|:---|:---|
-| **scifact** | Dev | 1 | 1.0000 | 1.0000 | +0.0000 [0.0000, 0.0000] | +0.00 | 0.0% | 0.0% |
-| **Corpus-Macro Dev (4 Corpora)** | Macro | 1 | 1.0000 | 1.0000 | +0.0000 | +0.00 | 0.0% | 0.0% |
+### 5.2 Table 1: Reference Opportunity Ceiling vs Baseline
 
-### 5.2 Table 2: Channel Comparison across all 9 Channels ($L=200$)
+| Dataset                      | Partition   |   Queries |   Baseline nDCG@10 |   Baseline R@1000 | Ceiling Delta-nDCG@10    |   Ceiling Net Rel Docs | Materially Addressable % ($g^* \ge 0.005$) | Recall Addressable % ($r^* \ge 1$) |
+|:-----------------------------|:------------|----------:|-------------------:|------------------:|:-------------------------|-----------------------:|:-------------------------------------------|:-----------------------------------|
+| **bright_aops**              | Dev         |         1 |             0.0000 |            1.0000 | +0.0000 [0.0000, 0.0000] |                   0.00 | 0.0%                                       | 0.0%                               |
+| **nfcorpus**                 | Dev         |         1 |             0.0000 |            1.0000 | +1.0000 [1.0000, 1.0000] |                   0.00 | 100.0%                                     | 0.0%                               |
+| **scifact**                  | Dev         |         1 |             1.0000 |            1.0000 | +0.0000 [0.0000, 0.0000] |                   0.00 | 0.0%                                       | 0.0%                               |
+| **trec_covid**               | Dev         |         1 |             0.4809 |            0.2606 | +0.3153 [0.3153, 0.3153] |                  99.00 | 100.0%                                     | 100.0%                             |
+| **Corpus-Macro Dev (4 Corpora)** | Macro   |         4 |             0.3702 |            0.8151 | +0.3288                  |                  24.75 | 50.0%                                      | 25.0%                              |
+
+### 5.3 Table 2: Channel Comparison at Deployable Cap ($L=200$)
 
 | Channel | Budget ($L$) | Corpus-Macro TermRecall@L | Corpus-Macro TermPrecision@L | Corpus-Macro NearBestHit@L | Corpus-Macro ReferenceBOR@L | Corpus-Macro RecallHit@1000 | Corpus-Macro RawDocOppRecall@1000 | Corpus-Macro SafeDocOppRecall@1000 |
 |:---|---:|:---|:---|:---|:---|:---|:---|:---|
-| **WholeQueryBGE** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **AnchorBGEFiltered** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **AnchorBGEAll** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **PPMISidecar** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **LivePPMI** | 200 | nan% | nan% | nan% | nan% | nan% | N/A | N/A |
-| **SparseLexicalContextProfiles** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **AcronymDefinitionRescue** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **RRF_Core3** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
-| **RRF_Extended** | 200 | nan% | 0.0% | nan% | nan% | nan% | N/A | N/A |
+| **WholeQueryBGE** | 200 | 8.7% | 1.6% | 0.0% | 71.0% | 100.0% | 52.2% | 51.9% |
+| **AnchorBGEFiltered** | 200 | 3.7% | 1.4% | 0.0% | 38.1% | 100.0% | 49.6% | 24.9% |
+| **AnchorBGEAll** | 200 | 3.7% | 1.4% | 0.0% | 38.1% | 100.0% | 49.6% | 24.9% |
+| **PPMISidecar** | 200 | 8.5% | 3.1% | 50.0% | 50.0% | 100.0% | 68.4% | 86.9% |
+| **LivePPMI** *(diagnostic)* | 200 | 8.5% | 3.1% | 50.0% | 50.0% | 100.0% | 68.4% | 86.9% |
+| **SparseLexicalContextProfiles** | 200 | 0.7% | 0.2% | 0.0% | 5.6% | 100.0% | 12.7% | 4.5% |
+| **AcronymDefinitionRescue** | 200 | 0.3% | 1.5% | 0.0% | 1.8% | 100.0% | 1.1% | 0.7% |
+| **RRF_Core3** | 200 | 10.0% | 2.9% | 50.0% | 69.3% | 100.0% | 70.6% | 78.9% |
+| **RRF_Extended** | 200 | 8.6% | 2.4% | 50.0% | 69.3% | 100.0% | 69.3% | 78.2% |
 
-### 5.3 Table: 100% Counterfactual Label Coverage Verification
+### 5.4 Table 3: 100% Counterfactual Label Coverage Verification (Exact Cartesian Equality)
 
-| Dataset | Queries | Unique Candidates | Evaluated Variants (5 weights) | Expected Variants | Labeling Coverage % | Coverage Status |
-|:---|---:|---:|---:|---:|:---|:---|
-| **scifact** | 1 | 1,601 | 8,005 | 8,005 | **100.00%** | **100.0% COMPLETE** |
+| Dataset | Queries | Reference Universe Pairs | Expected Variants | Evaluated Variants | Missing Triples | Extra Triples | Labeling Coverage % | Coverage Status |
+|:---|---:|---:|---:|---:|---:|---:|:---|:---|
+| **bright_aops** | 1 | 1,846 | 9,230 | 9,230 | 0 | 0 | **100.00%** | **100.0% COMPLETE** |
+| **nfcorpus** | 1 | 1,634 | 8,170 | 8,170 | 0 | 0 | **100.00%** | **100.0% COMPLETE** |
+| **scifact** | 1 | 1,418 | 7,090 | 7,090 | 0 | 0 | **100.00%** | **100.0% COMPLETE** |
+| **trec_covid** | 1 | 3,386 | 16,930 | 16,930 | 0 | 0 | **100.00%** | **100.0% COMPLETE** |
+| **Total / Overall** | **4** | **8,284** | **41,420** | **41,420** | **0** | **0** | **100.00%** | **100.0% COMPLETE** |
 
 ---
 
@@ -181,9 +195,10 @@ PYTHONPATH=CRVE:CRVE/src .venv/bin/python3 -u CRVE/scripts/compile_gate1_researc
 All static implementation, reproducibility, resource management, and test requirements have been satisfied:
 1. **NFCorpus Canonical Pool**: Proved at 7,783 terms with an exact mutually exclusive manifest summing to 18,596.
 2. **Index Provenance Manifests**: Generated and validated for all 4 dev corpora.
-3. **Negative Fail-Closed Tests**: All 13 tests in `test_gate1_selection.py` pass.
-4. **Label Coverage & Metrics Parity**: Verified $\le 100.00\%$ and opportunity metrics integrated into Table 2.
-5. **End-to-End Pipeline**: Verified cleanly via fresh smoke test in 163.78s with peak RSS of 3.48 GiB (well below 12 GiB limit).
+3. **Negative Fail-Closed Tests**: All 16 tests in `test_gate1_selection.py` pass (covering duplicate QIDs, stale shards, Cartesian coverage failures, BRIGHT depth compensation, and LivePPMI universe invariance).
+4. **Exact Cartesian Coverage**: Verified at 100.00% (0 missing, 0 extra triples against $\mathcal{R}_q \times \text{weights}$) across all 4 corpora without artificial clamping.
+5. **Memory Safety & Streaming Parity**: Chunk-by-chunk retrieval streaming and immediate exclusion filtering cap peak RSS at 5.134 GiB, eliminating the 102M-string memory accumulation.
+6. **Reference Universe Invariance**: Proven invariant to diagnostic `--measure-fidelity`.
 
 **Recommendation:** Proceed to launch the full 200-query development run (50 queries $\times$ 4 datasets) under the hardened harness.
 

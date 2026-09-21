@@ -92,6 +92,9 @@ class Gate1TableCompiler:
         audit_parquet_path: str,
         cutoff_parquet_path: str,
         output_dir: str,
+        universe_parquet_path: Optional[str] = None,
+        run_manifest_path: Optional[str] = None,
+        frozen_config_path: Optional[str] = None,
         delta: float = DEFAULT_DELTA,
         rho: float = DEFAULT_RHO,
         b_resamples: int = 1000,
@@ -100,6 +103,9 @@ class Gate1TableCompiler:
         self.audit_path = audit_parquet_path
         self.cutoff_path = cutoff_parquet_path
         self.output_dir = output_dir
+        self.universe_path = universe_parquet_path
+        self.run_manifest_path = run_manifest_path
+        self.frozen_config_path = frozen_config_path
         self.delta = delta
         self.rho = rho
         self.b_resamples = b_resamples
@@ -120,6 +126,42 @@ class Gate1TableCompiler:
                 print(f"Warning: Could not read cutoff entries: {e}")
         else:
             print(f"Warning: Cutoff entries parquet not found at {self.cutoff_path}")
+
+        # Auto-detect universe parquet if not explicitly passed
+        if not self.universe_path or not os.path.exists(self.universe_path):
+            candidate_univ = os.path.join(self.output_dir, "reference_universe.parquet")
+            if os.path.exists(candidate_univ):
+                self.universe_path = candidate_univ
+
+        self.df_universe = None
+        if self.universe_path and os.path.exists(self.universe_path):
+            print(f"Loading reference universe from {self.universe_path}...")
+            self.df_universe = pd.read_parquet(self.universe_path)
+            print(f"Loaded {len(self.df_universe):,} reference universe rows.")
+
+        # Auto-detect run manifest if not explicitly passed
+        if not self.run_manifest_path or not os.path.exists(self.run_manifest_path):
+            candidate_manifest = os.path.join(self.output_dir, "run_manifest.json")
+            if os.path.exists(candidate_manifest):
+                self.run_manifest_path = candidate_manifest
+
+        self.run_manifest = None
+        if self.run_manifest_path and os.path.exists(self.run_manifest_path):
+            with open(self.run_manifest_path, "r", encoding="utf-8") as f:
+                self.run_manifest = json.load(f)
+            print(f"Loaded run manifest from {self.run_manifest_path}")
+
+        # Authoritative weights resolution
+        if self.run_manifest and "weights" in self.run_manifest:
+            self.weights = [round(float(w), 4) for w in self.run_manifest["weights"]]
+        elif self.frozen_config_path and os.path.exists(self.frozen_config_path):
+            import yaml
+            with open(self.frozen_config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+            self.weights = [round(float(w), 4) for w in cfg.get("weights", [0.05, 0.10, 0.30, 0.50, 1.00])]
+        else:
+            self.weights = sorted(list(set(round(float(w), 4) for w in self.df_audit["weight"].unique())))
+        print(f"Authoritative evaluation weights: {self.weights}")
 
         # Build term actions map: (dataset, qid, candidate_term) -> list of actions
         self.query_term_actions = defaultdict(lambda: defaultdict(list))
@@ -190,6 +232,8 @@ class Gate1TableCompiler:
                 if r_star >= 1:
                     addressable_rec_count += 1
 
+                del term_acts
+
             n = len(qids)
             mean_base_ndcg = float(np.mean(base_ndcg_list))
             mean_base_r = float(np.mean(base_r1000_list))
@@ -234,7 +278,10 @@ class Gate1TableCompiler:
         return df_q1, macro_accum
 
     def compile_q2_single_channel_comparison(self, budget_l: int = 200) -> pd.DataFrame:
-        """Q2: Channel Proposal Efficiency across all 9 channels at budget L, including document opportunity recall."""
+        """Q2: Channel Proposal Efficiency across channels at budget L, rendering nan% as N/A."""
+        def fmt_pct(val: float) -> str:
+            return f"{val * 100:.1f}%" if not np.isnan(val) else "N/A"
+
         rows = []
         for ch_name, rank_col in CHANNELS:
             corpus_recalls = []
@@ -305,56 +352,91 @@ class Gate1TableCompiler:
                         q_safe_opp.append(np.nan)
 
                 # Per-corpus means
-                corpus_recalls.append(np.nanmean(q_recalls))
-                corpus_precisions.append(np.nanmean(q_precisions))
-                corpus_bor.append(np.nanmean(q_bor))
-                corpus_near_hit.append(np.nanmean(q_near_hit))
-                corpus_rec_hit.append(np.nanmean(q_rec_hit))
-                corpus_raw_opp.append(np.nanmean(q_raw_opp))
-                corpus_safe_opp.append(np.nanmean(q_safe_opp))
+                corpus_recalls.append(np.nanmean(q_recalls) if q_recalls else np.nan)
+                corpus_precisions.append(np.nanmean(q_precisions) if q_precisions else np.nan)
+                corpus_bor.append(np.nanmean(q_bor) if q_bor else np.nan)
+                corpus_near_hit.append(np.nanmean(q_near_hit) if q_near_hit else np.nan)
+                corpus_rec_hit.append(np.nanmean(q_rec_hit) if q_rec_hit else np.nan)
+                corpus_raw_opp.append(np.nanmean(q_raw_opp) if q_raw_opp else np.nan)
+                corpus_safe_opp.append(np.nanmean(q_safe_opp) if q_safe_opp else np.nan)
 
             # True corpus-macro mean
-            raw_opp_val = np.nanmean(corpus_raw_opp)
-            safe_opp_val = np.nanmean(corpus_safe_opp)
+            raw_opp_val = np.nanmean(corpus_raw_opp) if corpus_raw_opp else np.nan
+            safe_opp_val = np.nanmean(corpus_safe_opp) if corpus_safe_opp else np.nan
             rows.append({
                 "Channel": ch_name,
                 "Budget (L)": budget_l,
-                "Corpus-Macro TermRecall@L": f"{np.nanmean(corpus_recalls) * 100:.1f}%",
-                "Corpus-Macro TermPrecision@L": f"{np.nanmean(corpus_precisions) * 100:.1f}%",
-                "Corpus-Macro NearBestHit@L": f"{np.nanmean(corpus_near_hit) * 100:.1f}%",
-                "Corpus-Macro ReferenceBOR@L": f"{np.nanmean(corpus_bor) * 100:.1f}%",
-                "Corpus-Macro RecallHit@1000": f"{np.nanmean(corpus_rec_hit) * 100:.1f}%",
-                "Corpus-Macro RawDocOppRecall@1000": f"{raw_opp_val * 100:.1f}%" if not np.isnan(raw_opp_val) else "N/A",
-                "Corpus-Macro SafeDocOppRecall@1000": f"{safe_opp_val * 100:.1f}%" if not np.isnan(safe_opp_val) else "N/A",
+                "Corpus-Macro TermRecall@L": fmt_pct(np.nanmean(corpus_recalls)),
+                "Corpus-Macro TermPrecision@L": fmt_pct(np.nanmean(corpus_precisions)),
+                "Corpus-Macro NearBestHit@L": fmt_pct(np.nanmean(corpus_near_hit)),
+                "Corpus-Macro ReferenceBOR@L": fmt_pct(np.nanmean(corpus_bor)),
+                "Corpus-Macro RecallHit@1000": fmt_pct(np.nanmean(corpus_rec_hit)),
+                "Corpus-Macro RawDocOppRecall@1000": fmt_pct(raw_opp_val),
+                "Corpus-Macro SafeDocOppRecall@1000": fmt_pct(safe_opp_val),
             })
 
         return pd.DataFrame(rows)
 
     def compile_label_coverage_table(self) -> pd.DataFrame:
-        """Emits 100% label-coverage audit across all tested methods and candidate terms."""
+        """
+        Emits 100% label-coverage audit across all tested methods and candidate terms.
+        Enforces exact Cartesian set equality against reference_universe x weights without clamping.
+        """
         rows = []
         for ds in self.available_datasets:
             sub = self.df_audit[self.df_audit["dataset"] == ds]
             num_queries = sub["qid"].nunique()
-            
-            # Count unique (qid, candidate_term) pairs in audit
-            unique_q_cands = sub.drop_duplicates(subset=["qid", "candidate_term"])
-            num_q_cand_pairs = len(unique_q_cands)
-            expected_variants = num_q_cand_pairs * 5  # 5 distinct weights
 
-            # Count evaluated unique (qid, candidate_term, weight) triples
-            evaluated_variants = len(sub.drop_duplicates(subset=["qid", "candidate_term", "weight"]))
-            coverage_pct = min(100.0, (evaluated_variants / max(expected_variants, 1)) * 100.0)
+            if self.df_universe is not None:
+                sub_univ = self.df_universe[self.df_universe["dataset"] == ds]
+                num_q_cand_pairs = len(sub_univ.drop_duplicates(subset=["qid", "candidate_term"]))
+                
+                expected_triples = set()
+                for qid, cand in sub_univ[["qid", "candidate_term"]].drop_duplicates().itertuples(index=False):
+                    for w in self.weights:
+                        expected_triples.add((str(qid), str(cand), round(float(w), 4)))
 
-            rows.append({
-                "Dataset": ds,
-                "Queries": num_queries,
-                "Unique Query-Candidate Pairs": num_q_cand_pairs,
-                "Evaluated Variants (5 weights)": evaluated_variants,
-                "Expected Variants": expected_variants,
-                "Labeling Coverage %": f"{coverage_pct:.2f}%",
-                "Coverage Status": "100.0% COMPLETE" if evaluated_variants >= expected_variants else f"{coverage_pct:.1f}% INCOMPLETE",
-            })
+                actual_triples = set()
+                for _, row in sub.iterrows():
+                    actual_triples.add((str(row["qid"]), str(row["candidate_term"]), round(float(row["weight"]), 4)))
+
+                expected_variants = len(expected_triples)
+                evaluated_variants = len(actual_triples)
+                missing = expected_triples - actual_triples
+                extra = actual_triples - expected_triples
+                
+                coverage_pct = (evaluated_variants / max(expected_variants, 1)) * 100.0
+                status = "100.0% COMPLETE" if (len(missing) == 0 and len(extra) == 0 and evaluated_variants == expected_variants) else f"{coverage_pct:.2f}% INCOMPLETE (Missing: {len(missing)}, Extra: {len(extra)})"
+
+                rows.append({
+                    "Dataset": ds,
+                    "Queries": num_queries,
+                    "Reference Universe Pairs": num_q_cand_pairs,
+                    "Expected Variants": expected_variants,
+                    "Evaluated Variants": evaluated_variants,
+                    "Missing Triples": len(missing),
+                    "Extra Triples": len(extra),
+                    "Labeling Coverage %": f"{coverage_pct:.2f}%",
+                    "Coverage Status": status,
+                })
+            else:
+                unique_q_cands = sub.drop_duplicates(subset=["qid", "candidate_term"])
+                num_q_cand_pairs = len(unique_q_cands)
+                expected_variants = num_q_cand_pairs * len(self.weights)
+                evaluated_variants = len(sub.drop_duplicates(subset=["qid", "candidate_term", "weight"]))
+                coverage_pct = (evaluated_variants / max(expected_variants, 1)) * 100.0
+
+                rows.append({
+                    "Dataset": ds,
+                    "Queries": num_queries,
+                    "Unique Query-Candidate Pairs": num_q_cand_pairs,
+                    "Expected Variants": expected_variants,
+                    "Evaluated Variants": evaluated_variants,
+                    "Missing Triples": max(0, expected_variants - evaluated_variants),
+                    "Extra Triples": max(0, evaluated_variants - expected_variants),
+                    "Labeling Coverage %": f"{coverage_pct:.2f}%",
+                    "Coverage Status": "100.0% COMPLETE" if evaluated_variants == expected_variants else f"{coverage_pct:.1f}% INCOMPLETE",
+                })
         return pd.DataFrame(rows)
 
     def compile_all_tables_and_report(self) -> str:
@@ -367,7 +449,7 @@ class Gate1TableCompiler:
         df_q1.to_csv(t1_path, index=False)
         print(f"Saved Table 1 -> {t1_path}")
 
-        print("\n--- Compiling Table 2 (Channel Comparison across all 9 channels) ---")
+        print("\n--- Compiling Table 2 (Channel Comparison across channels) ---")
         df_q2 = self.compile_q2_single_channel_comparison(budget_l=200)
         t2_path = os.path.join(self.output_dir, "table2_channel_comparison.csv")
         df_q2.to_csv(t2_path, index=False)
@@ -380,10 +462,22 @@ class Gate1TableCompiler:
         print(f"Saved Label Coverage Table -> {cov_path}")
 
         report_path = os.path.join(self.output_dir, "gate1_selection_report.md")
+        
+        git_commit = self.run_manifest.get("git_commit", "N/A") if self.run_manifest else "N/A"
+        git_dirty = self.run_manifest.get("git_dirty", False) if self.run_manifest else False
+        peak_rss = self.run_manifest.get("peak_rss_gib", "N/A") if self.run_manifest else "N/A"
+        peak_vram = self.run_manifest.get("peak_cuda_vram_mib", "N/A") if self.run_manifest else "N/A"
+        cfg_hash = self.run_manifest.get("config_hash", "N/A") if self.run_manifest else "N/A"
+
         report_md = f"""# Phase 2 Gate 1 Candidate Selection Report
 
 **Master Audit Parquet:** [`{self.audit_path}`](file://{os.path.abspath(self.audit_path)})  
 **Cutoff Entries Parquet:** [`{self.cutoff_path}`](file://{os.path.abspath(self.cutoff_path)})  
+**Reference Universe Parquet:** [`{self.universe_path or 'N/A'}`](file://{os.path.abspath(self.universe_path) if self.universe_path else ''})  
+**Config Hash:** `{cfg_hash}`  
+**Git Commit:** `{git_commit}` (dirty: `{git_dirty}`)  
+**Peak Process-Tree RSS:** `{peak_rss} GiB`  
+**Peak CUDA VRAM:** `{peak_vram} MiB`  
 **Generated At:** {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())}  
 
 ---
@@ -414,6 +508,9 @@ def main():
     parser = argparse.ArgumentParser(description="Compile Phase 2 Gate 1 Research Tables")
     parser.add_argument("--audit-parquet", type=str, default="results/gate1_selection/dev_corrected/gate1_candidate_audit.parquet")
     parser.add_argument("--cutoff-parquet", type=str, default="results/gate1_selection/dev_corrected/gate1_cutoff_entries.parquet")
+    parser.add_argument("--universe-parquet", type=str, default=None, help="Path to reference_universe.parquet")
+    parser.add_argument("--run-manifest", type=str, default=None, help="Path to run_manifest.json")
+    parser.add_argument("--frozen-config-path", type=str, default=None, help="Path to gate1_phase2_1a.yaml")
     parser.add_argument("--output-dir", type=str, default="results/gate1_selection/dev_corrected")
     parser.add_argument("--delta", type=float, default=DEFAULT_DELTA)
     parser.add_argument("--rho", type=float, default=DEFAULT_RHO)
@@ -425,6 +522,9 @@ def main():
         audit_parquet_path=args.audit_parquet,
         cutoff_parquet_path=args.cutoff_parquet,
         output_dir=args.output_dir,
+        universe_parquet_path=args.universe_parquet,
+        run_manifest_path=args.run_manifest,
+        frozen_config_path=args.frozen_config_path,
         delta=args.delta,
         rho=args.rho,
         b_resamples=args.bootstrap,

@@ -199,6 +199,49 @@ class BenchmarkLoader:
         return 0
 
     @classmethod
+    def get_consumed_input_paths(cls, dataset_name: str) -> Dict[str, str]:
+        """
+        Returns a dictionary of named, absolute paths to the actual source files
+        consumed when loading queries, qrels, and exclusions for the dataset.
+        """
+        norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+        bright_domain = parse_bright_domain(dataset_name)
+        if bright_domain:
+            src_dir = os.path.join(RAW_DIR, "bright")
+            example_parquet = os.path.join(src_dir, "examples", f"{bright_domain}-00000-of-00001.parquet")
+            return {"examples": os.path.abspath(example_parquet)}
+
+        subset = norm[5:] if norm.startswith("beir_") else norm
+        src_dir = cls._find_beir_dir(subset)
+        q_file = os.path.join(src_dir, "queries.jsonl")
+        if not os.path.exists(q_file):
+            q_file = os.path.join(src_dir, "queries_queries.jsonl")
+        qrels_file = os.path.join(src_dir, "qrels", "test.tsv")
+        return {
+            "queries": os.path.abspath(q_file),
+            "qrels": os.path.abspath(qrels_file),
+        }
+
+    @classmethod
+    def get_corpus_source_paths(cls, dataset_name: str) -> List[str]:
+        """
+        Returns a list of absolute paths to the raw corpus files consumed by stream_corpus().
+        """
+        norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
+        bright_domain = parse_bright_domain(dataset_name)
+        if bright_domain:
+            src_dir = os.path.join(RAW_DIR, "bright")
+            doc_parquet = os.path.join(src_dir, "documents", f"{bright_domain}-00000-of-00001.parquet")
+            return [os.path.abspath(doc_parquet)]
+
+        subset = norm[5:] if norm.startswith("beir_") else norm
+        src_dir = cls._find_beir_dir(subset)
+        c_file = os.path.join(src_dir, "corpus.jsonl")
+        if not os.path.exists(c_file):
+            c_file = os.path.join(src_dir, "corpus_corpus.jsonl")
+        return [os.path.abspath(c_file)]
+
+    @classmethod
     def get_query_qrels_paths(cls, dataset_name: str) -> Tuple[str, str]:
         """Returns the absolute paths to (queries_file, qrels_file) for a dataset."""
         norm = dataset_name.lower().replace("-", "_").replace("_doc_level", "")
@@ -274,7 +317,9 @@ class BenchmarkLoader:
                             "query_id": f"q_beir_{subset}_{qid}",
                             "question": queries_map[qid],
                             "gold_doc_ids": sorted(gold_dids),
-                            "qrels": qrels
+                            "qrels": qrels,
+                            "excluded_doc_ids": set(),
+                            "exclusions": set(),
                         })
 
             stats = {
@@ -495,6 +540,7 @@ class BenchmarkLoader:
                     "gold_doc_ids": sorted(safe_gold),
                     "qrels": qrels,
                     "excluded_doc_ids": safe_excluded,
+                    "exclusions": safe_excluded,
                 })
 
         formatted_queries.sort(key=lambda x: x["query_id"])

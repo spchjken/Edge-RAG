@@ -84,6 +84,31 @@ def compute_pool_sha256(terms: List[str]) -> str:
     return hashlib.sha256("\n".join(terms).encode("utf-8")).hexdigest()
 
 
+def compute_corpus_source_hash(dataset: str) -> str:
+    """Computes SHA-256 hash over raw corpus files consumed by stream_corpus()."""
+    paths = BenchmarkLoader.get_corpus_source_paths(dataset)
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+    return h.hexdigest()
+
+
+def compute_lexicon_semantic_hash(index) -> str:
+    """Computes deterministic SHA-256 over sorted (term, df, cf) records from index lexicon."""
+    lex = index.getLexicon()
+    entries = []
+    for entry in lex:
+        t = str(entry.getKey())
+        df = int(entry.getValue().getDocumentFrequency())
+        cf = int(entry.getValue().getFrequency())
+        entries.append(f"{t}\t{df}\t{cf}")
+    entries.sort()
+    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
+
+
 class Gate1SidecarManager:
     """Manages creation, caching, and loading of all Gate 1 sidecars with strict validation."""
 
@@ -100,13 +125,25 @@ class Gate1SidecarManager:
         self.bge_model_name = bge_model_name
 
         # Wire build ceilings and disk caps directly from config if provided
+        key_map = {
+            "bge_sidecar": "bge",
+            "ppmi_sidecar": "ppmi",
+            "lexical_profiles": "lexical",
+            "acronym_rescue": "acronym",
+        }
         self.ceilings = dict(DEFAULT_BUILD_CEILINGS_SEC)
         if "build_ceilings_sec" in self.config:
-            self.ceilings.update(self.config["build_ceilings_sec"])
+            for k, v in self.config["build_ceilings_sec"].items():
+                self.ceilings[k] = float(v)
+                if k in key_map:
+                    self.ceilings[key_map[k]] = float(v)
 
         self.disk_caps = dict(DEFAULT_MAX_DISK_MB)
         if "build_disk_caps_mb" in self.config:
-            self.disk_caps.update(self.config["build_disk_caps_mb"])
+            for k, v in self.config["build_disk_caps_mb"].items():
+                self.disk_caps[k] = float(v)
+                if k in key_map:
+                    self.disk_caps[key_map[k]] = float(v)
 
     def _get_safe_ds(self, dataset: str) -> str:
         return dataset.lower().replace("-", "_")
@@ -159,6 +196,7 @@ class Gate1SidecarManager:
         out_path = os.path.join(self.cache_dir, f"{safe_ds}_bge_sidecar.pt")
         expected_sha = compute_pool_sha256(pool_terms)
 
+        corpus_source_hash = compute_corpus_source_hash(dataset)
         if not force_rebuild and os.path.exists(out_path):
             try:
                 data = torch.load(out_path, map_location=device)
@@ -169,6 +207,7 @@ class Gate1SidecarManager:
                     and meta.get("analyzer_version") == ANALYZER_VERSION
                     and meta.get("bge_model") == self.bge_model_name
                     and data.get("pool_terms") == pool_terms
+                    and (not corpus_source_hash or meta.get("corpus_source_hash") == corpus_source_hash)
                 ):
                     return {
                         "pool_embeddings": data["embeddings"].to(device),
@@ -282,6 +321,8 @@ class Gate1SidecarManager:
         out_path = os.path.join(self.cache_dir, f"{safe_ds}_bounded_ppmi.json")
         expected_sha = compute_pool_sha256(pool_terms)
 
+        corpus_source_hash = compute_corpus_source_hash(dataset)
+        lexicon_semantic_hash = compute_lexicon_semantic_hash(index)
         if not force_rebuild and os.path.exists(out_path):
             try:
                 with open(out_path, "r", encoding="utf-8") as f:
@@ -292,6 +333,8 @@ class Gate1SidecarManager:
                     and meta.get("num_docs") == num_docs
                     and meta.get("analyzer_version") == ANALYZER_VERSION
                     and meta.get("top_m") == top_m
+                    and (not corpus_source_hash or meta.get("corpus_source_hash") == corpus_source_hash)
+                    and (not lexicon_semantic_hash or meta.get("lexicon_semantic_hash") == lexicon_semantic_hash)
                 ):
                     return {
                         "anchor_ppmi": {a: [(t, float(s)) for t, s in cands] for a, cands in data["anchors"].items()},
@@ -344,7 +387,8 @@ class Gate1SidecarManager:
 
         # Track empirical peak memory and pair statistics
         peak_pairs = sum(len(v) for v in anchor_cooccur.values())
-        peak_rss_gib = get_process_rss_gib()
+        rss_after_accum = get_process_rss_gib()
+        running_peak_rss = max(get_process_rss_gib(), rss_after_accum)
 
         # Compute exact PPMI (no rounding)
         anchor_ppmi = {}
@@ -364,6 +408,7 @@ class Gate1SidecarManager:
                 scored.sort(key=lambda x: (-x[1], x[0]))
                 anchor_ppmi[a] = scored[:top_m]
 
+        running_peak_rss = max(running_peak_rss, get_process_rss_gib())
         elapsed_sec = round(time.perf_counter() - t0, 2)
         metadata = {
             "dataset": dataset,
@@ -374,7 +419,11 @@ class Gate1SidecarManager:
             "top_m": top_m,
             "num_anchors": len(anchor_ppmi),
             "peak_pairs": peak_pairs,
-            "peak_rss_gib": round(peak_rss_gib, 3),
+            "peak_rss_gib": round(running_peak_rss, 3),
+            "running_peak_rss_gib": round(running_peak_rss, 3),
+            "rss_after_accumulation_gib": round(rss_after_accum, 3),
+            "corpus_source_hash": corpus_source_hash,
+            "lexicon_semantic_hash": lexicon_semantic_hash,
             "elapsed_sec": elapsed_sec,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -390,7 +439,7 @@ class Gate1SidecarManager:
         os.replace(tmp_path, out_path)
 
         timing_s = elapsed_sec
-        print(f"[Sidecar] Bounded PPMI Sidecar built in {timing_s}s for {len(anchor_ppmi):,} anchors (peak pairs: {peak_pairs:,}, peak RSS: {peak_rss_gib:.2f} GiB) -> {out_path}")
+        print(f"[Sidecar] Bounded PPMI Sidecar built in {timing_s}s for {len(anchor_ppmi):,} anchors (peak pairs: {peak_pairs:,}, peak RSS: {running_peak_rss:.2f} GiB) -> {out_path}")
 
         return {
             "anchor_ppmi": anchor_ppmi,

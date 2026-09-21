@@ -17,5 +17,12 @@
   "eligible_count": 7783,
   "frozen_pool_size": 7783,
   "pool_policy_formula": "min(10000, |V_eligible|)",
-  "computed_pool_size": 7783
+  "computed_pool_size": 7783,
+  "duplicate_terms_in_pool": 0,
+  "missing_terms_count": 0,
+  "extra_terms_count": 0,
+  "set_equality_asserted": true,
+  "sorted_eligible_set_sha256": "4aca960d65d077e62e86c0aaf785ff7c2c42966a979f035c3c2084ca23be6ea3",
+  "sorted_canonical_pool_sha256": "4aca960d65d077e62e86c0aaf785ff7c2c42966a979f035c3c2084ca23be6ea3",
+  "canonical_pool_file_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c"
 }

@@ -42,11 +42,13 @@ def main():
         index = pt.IndexFactory.of(prop_file)
         meta = index.getCollectionStatistics()
 
-        # Hash all key index files in directory
+        # Hash all key index files in directory, excluding manifests, temps, locks, logs
         index_files = {}
         for fname in sorted(os.listdir(idx_dir)):
-            if fname.endswith(".properties") or fname.endswith(".meta") or fname.endswith(".log"):
-                fpath = os.path.join(idx_dir, fname)
+            if fname in ("index_manifest.json",) or fname.endswith(".tmp") or fname.endswith(".lock") or fname.endswith(".log"):
+                continue
+            fpath = os.path.join(idx_dir, fname)
+            if os.path.isfile(fpath):
                 index_files[fname] = file_sha256(fpath)
 
         manifest = {
