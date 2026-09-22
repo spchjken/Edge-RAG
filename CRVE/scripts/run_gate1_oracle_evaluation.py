@@ -40,7 +40,12 @@ sys.path.insert(0, os.path.join(BASE_DIR, "scripts"))
 from evaluation.baselines.pyterrier_harness import init_pyterrier
 from evaluation.benchmark_loader import BenchmarkLoader
 from evaluation.baselines.pyterrier_qe import get_terrier_analyzer
-from crve.selection.gate1_sidecars import Gate1SidecarManager, validate_gate1_config
+from crve.selection.gate1_sidecars import (
+    Gate1SidecarManager,
+    validate_gate1_config,
+    compute_pool_sha256,
+    compute_corpus_source_hash,
+)
 from crve.selection.gate1_proposers import (
     WholeQueryBGEProposer,
     AnchorBGEProposer,
@@ -62,6 +67,31 @@ from crve.selection.gate1_metrics import (
 )
 
 DEV_DATASETS = ["scifact", "bright_aops", "nfcorpus", "trec_covid"]
+
+
+def load_canonical_pool_terms(dataset: str) -> List[str]:
+    """Loads terms list from canonical pool JSON artifact."""
+    safe_ds = dataset.lower().replace("-", "_")
+    pool_path = os.path.abspath(f"data/cache/canonical_pools/{safe_ds}_canonical_pool.json")
+    if not os.path.exists(pool_path):
+        raise FileNotFoundError(f"Canonical pool artifact not found at {pool_path}!")
+    with open(pool_path, "r", encoding="utf-8") as f:
+        pool_data = json.load(f)
+    return pool_data["terms"]
+
+
+def compute_index_hash(dataset: str) -> str:
+    """Computes SHA-256 hash of index_manifest.json for dataset."""
+    safe_ds = dataset.lower().replace("-", "_")
+    idx_path = os.path.abspath(f"data/cache/terrier_indices/{safe_ds}_default/data.properties")
+    idx_manifest_path = os.path.join(os.path.dirname(idx_path), "index_manifest.json")
+    if not os.path.exists(idx_manifest_path):
+        raise FileNotFoundError(f"FATAL: index_manifest.json not found at {idx_manifest_path}!")
+    manifest_hasher = hashlib.sha256()
+    with open(idx_manifest_path, "rb") as f:
+        while chunk := f.read(65536):
+            manifest_hasher.update(chunk)
+    return manifest_hasher.hexdigest()
 
 
 def compute_rbo(s: List[str], t: List[str], p: float = 0.98, k: int = 500) -> float:
