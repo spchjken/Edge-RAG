@@ -773,6 +773,7 @@ def run_dataset_gate1_evaluation(
     qids_manifest: Optional[str] = None,
     force_rebuild_sidecars: bool = False,
     explicit_qids: Optional[List[str]] = None,
+    disallow_rebuild_sidecars: bool = False,
 ) -> Dict[str, Any]:
     """Runs complete Gate 1 counterfactual evaluation for a single dataset."""
     print(f"\n=======================================================")
@@ -895,7 +896,7 @@ def run_dataset_gate1_evaluation(
     bm25 = pt.terrier.Retriever(index, wmodel="BM25", num_results=1000)
 
     # 4. Load all 4 Gate 1 Sidecars with frozen config wiring
-    sidecar_mgr = Gate1SidecarManager(config=frozen_config, bge_model_name=bge_model)
+    sidecar_mgr = Gate1SidecarManager(config=frozen_config, bge_model_name=bge_model, disallow_rebuild=disallow_rebuild_sidecars)
     bge_sidecar = sidecar_mgr.build_or_load_bge_sidecar(
         dataset, pool_terms, num_docs=num_docs, encoder=encoder, device=device, force_rebuild=force_rebuild_sidecars
     )
@@ -1481,6 +1482,7 @@ def main():
                 qids_manifest="probe_40_qids",
                 force_rebuild_sidecars=args.force_rebuild_sidecars,
                 explicit_qids=probe_qids,
+                disallow_rebuild_sidecars=args.allow_exploratory_continuation,
             )
             probe_summaries.append(ds_meta)
 
@@ -1538,6 +1540,24 @@ def main():
                 print("Proceeding with Stage 2 as an EXPLICITLY EXPLORATORY run under unchanged M=600 setup.")
                 print("gate_passed: false and is_exploratory_run: true will be stamped in run_manifest.json.")
                 print("!" * 70 + "\n")
+
+                archived_gate_path = "for_review/selection_phase/gate_1/run_2/stage1_halt_artifacts/checkpoint_b_loss_gate.json"
+                if not os.path.exists(archived_gate_path):
+                    raise FileNotFoundError(
+                        f"FATAL: Continuation mode requires preserved Checkpoint B artifact to verify against, "
+                        f"but '{archived_gate_path}' was not found! Aborting before Stage 2."
+                    )
+                print(f"\n[Pre-Stage 2] Verifying freshly computed Checkpoint B against archived artifact: {archived_gate_path}...")
+                with open(archived_gate_path, "r", encoding="utf-8") as f:
+                    archived_gate_data = json.load(f)
+                if loss_gate_results != archived_gate_data:
+                    raise ValueError(
+                        f"FATAL: Freshly computed Checkpoint B loss gate does not match archived Stage 1 halt artifact!\n"
+                        f"  Fresh:    {loss_gate_results}\n"
+                        f"  Archived: {archived_gate_data}\n"
+                        f"Aborting before spending compute on Stage 2."
+                    )
+                print("[Pre-Stage 2] Checkpoint B matches archived halt record exactly. Proceeding to Stage 2.")
             else:
                 print("\n" + "!" * 70)
                 print("FATAL: Checkpoint B operational-loss gate FAILED!")
@@ -1585,6 +1605,7 @@ def main():
                 qids_manifest=None,
                 force_rebuild_sidecars=False,
                 explicit_qids=remaining_qids,
+                disallow_rebuild_sidecars=args.allow_exploratory_continuation,
             )
             stage2_summaries.append(ds_meta)
 
@@ -1853,6 +1874,7 @@ def main():
                 bge_model=args.bge_model,
                 qids_manifest=args.qids_manifest,
                 force_rebuild_sidecars=args.force_rebuild_sidecars,
+                disallow_rebuild_sidecars=args.allow_exploratory_continuation,
             )
             meta_summaries.append(ds_meta)
 

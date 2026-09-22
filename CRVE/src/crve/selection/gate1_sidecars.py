@@ -187,12 +187,14 @@ class Gate1SidecarManager:
         cache_dir: str = "data/cache/canonical_pools",
         config: Optional[Dict[str, Any]] = None,
         bge_model_name: str = "BAAI/bge-small-en-v1.5",
+        disallow_rebuild: bool = False,
     ):
         self.cache_dir = os.path.abspath(cache_dir)
         os.makedirs(self.cache_dir, exist_ok=True)
         self.analyzer = get_terrier_analyzer()
         self.config = config or {}
         self.bge_model_name = bge_model_name
+        self.disallow_rebuild = disallow_rebuild
 
         if self.config:
             validate_gate1_config(self.config)
@@ -293,9 +295,15 @@ class Gate1SidecarManager:
                         "timing_s": 0.0,
                     }
                 else:
+                    if self.disallow_rebuild:
+                        raise RuntimeError(f"FATAL: BGE sidecar cache invalid or outdated for {dataset}. Auto-rebuild is disallowed in exploratory-continuation mode.")
                     print(f"[Sidecar] BGE cache invalid or outdated for {dataset}. Rebuilding...")
             except Exception as e:
+                if self.disallow_rebuild:
+                    raise RuntimeError(f"FATAL: Failed to load BGE cache for {dataset} ({e}). Auto-rebuild is disallowed in exploratory-continuation mode.")
                 print(f"[Sidecar] Failed to load BGE cache for {dataset} ({e}). Rebuilding...")
+        elif not force_rebuild and self.disallow_rebuild:
+            raise RuntimeError(f"FATAL: BGE sidecar missing at {out_path}. Auto-rebuild is disallowed in exploratory-continuation mode.")
 
         print(f"[Sidecar] Building Canonical Pool BGE Sidecar for {dataset} ({len(pool_terms)} terms, FP16)...")
         t0 = time.perf_counter()
@@ -466,9 +474,15 @@ class Gate1SidecarManager:
                         "timing_s": 0.0,
                     }
                 else:
+                    if self.disallow_rebuild:
+                        raise RuntimeError(f"FATAL: PPMI sidecar cache invalid or outdated for {dataset}. Auto-rebuild is disallowed in exploratory-continuation mode.")
                     print(f"[Sidecar] PPMI cache invalid or outdated for {dataset}. Rebuilding...")
             except Exception as e:
+                if self.disallow_rebuild:
+                    raise RuntimeError(f"FATAL: Failed to load PPMI cache for {dataset} ({e}). Auto-rebuild is disallowed in exploratory-continuation mode.")
                 print(f"[Sidecar] Failed to load PPMI cache for {dataset} ({e}). Rebuilding...")
+        elif not force_rebuild and self.disallow_rebuild:
+            raise RuntimeError(f"FATAL: Parquet PPMI sidecar missing at {out_path}. Auto-rebuild and legacy JSON conversion are disallowed in exploratory-continuation mode.")
         elif not force_rebuild and os.path.exists(legacy_json_path):
             try:
                 with open(legacy_json_path, "r", encoding="utf-8") as f:
@@ -627,9 +641,15 @@ class Gate1SidecarManager:
                         "timing_s": 0.0,
                     }
                 else:
+                    if self.disallow_rebuild:
+                        raise RuntimeError(f"FATAL: Acronym sidecar cache invalid or outdated for {dataset}. Auto-rebuild is disallowed in exploratory-continuation mode.")
                     print(f"[Sidecar] Acronym cache invalid or outdated for {dataset}. Rebuilding...")
             except Exception as e:
+                if self.disallow_rebuild:
+                    raise RuntimeError(f"FATAL: Failed to load Acronym cache for {dataset} ({e}). Auto-rebuild is disallowed in exploratory-continuation mode.")
                 print(f"[Sidecar] Failed to load Acronym cache for {dataset} ({e}). Rebuilding...")
+        elif not force_rebuild and self.disallow_rebuild:
+            raise RuntimeError(f"FATAL: Acronym sidecar missing at {out_path}. Auto-rebuild is disallowed in exploratory-continuation mode.")
 
         print(f"[Sidecar] Building Acronym Definition Rescue Sidecar for {dataset}...")
         t0 = time.perf_counter()
@@ -791,6 +811,11 @@ class Gate1SidecarManager:
                         and meta.get("reservoir_seed") == configured_seed
                     ):
                         if not os.path.exists(prop_path):
+                            if self.disallow_rebuild:
+                                raise RuntimeError(
+                                    f"FATAL: Lexical profiles auxiliary index missing for {dataset} at {aux_index_dir}. "
+                                    f"Auto-rebuild is disallowed in exploratory-continuation mode."
+                                )
                             print(f"[Sidecar] Building auxiliary index from lexical profiles Parquet for {dataset}...")
                             df_lex = table.to_pandas()
                             def doc_gen() -> Iterator[Dict[str, str]]:
@@ -817,8 +842,18 @@ class Gate1SidecarManager:
                             "timing_s": 0.0,
                         }
                     else:
+                        if self.disallow_rebuild:
+                            raise RuntimeError(
+                                f"FATAL: Lexical profiles cache invalid or outdated for {dataset}. "
+                                f"Auto-rebuild is disallowed in exploratory-continuation mode."
+                            )
                         print(f"[Sidecar] Lexical profiles cache invalid or outdated for {dataset}. Rebuilding...")
                 except Exception as e:
+                    if self.disallow_rebuild:
+                        raise RuntimeError(
+                            f"FATAL: Failed to load Lexical profiles cache for {dataset} ({e}). "
+                            f"Auto-rebuild is disallowed in exploratory-continuation mode."
+                        )
                     print(f"[Sidecar] Failed to load Lexical profiles cache for {dataset} ({e}). Rebuilding...")
             elif os.path.exists(prop_path) and os.path.exists(meta_path):
                 try:
@@ -840,9 +875,24 @@ class Gate1SidecarManager:
                             "timing_s": 0.0,
                         }
                     else:
+                        if self.disallow_rebuild:
+                            raise RuntimeError(
+                                f"FATAL: Lexical profiles cache invalid or outdated for {dataset}. "
+                                f"Auto-rebuild is disallowed in exploratory-continuation mode."
+                            )
                         print(f"[Sidecar] Lexical profiles cache invalid or outdated for {dataset}. Rebuilding...")
                 except Exception as e:
+                    if self.disallow_rebuild:
+                        raise RuntimeError(
+                            f"FATAL: Failed to load Lexical profiles cache for {dataset} ({e}). "
+                            f"Auto-rebuild is disallowed in exploratory-continuation mode."
+                        )
                     print(f"[Sidecar] Failed to load Lexical profiles cache for {dataset} ({e}). Rebuilding...")
+            elif self.disallow_rebuild:
+                raise RuntimeError(
+                    f"FATAL: Lexical profiles sidecar missing at {parquet_path} / {aux_index_dir}. "
+                    f"Auto-rebuild is disallowed in exploratory-continuation mode."
+                )
 
         print(f"[Sidecar] Building Sparse Lexical Context Sidecar for {dataset} ({len(pool_terms)} terms, reservoir sampling, seed={configured_seed})...")
         t0 = time.perf_counter()

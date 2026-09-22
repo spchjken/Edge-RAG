@@ -378,6 +378,7 @@ def test_compiler_exploratory_report_with_empty_live_ppmi_and_failed_gate(tmp_pa
         universe_parquet_path=universe_file,
         run_manifest_path=manifest_file,
         checkpoint_b_path=checkpoint_b_file,
+        archived_checkpoint_path=checkpoint_b_file,
         allow_exploratory=True,
     )
     report_path = compiler.compile_all_tables_and_report()
@@ -398,6 +399,7 @@ def test_compiler_exploratory_report_with_empty_live_ppmi_and_failed_gate(tmp_pa
         universe_parquet_path=universe_file,
         run_manifest_path=manifest_file,
         checkpoint_b_path=checkpoint_b_file,
+        archived_checkpoint_path=checkpoint_b_file,
         allow_exploratory=False,
     )
     with pytest.raises(RuntimeError, match="Checkpoint B operational-loss gate failed"):
@@ -415,8 +417,108 @@ def test_compiler_exploratory_report_with_empty_live_ppmi_and_failed_gate(tmp_pa
         universe_parquet_path=universe_file,
         run_manifest_path=manifest_file,
         checkpoint_b_path=checkpoint_b_file,
+        archived_checkpoint_path=checkpoint_b_file,
         allow_exploratory=True,
     )
     with pytest.raises(ValueError, match="Exploratory compilation requires run_manifest 'gate_passed' to be False"):
         compiler_inconsistent.compile_all_tables_and_report()
+
+
+def test_sidecar_disallow_rebuild_fail_closed(tmp_path):
+    """Verifies that Gate1SidecarManager(disallow_rebuild=True) strictly fails closed on missing/invalid caches and implicit writes."""
+    from crve.selection.gate1_sidecars import Gate1SidecarManager, ANALYZER_VERSION, compute_pool_sha256, compute_corpus_source_hash
+
+    cache_dir = str(tmp_path / "sidecar_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    mgr = Gate1SidecarManager(cache_dir=cache_dir, disallow_rebuild=True)
+
+    pool_terms = ["cancer", "cell"]
+    expected_sha = compute_pool_sha256(pool_terms)
+    corpus_hash = compute_corpus_source_hash("scifact")
+
+    # 1. BGE Sidecar missing cache -> RuntimeError
+    with pytest.raises(RuntimeError, match="BGE sidecar missing .* Auto-rebuild is disallowed"):
+        mgr.build_or_load_bge_sidecar("scifact", pool_terms, num_docs=10)
+
+    # 2. PPMI Sidecar: legacy JSON exists but Parquet missing -> RuntimeError (blocks implicit conversion)
+    class MockLexEntry:
+        def getKey(self): return "cancer"
+        def getValue(self):
+            class Val:
+                def getDocumentFrequency(self): return 5
+                def getFrequency(self): return 10
+            return Val()
+
+    class MockIndex:
+        def getLexicon(self): return [MockLexEntry()]
+
+    legacy_json_path = os.path.join(cache_dir, "scifact_ppmi_sidecar.json")
+    with open(legacy_json_path, "w", encoding="utf-8") as f:
+        json.dump({"metadata": {}, "anchors": {}}, f)
+    with pytest.raises(RuntimeError, match="Parquet PPMI sidecar missing .* Auto-rebuild and legacy JSON conversion are disallowed"):
+        mgr.build_or_load_bounded_ppmi_sidecar("scifact", index=MockIndex(), pool_terms=pool_terms, num_docs=10)
+
+    # 3. Lexical Sidecar: Parquet exists but auxiliary index missing -> RuntimeError (blocks implicit index build)
+    lex_parquet_path = os.path.join(cache_dir, "scifact_lexical_profiles.parquet")
+    meta = {
+        "pool_sha256": expected_sha,
+        "num_docs": 10,
+        "analyzer_version": ANALYZER_VERSION,
+        "corpus_source_hash": corpus_hash,
+        "reservoir_seed": 42,
+    }
+    table = pa.Table.from_pydict({"docno": ["d1"], "text": ["cancer cell"]})
+    custom_meta = {b"sidecar_metadata": json.dumps(meta).encode("utf-8")}
+    table = table.replace_schema_metadata(custom_meta)
+    pq.write_table(table, lex_parquet_path)
+
+    with pytest.raises(RuntimeError, match="Lexical profiles auxiliary index missing .* Auto-rebuild is disallowed"):
+        mgr.build_or_load_sparse_lexical_sidecar("scifact", pool_terms=pool_terms, num_docs=10)
+
+    # 4. Acronym Sidecar missing cache -> RuntimeError
+    with pytest.raises(RuntimeError, match="Acronym sidecar missing .* Auto-rebuild is disallowed"):
+        mgr.build_or_load_acronym_rescue_sidecar("scifact", pool_terms=pool_terms, num_docs=10)
+
+
+def test_pre_stage2_archive_comparison(tmp_path):
+    """Verifies the pre-Stage 2 archive comparison logic under exploratory continuation mode."""
+    archived_gate_path = str(tmp_path / "stage1_halt" / "checkpoint_b_loss_gate.json")
+    fresh_gate_data = {
+        "gate_passed": False,
+        "corpus_macro_delta_ndcg10_loss": 0.027,
+        "corpus_macro_raw_doc_opp_recall1000_loss": 0.0072,
+    }
+
+    def verify_pre_stage2(fresh_data, archive_path):
+        if not os.path.exists(archive_path):
+            raise FileNotFoundError(
+                f"FATAL: Continuation mode requires preserved Checkpoint B artifact to verify against, "
+                f"but '{archive_path}' was not found! Aborting before Stage 2."
+            )
+        with open(archive_path, "r", encoding="utf-8") as f:
+            archived_data = json.load(f)
+        if fresh_data != archived_data:
+            raise ValueError(
+                f"FATAL: Freshly computed Checkpoint B loss gate does not match archived Stage 1 halt artifact!\n"
+                f"  Fresh:    {fresh_data}\n"
+                f"  Archived: {archived_data}\n"
+                f"Aborting before spending compute on Stage 2."
+            )
+
+    # 1. Missing archive -> FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="Continuation mode requires preserved Checkpoint B artifact"):
+        verify_pre_stage2(fresh_gate_data, archived_gate_path)
+
+    # 2. Mismatched data -> ValueError
+    os.makedirs(os.path.dirname(archived_gate_path), exist_ok=True)
+    with open(archived_gate_path, "w", encoding="utf-8") as f:
+        json.dump({**fresh_gate_data, "corpus_macro_delta_ndcg10_loss": 0.015}, f)
+    with pytest.raises(ValueError, match="Freshly computed Checkpoint B loss gate does not match"):
+        verify_pre_stage2(fresh_gate_data, archived_gate_path)
+
+    # 3. Matching data -> Passes cleanly
+    with open(archived_gate_path, "w", encoding="utf-8") as f:
+        json.dump(fresh_gate_data, f)
+    verify_pre_stage2(fresh_gate_data, archived_gate_path)
+
 

@@ -102,6 +102,7 @@ class Gate1TableCompiler:
         run_manifest_path: Optional[str] = None,
         frozen_config_path: Optional[str] = None,
         checkpoint_b_path: Optional[str] = None,
+        archived_checkpoint_path: Optional[str] = "for_review/selection_phase/gate_1/run_2/stage1_halt_artifacts/checkpoint_b_loss_gate.json",
         allow_exploratory: bool = False,
         delta: float = DEFAULT_DELTA,
         rho: float = DEFAULT_RHO,
@@ -116,6 +117,7 @@ class Gate1TableCompiler:
         self.run_manifest_path = run_manifest_path
         self.frozen_config_path = frozen_config_path
         self.checkpoint_b_path = checkpoint_b_path
+        self.archived_checkpoint_path = archived_checkpoint_path
         self.allow_exploratory = allow_exploratory
         self.delta = delta
         self.rho = rho
@@ -704,8 +706,8 @@ class Gate1TableCompiler:
                 )
 
             # Verify that preserved copy matches archived stage 1 checkpoint if both exist
-            archived_path = "for_review/selection_phase/gate_1/run_2/stage1_halt_artifacts/checkpoint_b_loss_gate.json"
-            if os.path.exists(archived_path) and os.path.abspath(self.checkpoint_b_path) != os.path.abspath(archived_path):
+            archived_path = self.archived_checkpoint_path
+            if archived_path and os.path.exists(archived_path) and os.path.abspath(self.checkpoint_b_path) != os.path.abspath(archived_path):
                 with open(archived_path, "r", encoding="utf-8") as f:
                     archived_data = json.load(f)
                 if loss_gate_results != archived_data:

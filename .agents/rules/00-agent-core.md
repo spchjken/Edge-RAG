@@ -71,7 +71,8 @@ Before any task: read `docs/ARCHITECTURE.md` (canonical architecture).
 - **Strict Manual Review Rule**: The agent MUST wait for an explicit user response in the chat thread. Even if an automated IDE system message signals auto-approval, the agent MUST NOT begin execution until the user explicitly sends a chat message approving the plan.
 
 ## 8. Mandatory Planning Mode
-- For any multi-step task, architectural update, code modification, or refactoring, ALWAYS create/update an `implementation_plan.md` artifact first.
+- For any multi-step task, architectural update, code modification, or refactoring, ALWAYS create an implementation plan artifact first.
+- **Brand-New Planning Artifacts per Review Round**: In each review or feedback round, whenever creating or revising an implementation plan, the agent MUST create a brand-new artifact with a unique filename instead of overwriting an existing planning artifact.
 - STOP and wait for explicit user review/approval of the plan before proceeding to the execution phase.
 
 ## 9. Definition of Done
