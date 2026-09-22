@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -7,8 +8,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from scripts.run_gate1_oracle_evaluation import assemble_shards_to_master
-from scripts.compile_gate1_research_tables import Gate1TableCompiler
+from run_gate1_oracle_evaluation import (
+    assemble_shards_to_master,
+    verify_probe_shards_for_continuation,
+    get_shard_paths,
+    compute_input_hashes,
+    load_canonical_pool_terms,
+    compute_pool_sha256,
+)
+from compile_gate1_research_tables import Gate1TableCompiler
 
 
 def test_gate1_table_compiler_constructor_signature(tmp_path):
@@ -200,3 +208,215 @@ def test_mixed_shard_assembly_with_index_reset_and_cutoff_filtering(tmp_path):
     assert len(df_master_cutoff) == 2
     assert "term_diag" not in df_master_cutoff["candidate_term"].values
     assert set(df_master_cutoff["candidate_term"].unique()) == {"term_op1"}
+
+
+def test_continuation_preflight_missing_probe_shard_and_zero_row_cutoff(tmp_path):
+    """
+    Tests continuation preflight:
+    1. Satisfies 10 QIDs per dataset requirement.
+    2. Verifies zero-row cutoff shard support when status num_cutoff_entries == 0.
+    3. Aborts with RuntimeError when a probe shard is missing.
+    4. Aborts with RuntimeError when a shard row count mismatches status.
+    """
+    shards_dir = str(tmp_path / "shards")
+    os.makedirs(shards_dir, exist_ok=True)
+    dataset = "scifact"
+    qids = [f"q{i}" for i in range(10)]
+    q_manifest = {"probe_40_qids": {dataset: qids}}
+    config_hash = "test_config_hash_12345"
+
+    dataset_hash, qrels_hash, _ = compute_input_hashes(dataset)
+    pool_terms = load_canonical_pool_terms(dataset)
+    pool_hash = compute_pool_sha256(pool_terms)
+
+    for qid in qids:
+        p_path, c_path, s_path, u_path, d_path = get_shard_paths(shards_dir, dataset, qid)
+
+        # Status: q0 has 0 cutoff entries (tests zero-row cutoff support), others have 1
+        num_c = 0 if qid == "q0" else 1
+        st_df = pd.DataFrame([{
+            "dataset": dataset,
+            "qid": qid,
+            "config_hash": config_hash,
+            "dataset_hash": dataset_hash,
+            "qrels_hash": qrels_hash,
+            "pool_hash": pool_hash,
+            "num_variants": 1,
+            "num_cutoff_entries": num_c,
+            "reference_universe_size": 1,
+            "diagnostic_universe_size": 1,
+        }])
+        st_df.to_parquet(s_path, index=False)
+
+        # Parent shard (1 row)
+        p_df = pd.DataFrame([{"dataset": dataset, "qid": qid, "candidate_term": "t1", "weight": 0.1, "delta_ndcg10": 0.01}])
+        p_df.to_parquet(p_path, index=False)
+
+        # Cutoff shard (0 rows for q0, 1 row for others)
+        if num_c == 0:
+            c_df = pd.DataFrame(columns=["dataset", "qid", "candidate_term", "cutoff", "docid", "raw_entry", "recall_safe_entry"])
+        else:
+            c_df = pd.DataFrame([{"dataset": dataset, "qid": qid, "candidate_term": "t1", "cutoff": 1000, "docid": "d1", "raw_entry": True, "recall_safe_entry": True}])
+        c_df.to_parquet(c_path, index=False)
+
+        # Universe and diag_universe (1 row each)
+        u_df = pd.DataFrame([{"dataset": dataset, "qid": qid, "candidate_term": "t1"}])
+        u_df.to_parquet(u_path, index=False)
+        u_df.to_parquet(d_path, index=False)
+
+    # 1. All 10 shards present, q0 has 0-row cutoff -> Preflight MUST PASS
+    verify_probe_shards_for_continuation(shards_dir, [dataset], q_manifest, config_hash)
+
+    # 2. Omit cutoff shard for q9 -> Preflight MUST ABORT with RuntimeError
+    _, c9_path, _, _, _ = get_shard_paths(shards_dir, dataset, "q9")
+    os.remove(c9_path)
+    with pytest.raises(RuntimeError, match="Missing cutoff shard for scifact QID q9"):
+        verify_probe_shards_for_continuation(shards_dir, [dataset], q_manifest, config_hash)
+
+    # Recreate c9_path to test row count mismatch
+    c_df.to_parquet(c9_path, index=False)
+
+    # 3. Row count mismatch: q0 cutoff has 1 row but status says 0 -> Preflight MUST ABORT
+    _, c0_path, _, _, _ = get_shard_paths(shards_dir, dataset, "q0")
+    c_df.to_parquet(c0_path, index=False)
+    with pytest.raises(RuntimeError, match="Cutoff shard row count mismatch for scifact QID q0: 1 != 0"):
+        verify_probe_shards_for_continuation(shards_dir, [dataset], q_manifest, config_hash)
+
+
+def test_compiler_exploratory_report_with_empty_live_ppmi_and_failed_gate(tmp_path):
+    """
+    Tests Gate1TableCompiler exploratory report generation:
+    1. Operational audit has live_ppmi_rank empty/all-null.
+    2. Sources Checkpoint B from preserved artifact.
+    3. Injects dynamic exploratory warning banner with exact losses.
+    4. Enforces strict fail-closed requirements on manifest and artifact.
+    """
+    out_dir = str(tmp_path / "compiler_out")
+    os.makedirs(out_dir, exist_ok=True)
+
+    audit_file = str(tmp_path / "operational_audit.parquet")
+    cutoff_file = str(tmp_path / "operational_cutoff.parquet")
+    universe_file = str(tmp_path / "operational_universe.parquet")
+    manifest_file = str(tmp_path / "run_manifest.json")
+    checkpoint_b_file = str(tmp_path / "checkpoint_b_loss_gate.json")
+
+    # Operational audit: live_ppmi_rank is null/empty
+    df_audit = pd.DataFrame([{
+        "dataset": "scifact",
+        "qid": "q1",
+        "candidate_term": "term1",
+        "weight": 0.1,
+        "delta_ndcg10": 0.01,
+        "live_ppmi_rank": np.nan,
+        "ppmi_sidecar_rank": 1.0,
+        "WholeQueryBGE_rank": 1.0,
+        "AnchorBGEFiltered_rank": 1.0,
+        "AnchorBGEAll_rank": 1.0,
+        "SparseLexicalContextProfiles_rank": 1.0,
+        "AcronymDefinitionRescue_rank": 1.0,
+        "RRF_Core3_rank": 1.0,
+        "RRF_Extended_rank": 1.0,
+    }])
+    df_audit.to_parquet(audit_file, index=False)
+
+    df_cutoff = pd.DataFrame([{
+        "dataset": "scifact",
+        "qid": "q1",
+        "candidate_term": "term1",
+        "cutoff": 1000,
+        "docid": "d1",
+        "raw_entry": True,
+        "recall_safe_entry": True,
+    }])
+    df_cutoff.to_parquet(cutoff_file, index=False)
+
+    df_universe = pd.DataFrame([{
+        "dataset": "scifact",
+        "qid": "q1",
+        "candidate_term": "term1",
+    }])
+    df_universe.to_parquet(universe_file, index=False)
+
+    # Preserved Checkpoint B loss gate artifact with gate_passed: False
+    checkpoint_b_data = {
+        "budget_l": 200,
+        "corpus_macro_delta_ndcg10_loss": 0.0072,
+        "corpus_macro_raw_doc_opp_recall1000_loss": 0.0186,
+        "max_oracle_loss_corpus_macro_threshold": 0.02,
+        "max_doc_opp_recall_loss_corpus_macro_threshold": 0.02,
+        "per_corpus_results": {
+            "trec_covid": {
+                "queries": 10,
+                "mean_delta_ndcg10_loss": 0.0270,
+                "mean_raw_doc_opp_recall1000_loss": 0.0742,
+                "ndcg_loss_passed": False,
+                "doc_loss_passed": False,
+            }
+        },
+        "gate_passed": False,
+    }
+    with open(checkpoint_b_file, "w", encoding="utf-8") as f:
+        json.dump(checkpoint_b_data, f, indent=2)
+
+    # Valid exploratory manifest
+    manifest_data = {
+        "git_commit": "abc1234",
+        "git_dirty": False,
+        "config_hash": "cfg_test_hash",
+        "weights": [0.1],
+        "gate_passed": False,
+        "is_exploratory_run": True,
+    }
+    with open(manifest_file, "w", encoding="utf-8") as f:
+        json.dump(manifest_data, f, indent=2)
+
+    # 1. Compile with allow_exploratory=True -> MUST SUCCEED and include exploratory banner
+    compiler = Gate1TableCompiler(
+        audit_parquet_path=audit_file,
+        cutoff_parquet_path=cutoff_file,
+        output_dir=out_dir,
+        universe_parquet_path=universe_file,
+        run_manifest_path=manifest_file,
+        checkpoint_b_path=checkpoint_b_file,
+        allow_exploratory=True,
+    )
+    report_path = compiler.compile_all_tables_and_report()
+    assert os.path.exists(report_path)
+    with open(report_path, "r", encoding="utf-8") as f:
+        report_text = f.read()
+
+    assert "EXPLORATORY PROTOCOL AMENDMENT" in report_text
+    assert "**Checkpoint B Status:** **FAILED**" in report_text
+    assert "0.027" in report_text
+    assert "0.0072" in report_text
+
+    # 2. Fail-closed: allow_exploratory=False -> MUST RAISE RuntimeError
+    compiler_strict = Gate1TableCompiler(
+        audit_parquet_path=audit_file,
+        cutoff_parquet_path=cutoff_file,
+        output_dir=out_dir,
+        universe_parquet_path=universe_file,
+        run_manifest_path=manifest_file,
+        checkpoint_b_path=checkpoint_b_file,
+        allow_exploratory=False,
+    )
+    with pytest.raises(RuntimeError, match="Checkpoint B operational-loss gate failed"):
+        compiler_strict.compile_all_tables_and_report()
+
+    # 3. Fail-closed: manifest claims gate_passed=True while artifact says False -> MUST RAISE ValueError
+    manifest_data["gate_passed"] = True
+    with open(manifest_file, "w", encoding="utf-8") as f:
+        json.dump(manifest_data, f, indent=2)
+
+    compiler_inconsistent = Gate1TableCompiler(
+        audit_parquet_path=audit_file,
+        cutoff_parquet_path=cutoff_file,
+        output_dir=out_dir,
+        universe_parquet_path=universe_file,
+        run_manifest_path=manifest_file,
+        checkpoint_b_path=checkpoint_b_file,
+        allow_exploratory=True,
+    )
+    with pytest.raises(ValueError, match="Exploratory compilation requires run_manifest 'gate_passed' to be False"):
+        compiler_inconsistent.compile_all_tables_and_report()
+

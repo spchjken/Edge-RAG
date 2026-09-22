@@ -195,6 +195,131 @@ def validate_shard_hashes(status_dict: Dict[str, Any], expected_hashes: Dict[str
         )
 
 
+def compute_input_hashes(dataset: str) -> Tuple[str, str, Dict[str, str]]:
+    """Compute dataset_hash, qrels_hash, and input_hashes matching shard status expectations."""
+    consumed_inputs = BenchmarkLoader.get_consumed_input_paths(dataset)
+    input_hashes = {}
+    for name, path in consumed_inputs.items():
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"FATAL: Required input file missing: {path}")
+        hasher = hashlib.sha256()
+        with open(path, "rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        input_hashes[name] = hasher.hexdigest()
+
+    if "examples" in input_hashes:
+        dataset_hash = input_hashes["examples"]
+        qrels_hash = input_hashes["examples"]
+    else:
+        dataset_hash = input_hashes.get("queries", "")
+        qrels_hash = input_hashes.get("qrels", "")
+    return dataset_hash, qrels_hash, input_hashes
+
+
+def verify_probe_shards_for_continuation(
+    shards_dir: str,
+    datasets: List[str],
+    q_manifest: Dict[str, Any],
+    config_hash: str,
+) -> None:
+    """Strictly verify that all 40 probe query shards exist, are readable, and match expected counts.
+
+    Aborts immediately if any shard file is missing, corrupt, or unreadable, guaranteeing
+    zero probe recomputation.
+    """
+    probe_manifest = q_manifest.get("probe_40_qids", {})
+    missing_errors = []
+
+    for ds in datasets:
+        qids = probe_manifest.get(ds, [])
+        if len(qids) != 10:
+            missing_errors.append(f"Dataset '{ds}' expected 10 probe QIDs, found {len(qids)}")
+            continue
+
+        dataset_hash, qrels_hash, _ = compute_input_hashes(ds)
+        pool_terms = load_canonical_pool_terms(ds)
+        pool_hash = compute_pool_sha256(pool_terms)
+        expected_hashes = {
+            "config_hash": config_hash,
+            "dataset_hash": dataset_hash,
+            "qrels_hash": qrels_hash,
+            "pool_hash": pool_hash,
+        }
+
+        for qid in qids:
+            parent_s, cutoff_s, status_s, univ_s, diag_s = get_shard_paths(shards_dir, ds, str(qid))
+
+            # 1. Status shard check
+            if not os.path.exists(status_s) or os.path.getsize(status_s) == 0:
+                missing_errors.append(f"Missing/empty status shard for {ds} QID {qid}: {status_s}")
+                continue
+
+            try:
+                st_data = pq.read_table(status_s).to_pydict()
+                st_status = {k: v[0] for k, v in st_data.items()}
+                validate_shard_hashes(st_status, expected_hashes, str(qid))
+                exp_variants = int(st_status.get("num_variants", 0))
+                exp_cutoff = int(st_status.get("num_cutoff_entries", 0))
+                exp_univ = int(st_status.get("reference_universe_size", 0))
+                exp_diag = int(st_status.get("diagnostic_universe_size", 0))
+            except Exception as e:
+                missing_errors.append(f"Invalid status shard for {ds} QID {qid}: {e}")
+                continue
+
+            # 2. Non-status shards readability and row-count verification
+            # Parent shard
+            if not os.path.exists(parent_s):
+                missing_errors.append(f"Missing parent shard for {ds} QID {qid}: {parent_s}")
+            else:
+                try:
+                    meta = pq.read_metadata(parent_s)
+                    if meta.num_rows != exp_variants:
+                        missing_errors.append(f"Parent shard row count mismatch for {ds} QID {qid}: {meta.num_rows} != {exp_variants}")
+                except Exception as e:
+                    missing_errors.append(f"Unreadable parent shard for {ds} QID {qid}: {parent_s} ({e})")
+
+            # Cutoff shard (allow 0 rows if exp_cutoff == 0)
+            if not os.path.exists(cutoff_s):
+                missing_errors.append(f"Missing cutoff shard for {ds} QID {qid}: {cutoff_s}")
+            else:
+                try:
+                    meta = pq.read_metadata(cutoff_s)
+                    if meta.num_rows != exp_cutoff:
+                        missing_errors.append(f"Cutoff shard row count mismatch for {ds} QID {qid}: {meta.num_rows} != {exp_cutoff}")
+                except Exception as e:
+                    missing_errors.append(f"Unreadable cutoff shard for {ds} QID {qid}: {cutoff_s} ({e})")
+
+            # Universe shard
+            if not os.path.exists(univ_s):
+                missing_errors.append(f"Missing universe shard for {ds} QID {qid}: {univ_s}")
+            else:
+                try:
+                    meta = pq.read_metadata(univ_s)
+                    if meta.num_rows != exp_univ:
+                        missing_errors.append(f"Universe shard row count mismatch for {ds} QID {qid}: {meta.num_rows} != {exp_univ}")
+                except Exception as e:
+                    missing_errors.append(f"Unreadable universe shard for {ds} QID {qid}: {univ_s} ({e})")
+
+            # Diagnostic universe shard
+            if not os.path.exists(diag_s):
+                missing_errors.append(f"Missing diag_universe shard for {ds} QID {qid}: {diag_s}")
+            else:
+                try:
+                    meta = pq.read_metadata(diag_s)
+                    if meta.num_rows != exp_diag:
+                        missing_errors.append(f"Diag universe shard row count mismatch for {ds} QID {qid}: {meta.num_rows} != {exp_diag}")
+                except Exception as e:
+                    missing_errors.append(f"Unreadable diag_universe shard for {ds} QID {qid}: {diag_s} ({e})")
+
+    if missing_errors:
+        err_msg = "\n".join(f"  - {err}" for err in missing_errors)
+        raise RuntimeError(
+            f"FATAL: Probe shard continuation preflight failed! Cannot guarantee probe reuse:\n{err_msg}"
+        )
+    print(f"[Preflight] Successfully verified all 40 probe query shards across {len(datasets)} datasets. Zero probe recomputation guaranteed.")
+
+
 def validate_action_coverage(audit_df: pd.DataFrame, universe_df: pd.DataFrame, weights: List[float]) -> None:
     """Validates exact Cartesian set equality between actual audit actions and reference universe x weights."""
     expected_triples = set()
@@ -690,23 +815,7 @@ def run_dataset_gate1_evaluation(
     print(f"  [Canonical Pool] Loaded {pool_size:,} terms (SHA-256: {pool_hash[:12]}...)")
 
     # Compute dataset and qrels content hashes from consumed input paths
-    consumed_inputs = BenchmarkLoader.get_consumed_input_paths(dataset)
-    input_hashes = {}
-    for name, path in consumed_inputs.items():
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"FATAL: Required input file missing: {path}")
-        hasher = hashlib.sha256()
-        with open(path, "rb") as f:
-            while chunk := f.read(65536):
-                hasher.update(chunk)
-        input_hashes[name] = hasher.hexdigest()
-
-    if "examples" in input_hashes:
-        dataset_hash = input_hashes["examples"]
-        qrels_hash = input_hashes["examples"]
-    else:
-        dataset_hash = input_hashes.get("queries", "")
-        qrels_hash = input_hashes.get("qrels", "")
+    dataset_hash, qrels_hash, input_hashes = compute_input_hashes(dataset)
 
     # Recompute and validate recorded index files at runtime using streaming chunks
     idx_manifest_path = os.path.join(os.path.dirname(idx_path), "index_manifest.json")
@@ -1180,6 +1289,7 @@ def parse_args():
     parser.add_argument("--probe-manifest-path", type=str, default="results/gate1_selection/probe_40_eval/run_manifest.json", help="Path to probe run manifest artifact")
     parser.add_argument("--skip-probe-gate", action="store_true", help="Bypass probe gate preflight verification (for diagnostic testing only)")
     parser.add_argument("--staged-evaluation", action="store_true", help="Run 40-query probe first, enforce Checkpoint B gate in-process, then evaluate remaining 160 queries if passed.")
+    parser.add_argument("--allow-exploratory-continuation", action="store_true", help="Permit Stage 2 execution when Checkpoint B fails under unchanged M=600 setup. Records gate_passed: false and marks run as exploratory in manifest.")
     return parser.parse_args()
 
 
@@ -1247,6 +1357,8 @@ def main():
         args.staged_evaluation
         or (args.qids_manifest == "dev_200_qids" and not args.skip_probe_gate and not os.path.exists(args.probe_loss_gate_path))
     )
+    gate_passed = None
+    is_exploratory_run = False
 
     if is_staged_run:
         print("\n" + "=" * 70)
@@ -1258,6 +1370,15 @@ def main():
         q_manifest = frozen_config["query_manifests"]
         if "probe_40_qids" not in q_manifest or "dev_200_qids" not in q_manifest:
             raise ValueError("FATAL: query_manifests must contain both 'probe_40_qids' and 'dev_200_qids' for staged evaluation!")
+
+        if args.allow_exploratory_continuation:
+            if args.no_resume:
+                raise ValueError("FATAL: --no-resume is forbidden when using --allow-exploratory-continuation. The 40 probe query shards must be reused.")
+            if args.force_rebuild_sidecars:
+                raise ValueError("FATAL: --force-rebuild-sidecars is forbidden when using --allow-exploratory-continuation. Sidecars must remain frozen and unchanged.")
+
+            shards_dir = os.path.join(args.output_dir, "shards")
+            verify_probe_shards_for_continuation(shards_dir, datasets, q_manifest, config_hash)
 
         # Preflight: Verify pool hashes, index hashes, corpus source hashes, and sidecars on disk
         sidecar_cache_dir = os.path.abspath("data/cache/canonical_pools")
@@ -1408,18 +1529,27 @@ def main():
             json.dump(loss_gate_results, f, indent=2)
         print(f"Saved Checkpoint B Loss Gate artifact -> {loss_gate_path}")
 
-        if not loss_gate_results.get("gate_passed", False):
-            print("\n" + "!" * 70)
-            print("FATAL: Checkpoint B operational-loss gate FAILED!")
-            print(f"Corpus-macro nDCG loss: {loss_gate_results.get('corpus_macro_delta_ndcg10_loss')} (threshold: {loss_gate_results.get('max_oracle_loss_corpus_macro_threshold')})")
-            print(f"Corpus-macro doc loss:  {loss_gate_results.get('corpus_macro_raw_doc_opp_recall1000_loss')} (threshold: {loss_gate_results.get('max_doc_opp_recall_loss_corpus_macro_threshold')})")
-            for ds_name, p_res in loss_gate_results.get("per_corpus_results", {}).items():
-                print(f"  - {ds_name}: nDCG loss={p_res['mean_delta_ndcg10_loss']} (passed={p_res['ndcg_loss_passed']}), doc loss={p_res['mean_raw_doc_opp_recall1000_loss']} (passed={p_res['doc_loss_passed']})")
-            print("Stage 2 is BLOCKED. Halting execution before spending compute on the remaining 160 queries.")
-            print("!" * 70 + "\n")
-            raise RuntimeError("FATAL: Checkpoint B operational-loss gate failed during Stage 1 probe evaluation; full run is blocked.")
-
-        print("\n>>> Checkpoint B operational-loss gate PASSED! Proceeding to Stage 2.\n")
+        gate_passed = loss_gate_results.get("gate_passed", False)
+        if not gate_passed:
+            if args.allow_exploratory_continuation:
+                is_exploratory_run = True
+                print("\n" + "!" * 70)
+                print("WARNING: Checkpoint B operational-loss gate FAILED, but --allow-exploratory-continuation is set!")
+                print("Proceeding with Stage 2 as an EXPLICITLY EXPLORATORY run under unchanged M=600 setup.")
+                print("gate_passed: false and is_exploratory_run: true will be stamped in run_manifest.json.")
+                print("!" * 70 + "\n")
+            else:
+                print("\n" + "!" * 70)
+                print("FATAL: Checkpoint B operational-loss gate FAILED!")
+                print(f"Corpus-macro nDCG loss: {loss_gate_results.get('corpus_macro_delta_ndcg10_loss')} (threshold: {loss_gate_results.get('max_oracle_loss_corpus_macro_threshold')})")
+                print(f"Corpus-macro doc loss:  {loss_gate_results.get('corpus_macro_raw_doc_opp_recall1000_loss')} (threshold: {loss_gate_results.get('max_doc_opp_recall_loss_corpus_macro_threshold')})")
+                for ds_name, p_res in loss_gate_results.get("per_corpus_results", {}).items():
+                    print(f"  - {ds_name}: nDCG loss={p_res['mean_delta_ndcg10_loss']} (passed={p_res['ndcg_loss_passed']}), doc loss={p_res['mean_raw_doc_opp_recall1000_loss']} (passed={p_res['doc_loss_passed']})")
+                print("Stage 2 is BLOCKED. Halting execution before spending compute on the remaining 160 queries.")
+                print("!" * 70 + "\n")
+                raise RuntimeError("FATAL: Checkpoint B operational-loss gate failed during Stage 1 probe evaluation; full run is blocked.")
+        else:
+            print("\n>>> Checkpoint B operational-loss gate PASSED! Proceeding to Stage 2.\n")
 
         # -------------------------------------------------------------
         # STAGE 2: Remaining 160 Queries (Operational Channels Only)
@@ -1783,6 +1913,14 @@ def main():
         "config_hash": config_hash,
         "git_commit": git_info["git_commit"],
         "git_dirty": git_info["git_dirty"],
+        "checkpoint_b_status": "PASSED" if gate_passed else ("FAILED" if gate_passed is False else "N/A"),
+        "gate_passed": gate_passed,
+        "is_exploratory_run": is_exploratory_run,
+        "protocol_amendment": (
+            "PA-GATE1-20260922-01: Exploratory continuation with failed Checkpoint B under frozen M=600 setup. "
+            "Reused 40 probe query shards and evaluated remaining 160 operational queries."
+            if is_exploratory_run else None
+        ),
         "command_args": sys.argv,
         "datasets": datasets,
         "sample_size": args.sample_size,

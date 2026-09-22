@@ -101,6 +101,8 @@ class Gate1TableCompiler:
         diag_universe_parquet_path: Optional[str] = None,
         run_manifest_path: Optional[str] = None,
         frozen_config_path: Optional[str] = None,
+        checkpoint_b_path: Optional[str] = None,
+        allow_exploratory: bool = False,
         delta: float = DEFAULT_DELTA,
         rho: float = DEFAULT_RHO,
         b_resamples: int = 1000,
@@ -113,10 +115,25 @@ class Gate1TableCompiler:
         self.diag_universe_path = diag_universe_parquet_path
         self.run_manifest_path = run_manifest_path
         self.frozen_config_path = frozen_config_path
+        self.checkpoint_b_path = checkpoint_b_path
+        self.allow_exploratory = allow_exploratory
         self.delta = delta
         self.rho = rho
         self.b_resamples = b_resamples
         self.seed = seed
+
+        # Auto-detect checkpoint_b_loss_gate.json if not explicitly passed
+        if not self.checkpoint_b_path or not os.path.exists(self.checkpoint_b_path):
+            candidates = [
+                os.path.join(self.output_dir, "checkpoint_b_loss_gate.json"),
+                os.path.join(self.output_dir, "probe_artifacts", "checkpoint_b_loss_gate.json"),
+                os.path.join(os.path.dirname(self.audit_path), "checkpoint_b_loss_gate.json"),
+                "for_review/selection_phase/gate_1/run_2/stage1_halt_artifacts/checkpoint_b_loss_gate.json",
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    self.checkpoint_b_path = c
+                    break
 
         print(f"Loading candidate audit from {self.audit_path}...")
         self.df_audit = pd.read_parquet(self.audit_path)
@@ -655,6 +672,46 @@ class Gate1TableCompiler:
                 json.dump(loss_gate_results, f, indent=2)
             print(f"Saved Checkpoint B Loss Gate -> {loss_gate_path}")
             print(f"Loss Gate Status: {'PASSED' if loss_gate_results['gate_passed'] else 'FAILED'}")
+        else:
+            if self.checkpoint_b_path and os.path.exists(self.checkpoint_b_path):
+                print(f"\n--- Sourcing Checkpoint B Operational Loss Gate from Preserved Artifact: {self.checkpoint_b_path} ---")
+                with open(self.checkpoint_b_path, "r", encoding="utf-8") as f:
+                    loss_gate_results = json.load(f)
+                print(f"Preserved Loss Gate Status: {'PASSED' if loss_gate_results.get('gate_passed') else 'FAILED'}")
+
+        # Fail closed on missing/inconsistent provenance when allow_exploratory is set
+        if self.allow_exploratory:
+            if not self.run_manifest:
+                raise RuntimeError("FATAL: --allow-exploratory requires run_manifest.json to exist with verified provenance.")
+            if not loss_gate_results:
+                raise RuntimeError("FATAL: --allow-exploratory requires Checkpoint B loss gate artifact to exist.")
+
+            manifest_gate = self.run_manifest.get("gate_passed")
+            artifact_gate = loss_gate_results.get("gate_passed")
+            manifest_exploratory = self.run_manifest.get("is_exploratory_run")
+
+            if manifest_gate is not False:
+                raise ValueError(
+                    f"FATAL: Exploratory compilation requires run_manifest 'gate_passed' to be False, got {manifest_gate}."
+                )
+            if artifact_gate is not False:
+                raise ValueError(
+                    f"FATAL: Exploratory compilation requires checkpoint_b artifact 'gate_passed' to be False, got {artifact_gate}."
+                )
+            if manifest_exploratory is not True:
+                raise ValueError(
+                    f"FATAL: Exploratory compilation requires run_manifest 'is_exploratory_run' to be True, got {manifest_exploratory}."
+                )
+
+            # Verify that preserved copy matches archived stage 1 checkpoint if both exist
+            archived_path = "for_review/selection_phase/gate_1/run_2/stage1_halt_artifacts/checkpoint_b_loss_gate.json"
+            if os.path.exists(archived_path) and os.path.abspath(self.checkpoint_b_path) != os.path.abspath(archived_path):
+                with open(archived_path, "r", encoding="utf-8") as f:
+                    archived_data = json.load(f)
+                if loss_gate_results != archived_data:
+                    raise ValueError(
+                        f"FATAL: Preserved Checkpoint B in {self.checkpoint_b_path} does not match archived checkpoint in {archived_path}!"
+                    )
 
         print("\n--- Compiling Label Coverage Table ---")
         df_cov = self.compile_label_coverage_table()
@@ -663,7 +720,7 @@ class Gate1TableCompiler:
         print(f"Saved Label Coverage Table -> {cov_path}")
 
         report_path = os.path.join(self.output_dir, "gate1_selection_report.md")
-        
+
         git_commit = self.run_manifest.get("git_commit", "N/A") if self.run_manifest else "N/A"
         git_dirty = self.run_manifest.get("git_dirty", False) if self.run_manifest else False
         peak_rss = self.run_manifest.get("peak_rss_gib", "N/A") if self.run_manifest else "N/A"
@@ -690,9 +747,32 @@ class Gate1TableCompiler:
 - **Corpus-Macro RawDocOppRecall@1000 Loss:** `{loss_gate_results['corpus_macro_raw_doc_opp_recall1000_loss']:.4f}` (threshold: `{loss_gate_results['max_doc_opp_recall_loss_corpus_macro_threshold']}`)  
 """
 
+        exploratory_banner = ""
+        if self.allow_exploratory and loss_gate_results is not None and not loss_gate_results.get("gate_passed", False):
+            trec_res = loss_gate_results.get("per_corpus_results", {}).get("trec_covid", {})
+            trec_ndcg = trec_res.get("mean_delta_ndcg10_loss", "N/A")
+            trec_doc = trec_res.get("mean_raw_doc_opp_recall1000_loss", "N/A")
+            macro_ndcg = loss_gate_results.get("corpus_macro_delta_ndcg10_loss", "N/A")
+            macro_doc = loss_gate_results.get("corpus_macro_raw_doc_opp_recall1000_loss", "N/A")
+            macro_thresh = loss_gate_results.get("max_oracle_loss_corpus_macro_threshold", 0.02)
+            doc_thresh = loss_gate_results.get("max_doc_opp_recall_loss_corpus_macro_threshold", 0.02)
+
+            exploratory_banner = f"""> [!WARNING]
+> ### ⚠️ EXPLORATORY PROTOCOL AMENDMENT (`PA-GATE1-20260922-01`)
+> **Status:** EXPLORATORY CHARACTERIZATION (Failed Checkpoint B Operational Loss Gate)
+> 
+> This 200-query run was executed under an explicit exploratory continuation option after Checkpoint B failed during Stage 1 probe evaluation.
+> - **Checkpoint B Status:** **FAILED**
+> - **Corpus-Macro Losses:** $\\Delta$nDCG@10 Loss = `{macro_ndcg}` (limit $\\le {macro_thresh}$), DocOppRecall@1000 Loss = `{macro_doc}` (limit $\\le {doc_thresh}$)
+> - **Failed Per-Corpus Limits (TREC-COVID):** $\\Delta$nDCG@10 Loss = `{trec_ndcg}` (limit $\\le 0.02$), DocOppRecall@1000 Loss = `{trec_doc}` (limit $\\le 0.02$)
+> - **Protocol Compliance:** This run does **NOT** claim confirmatory compliance with the frozen Phase 2.1a protocol. It serves strictly as an empirical comparison across the full 200-query dev set.
+
+---
+"""
+
         report_md = f"""# Phase 2 Gate 1 Candidate Selection Report
 
-**Master Audit Parquet:** [`{self.audit_path}`](file://{os.path.abspath(self.audit_path)})  
+{exploratory_banner}**Master Audit Parquet:** [`{self.audit_path}`](file://{os.path.abspath(self.audit_path)})  
 **Cutoff Entries Parquet:** [`{self.cutoff_path}`](file://{os.path.abspath(self.cutoff_path)})  
 **Reference Universe Parquet:** [`{self.universe_path or 'N/A'}`](file://{os.path.abspath(self.universe_path) if self.universe_path else ''})  
 **Config Hash:** `{cfg_hash}`  
@@ -727,12 +807,15 @@ class Gate1TableCompiler:
 
         # Hard fail-closed enforcement if loss gate failed
         if loss_gate_results is not None and not loss_gate_results.get("gate_passed", False):
-            raise RuntimeError(
-                f"FATAL: Checkpoint B operational-loss gate failed; full run is blocked.\n"
-                f"  Macro Delta-nDCG Loss: {loss_gate_results['corpus_macro_delta_ndcg10_loss']} (threshold: {loss_gate_results['max_oracle_loss_corpus_macro_threshold']})\n"
-                f"  Macro Doc Opp Recall Loss: {loss_gate_results['corpus_macro_raw_doc_opp_recall1000_loss']} (threshold: {loss_gate_results['max_doc_opp_recall_loss_corpus_macro_threshold']})\n"
-                f"  Per-Corpus Results: {json.dumps(loss_gate_results['per_corpus_results'], indent=2)}"
-            )
+            if not self.allow_exploratory:
+                raise RuntimeError(
+                    f"FATAL: Checkpoint B operational-loss gate failed; full run is blocked.\n"
+                    f"  Macro Delta-nDCG Loss: {loss_gate_results['corpus_macro_delta_ndcg10_loss']} (threshold: {loss_gate_results['max_oracle_loss_corpus_macro_threshold']})\n"
+                    f"  Macro Doc Opp Recall Loss: {loss_gate_results['corpus_macro_raw_doc_opp_recall1000_loss']} (threshold: {loss_gate_results['max_doc_opp_recall_loss_corpus_macro_threshold']})\n"
+                    f"  Per-Corpus Results: {json.dumps(loss_gate_results['per_corpus_results'], indent=2)}"
+                )
+            else:
+                print("\n[WARNING] Checkpoint B failed, but compiling under --allow-exploratory. Exploratory notice stamped in report.")
 
         return report_path
 
@@ -745,6 +828,8 @@ def main():
     parser.add_argument("--diag-universe-parquet", type=str, default=None, help="Path to diagnostic_universe.parquet")
     parser.add_argument("--run-manifest", type=str, default=None, help="Path to run_manifest.json")
     parser.add_argument("--frozen-config-path", type=str, default=None, help="Path to gate1_phase2_1a.yaml")
+    parser.add_argument("--checkpoint-b-path", type=str, default=None, help="Path to preserved checkpoint_b_loss_gate.json")
+    parser.add_argument("--allow-exploratory", action="store_true", help="Permit compiling report when Checkpoint B failed with valid exploratory manifest.")
     parser.add_argument("--output-dir", type=str, default="results/gate1_selection/dev_corrected")
     parser.add_argument("--delta", type=float, default=DEFAULT_DELTA)
     parser.add_argument("--rho", type=float, default=DEFAULT_RHO)
@@ -760,6 +845,8 @@ def main():
         diag_universe_parquet_path=args.diag_universe_parquet,
         run_manifest_path=args.run_manifest,
         frozen_config_path=args.frozen_config_path,
+        checkpoint_b_path=args.checkpoint_b_path,
+        allow_exploratory=args.allow_exploratory,
         delta=args.delta,
         rho=args.rho,
         b_resamples=args.bootstrap,
