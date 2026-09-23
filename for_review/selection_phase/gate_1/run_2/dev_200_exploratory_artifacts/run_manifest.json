@@ -1,0 +1,385 @@
+{
+  "timestamp": "2026-09-22T17:00:34Z",
+  "config_hash": "907e37c68546b95917839a4ea069997cca358ba29f13d912342bf8e6da549aa0",
+  "git_commit": "82e7e62d0c735cb8dec35c9b563bd6ad55be8fa6",
+  "git_dirty": true,
+  "checkpoint_b_status": "FAILED",
+  "gate_passed": false,
+  "is_exploratory_run": true,
+  "protocol_amendment": "PA-GATE1-20260922-01: Exploratory continuation with failed Checkpoint B under frozen M=600 setup. Reused 40 probe query shards and evaluated remaining 160 operational queries.",
+  "command_args": [
+    "CRVE/scripts/run_gate1_oracle_evaluation.py",
+    "--frozen-config-path",
+    "CRVE/configs/gate1_phase2_1a.yaml",
+    "--qids-manifest",
+    "dev_200_qids",
+    "--staged-evaluation",
+    "--allow-exploratory-continuation",
+    "--output-dir",
+    "results/gate1_selection/dev_200_eval"
+  ],
+  "datasets": [
+    "scifact",
+    "bright_aops",
+    "nfcorpus",
+    "trec_covid"
+  ],
+  "sample_size": 50,
+  "seed": 42,
+  "weights": [
+    0.05,
+    0.1,
+    0.3,
+    0.5,
+    1.0
+  ],
+  "peak_rss_gib": 6.773,
+  "peak_cuda_vram_mib": 196.82,
+  "total_variants": 2080115,
+  "total_cutoff_entries": 952211,
+  "total_retrieval_time_sec": 57351.0,
+  "pool_hashes": {
+    "scifact": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+    "bright_aops": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+    "nfcorpus": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+    "trec_covid": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39"
+  },
+  "index_hashes": {
+    "scifact": "81485b4afc7054d1d6bb54c30d6634cbe789cb85e23485d7a2c3f646cbafe616",
+    "bright_aops": "2ca6494689177ca7a37075efe3f2d1ec67cc7731b4c6a627daba7d355e0ce58c",
+    "nfcorpus": "e033c38651601f78978360a69a8db683d2a62051f8824ae1e544ef2604ccb0d9",
+    "trec_covid": "8db748fb2de36b9353545aea4627430a4b84985d10cb16f820b924c60a3c14be"
+  },
+  "dataset_hashes": {
+    "scifact": "dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6",
+    "bright_aops": "751ece1ee01b37adb6016aeba0ac0fb40a1697145e58c640eafa178306ff84ee",
+    "nfcorpus": "10cc83ef1826b1425e6a87090b5140b39b27755d5a27e48215a88611c899991f",
+    "trec_covid": "aded69896598665082316d00df487d22212cc5a8611db05db34eb40d04ed00d7"
+  },
+  "environment": {
+    "cpu_model": "x86_64",
+    "gpu_name": "NVIDIA GeForce RTX 5060 Ti",
+    "driver_version": "N/A",
+    "cuda_version": "13.0",
+    "python_version": "3.12.3",
+    "torch_version": "2.12.0+cu130",
+    "pyterrier_version": "1.1.2"
+  },
+  "dataset_summaries": [
+    {
+      "dataset": "scifact",
+      "num_docs": 5183,
+      "pool_size": 5595,
+      "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+      "num_queries": 50,
+      "total_variants": 382550,
+      "total_cutoff_entries": 626,
+      "retrieval_time_sec": 5821.83,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 0.9097999999999999,
+        "ppmi_rbo_mean": 0.9101411497836784,
+        "ppmi_lookup_p50_ms": 1.1305884981993586,
+        "ppmi_lookup_p95_ms": 1.7300184394116513,
+        "bge_scoring_p50_ms": 0.0413164816563949,
+        "bge_scoring_p95_ms": 0.09033255482790986,
+        "bge_full_p50_ms": 9.096227993723005,
+        "bge_full_p95_ms": 10.933089109312277,
+        "ppmi_disk_mb": 4.94,
+        "bge_disk_mb": 4.31,
+        "lexical_disk_mb": 0.0
+      },
+      "input_hashes": {
+        "queries": "8ff84a7c903f722981cd8d595c022660140c51867b27608a6d4910db86080313",
+        "qrels": "0864bb985e0ca2367ba217977e72004d549054b2b06666ed9d4825ac7c21284c"
+      },
+      "index_manifest_sha256": "81485b4afc7054d1d6bb54c30d6634cbe789cb85e23485d7a2c3f646cbafe616",
+      "sidecars_provenance": {
+        "bge": {
+          "dataset": "scifact",
+          "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+          "corpus_source_hash": "dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6",
+          "pool_size": 5595,
+          "num_docs": 5183,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "bge_model": "BAAI/bge-small-en-v1.5",
+          "dtype": "float16",
+          "created_at": "2026-09-21T06:57:30Z"
+        },
+        "ppmi": {
+          "dataset": "scifact",
+          "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+          "pool_size": 5595,
+          "num_docs": 5183,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "top_m": 600,
+          "num_anchors": 12194,
+          "peak_pairs": 6316603,
+          "peak_rss_gib": 2.221,
+          "running_peak_rss_gib": 2.221,
+          "rss_after_accumulation_gib": 2.081,
+          "corpus_source_hash": "dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6",
+          "lexicon_semantic_hash": "e5f7b1dc290f177b3273d3e372ab9d55edc75893bcaa62f7a0a41a825dac70ab",
+          "elapsed_sec": 8.34,
+          "created_at": "2026-09-21T06:57:39Z"
+        },
+        "acronym": {
+          "dataset": "scifact",
+          "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+          "corpus_source_hash": "dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6",
+          "pool_size": 5595,
+          "num_docs": 5183,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "num_triggers": 2108,
+          "created_at": "2026-09-21T06:57:42Z"
+        },
+        "lexical": {
+          "dataset": "scifact",
+          "pool_sha256": "f17b76a03a97a054838122c24a8b21b87285ffe8948c2791c5a1bb84742d88a7",
+          "corpus_source_hash": "dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6",
+          "pool_size": 5595,
+          "num_docs": 5183,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "passages_per_candidate": 50,
+          "reservoir_seed": 42,
+          "created_at": "2026-09-21T06:57:54Z"
+        }
+      }
+    },
+    {
+      "dataset": "bright_aops",
+      "num_docs": 188002,
+      "pool_size": 10000,
+      "pool_sha256": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+      "num_queries": 50,
+      "total_variants": 424960,
+      "total_cutoff_entries": 2087,
+      "retrieval_time_sec": 35146.5,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 0.8316000000000001,
+        "ppmi_rbo_mean": 0.8487239298844578,
+        "ppmi_lookup_p50_ms": 2.2842475154902786,
+        "ppmi_lookup_p95_ms": 3.874172139330767,
+        "bge_scoring_p50_ms": 0.04350300878286362,
+        "bge_scoring_p95_ms": 0.09078740258701141,
+        "bge_full_p50_ms": 11.440202011726797,
+        "bge_full_p95_ms": 14.78136934019858,
+        "ppmi_disk_mb": 19.96,
+        "bge_disk_mb": 7.65,
+        "lexical_disk_mb": 0.0
+      },
+      "input_hashes": {
+        "examples": "e079c1dcc39e4ed54486d4ab8a9166427a9149cbdc4a27a52893c0b252038557"
+      },
+      "index_manifest_sha256": "2ca6494689177ca7a37075efe3f2d1ec67cc7731b4c6a627daba7d355e0ce58c",
+      "sidecars_provenance": {
+        "bge": {
+          "dataset": "bright_aops",
+          "pool_sha256": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+          "corpus_source_hash": "751ece1ee01b37adb6016aeba0ac0fb40a1697145e58c640eafa178306ff84ee",
+          "pool_size": 10000,
+          "num_docs": 188002,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "bge_model": "BAAI/bge-small-en-v1.5",
+          "dtype": "float16",
+          "created_at": "2026-09-21T06:57:58Z"
+        },
+        "ppmi": {
+          "dataset": "bright_aops",
+          "pool_sha256": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+          "pool_size": 10000,
+          "num_docs": 188002,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "top_m": 600,
+          "num_anchors": 26249,
+          "peak_pairs": 7959720,
+          "peak_rss_gib": 2.867,
+          "running_peak_rss_gib": 2.867,
+          "rss_after_accumulation_gib": 2.62,
+          "corpus_source_hash": "751ece1ee01b37adb6016aeba0ac0fb40a1697145e58c640eafa178306ff84ee",
+          "lexicon_semantic_hash": "d7ceec650144359738eb5ba593dbdc2261982ab4d2cc7e3207e2c2c29359e2f0",
+          "elapsed_sec": 103.34,
+          "created_at": "2026-09-21T06:59:34Z"
+        },
+        "acronym": {
+          "dataset": "bright_aops",
+          "pool_sha256": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+          "corpus_source_hash": "751ece1ee01b37adb6016aeba0ac0fb40a1697145e58c640eafa178306ff84ee",
+          "pool_size": 10000,
+          "num_docs": 188002,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "num_triggers": 565,
+          "created_at": "2026-09-21T06:59:49Z"
+        },
+        "lexical": {
+          "dataset": "bright_aops",
+          "pool_sha256": "687675881cac4a0e053e01d2df7e0b4dc7eb5750f72a0c8dcad7b2099e07e454",
+          "corpus_source_hash": "751ece1ee01b37adb6016aeba0ac0fb40a1697145e58c640eafa178306ff84ee",
+          "pool_size": 10000,
+          "num_docs": 188002,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "passages_per_candidate": 50,
+          "reservoir_seed": 42,
+          "created_at": "2026-09-21T07:01:40Z"
+        }
+      }
+    },
+    {
+      "dataset": "nfcorpus",
+      "num_docs": 3633,
+      "pool_size": 7783,
+      "pool_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+      "num_queries": 50,
+      "total_variants": 432775,
+      "total_cutoff_entries": 307652,
+      "retrieval_time_sec": 2855.19,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 1.0,
+        "ppmi_rbo_mean": 0.9054453506123904,
+        "ppmi_lookup_p50_ms": 0.1000494958134368,
+        "ppmi_lookup_p95_ms": 0.23353873984888196,
+        "bge_scoring_p50_ms": 0.04053200245834887,
+        "bge_scoring_p95_ms": 0.08310429693665354,
+        "bge_full_p50_ms": 9.306137508247048,
+        "bge_full_p95_ms": 18.997251393739134,
+        "ppmi_disk_mb": 4.76,
+        "bge_disk_mb": 6.01,
+        "lexical_disk_mb": 0.0
+      },
+      "input_hashes": {
+        "queries": "d024e6621b84925d485ae473d316a0c3af31c62c8068a59fb29d22f7613aef2a",
+        "qrels": "f8fba6ef3d4dd9c3a242a8ba4ae38276fc3622fce7dcbae764766d564542fd2a"
+      },
+      "index_manifest_sha256": "e033c38651601f78978360a69a8db683d2a62051f8824ae1e544ef2604ccb0d9",
+      "sidecars_provenance": {
+        "bge": {
+          "dataset": "nfcorpus",
+          "pool_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+          "corpus_source_hash": "10cc83ef1826b1425e6a87090b5140b39b27755d5a27e48215a88611c899991f",
+          "pool_size": 7783,
+          "num_docs": 3633,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "bge_model": "BAAI/bge-small-en-v1.5",
+          "dtype": "float16",
+          "created_at": "2026-09-21T07:01:43Z"
+        },
+        "ppmi": {
+          "dataset": "nfcorpus",
+          "pool_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+          "pool_size": 7783,
+          "num_docs": 3633,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "top_m": 600,
+          "num_anchors": 9837,
+          "peak_pairs": 6231182,
+          "peak_rss_gib": 2.867,
+          "running_peak_rss_gib": 2.867,
+          "rss_after_accumulation_gib": 2.784,
+          "corpus_source_hash": "10cc83ef1826b1425e6a87090b5140b39b27755d5a27e48215a88611c899991f",
+          "lexicon_semantic_hash": "5ce8f6e68ff066229104610828e9f73f170c5f32c94ee7f8db3d440bc83380d4",
+          "elapsed_sec": 6.81,
+          "created_at": "2026-09-21T07:01:51Z"
+        },
+        "acronym": {
+          "dataset": "nfcorpus",
+          "pool_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+          "corpus_source_hash": "10cc83ef1826b1425e6a87090b5140b39b27755d5a27e48215a88611c899991f",
+          "pool_size": 7783,
+          "num_docs": 3633,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "num_triggers": 1614,
+          "created_at": "2026-09-21T07:01:54Z"
+        },
+        "lexical": {
+          "dataset": "nfcorpus",
+          "pool_sha256": "147e04c8d6b01a0f60e8b8e5f2435d27af4f3d4f75b51a25ee2cf2ece29aad7c",
+          "corpus_source_hash": "10cc83ef1826b1425e6a87090b5140b39b27755d5a27e48215a88611c899991f",
+          "pool_size": 7783,
+          "num_docs": 3633,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "passages_per_candidate": 50,
+          "reservoir_seed": 42,
+          "created_at": "2026-09-21T07:02:03Z"
+        }
+      }
+    },
+    {
+      "dataset": "trec_covid",
+      "num_docs": 171331,
+      "pool_size": 10000,
+      "pool_sha256": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39",
+      "num_queries": 50,
+      "total_variants": 839830,
+      "total_cutoff_entries": 641846,
+      "retrieval_time_sec": 13527.48,
+      "fidelity_meta": {
+        "ppmi_recall500_mean": 0.7854,
+        "ppmi_rbo_mean": 0.8684816908177064,
+        "ppmi_lookup_p50_ms": 0.5797925114165992,
+        "ppmi_lookup_p95_ms": 1.1498101477627642,
+        "bge_scoring_p50_ms": 0.04602300759870559,
+        "bge_scoring_p95_ms": 0.10341658780816938,
+        "bge_full_p50_ms": 11.022190999938175,
+        "bge_full_p95_ms": 19.849628653901163,
+        "ppmi_disk_mb": 46.38,
+        "bge_disk_mb": 7.69,
+        "lexical_disk_mb": 0.0
+      },
+      "input_hashes": {
+        "queries": "78f4b76bfef251a0baf37a6cea5c4ba8376cb4536c34635709aaa4a2783b208c",
+        "qrels": "10669ab7d526cb04f52079139fd88c3d467a0776441b046567f540582798982b"
+      },
+      "index_manifest_sha256": "8db748fb2de36b9353545aea4627430a4b84985d10cb16f820b924c60a3c14be",
+      "sidecars_provenance": {
+        "bge": {
+          "dataset": "trec_covid",
+          "pool_sha256": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39",
+          "corpus_source_hash": "aded69896598665082316d00df487d22212cc5a8611db05db34eb40d04ed00d7",
+          "pool_size": 10000,
+          "num_docs": 171331,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "bge_model": "BAAI/bge-small-en-v1.5",
+          "dtype": "float16",
+          "created_at": "2026-09-21T07:02:07Z"
+        },
+        "ppmi": {
+          "dataset": "trec_covid",
+          "pool_sha256": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39",
+          "pool_size": 10000,
+          "num_docs": 171331,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "top_m": 600,
+          "num_anchors": 70444,
+          "peak_pairs": 39941960,
+          "peak_rss_gib": 4.292,
+          "running_peak_rss_gib": 4.292,
+          "rss_after_accumulation_gib": 3.577,
+          "corpus_source_hash": "aded69896598665082316d00df487d22212cc5a8611db05db34eb40d04ed00d7",
+          "lexicon_semantic_hash": "b3f4d8784dd2c77f0ed8916f637e991d9fba8678a7e07961f0ff12aedd85adec",
+          "elapsed_sec": 177.53,
+          "created_at": "2026-09-21T07:04:58Z"
+        },
+        "acronym": {
+          "dataset": "trec_covid",
+          "pool_sha256": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39",
+          "corpus_source_hash": "aded69896598665082316d00df487d22212cc5a8611db05db34eb40d04ed00d7",
+          "pool_size": 10000,
+          "num_docs": 171331,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "num_triggers": 12838,
+          "created_at": "2026-09-21T07:05:28Z"
+        },
+        "lexical": {
+          "dataset": "trec_covid",
+          "pool_sha256": "e8ccb6e4d5fb2811480a3fcabfb7c5fa13d584ae75527562a5c51c4248ea4d39",
+          "corpus_source_hash": "aded69896598665082316d00df487d22212cc5a8611db05db34eb40d04ed00d7",
+          "pool_size": 10000,
+          "num_docs": 171331,
+          "analyzer_version": "v1_krovetz_suppletion",
+          "passages_per_candidate": 50,
+          "reservoir_seed": 42,
+          "created_at": "2026-09-21T07:07:35Z"
+        }
+      }
+    }
+  ]
+}

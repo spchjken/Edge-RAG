@@ -1,0 +1,5 @@
+Dataset,Queries,Reference Universe Pairs,Expected Variants,Evaluated Variants,Missing Triples,Extra Triples,Labeling Coverage %,Coverage Status
+bright_aops,50,84476,422380,422380,0,0,100.00%,100.0% COMPLETE
+nfcorpus,50,86555,432775,432775,0,0,100.00%,100.0% COMPLETE
+scifact,50,76226,381130,381130,0,0,100.00%,100.0% COMPLETE
+trec_covid,50,167638,838190,838190,0,0,100.00%,100.0% COMPLETE
