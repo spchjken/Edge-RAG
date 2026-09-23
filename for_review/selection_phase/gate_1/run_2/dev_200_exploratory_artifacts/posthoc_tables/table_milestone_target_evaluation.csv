@@ -1,0 +1,8 @@
+Policy,NearBestHit >= 70%,ReferenceBOR >= 80%,RecallHit >= 85%,SafeDocOppRecall >= 70%,Milestone Status
+PPMISidecar,50.6% (FAIL),69.7% (FAIL),88.5% (PASS),69.4% (FAIL),SUB-MILESTONE
+SparseLexicalContextProfiles,42.4% (FAIL),54.0% (FAIL),81.5% (FAIL),58.5% (FAIL),SUB-MILESTONE
+RRF_Core3,47.8% (FAIL),70.0% (FAIL),89.2% (PASS),71.8% (PASS),SUB-MILESTONE
+RRF_Extended,56.2% (FAIL),74.2% (FAIL),91.1% (PASS),73.9% (PASS),SUB-MILESTONE
+RRF_Lexical2 (L=200),60.6% (FAIL),73.7% (FAIL),88.8% (PASS),68.5% (FAIL),SUB-MILESTONE
+RRF_Lexical2 (L=400),65.6% (FAIL),80.0% (FAIL),95.1% (PASS),77.3% (PASS),SUB-MILESTONE
+LexicalUnion400 (200+200),64.0% (FAIL),77.7% (FAIL),95.1% (PASS),76.4% (PASS),SUB-MILESTONE
