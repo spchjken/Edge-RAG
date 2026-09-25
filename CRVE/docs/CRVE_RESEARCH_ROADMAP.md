@@ -1,10 +1,14 @@
 # CRVE Study Roadmap: From V7/V8 to a Risk-Aware Selection Cascade
 
-> **Status:** short- and medium-term research map, 2026-09-20, reconciled 2026-09-21. This document organizes the study;
+> **Status:** short- and medium-term research map, updated 2026-09-25 after Gate 1 Run 2 and Round 4 post-hoc analysis. This document organizes the study;
 > it does not describe a fully implemented pipeline or supersede the
 > [canonical architecture](ARCHITECTURE.md). V7 and V8 are archived experimental controls. The
 > detailed selection theory remains in
 > [Phase 2 — Query-Conditioned Expansion-Term Selection Under Uncertainty](phase2_selection_under_uncertainty.md).
+
+The current Gate 1 proposer comparison is concluded as exploratory research without a frozen-protocol
+pass. [Gate 1 results and handoff](GATE1_RESULTS_AND_HANDOFF.md) records the evidence for proceeding
+to Gate 2 research. This transition does not require another Gate 1 run or a retroactive threshold change.
 
 ## 1. Research objective
 
@@ -75,8 +79,8 @@ extended in parallel with the staged CRVE study.
 | Stage | Primary question | Optimization emphasis | Output | Current status |
 |---|---|---|---|---|
 | Phase 1 | What bounded corpus vocabulary and reusable evidence should be available? | Coverage, evidence quality, preparation and memory cost | Pool \(\mathcal P\) and static evidence store | Core pool/statistics implemented; richer context evidence is proposed |
-| Gate 1 | Can useful terms be retained within the deployable candidate budget? | Recall of useful opportunities | Candidate set \(C_1(q)\), \(|C_1|\le L\) | Implemented and under evaluation |
-| Gate 2 | Which candidates lack support or present unacceptable harm risk? | Precision and harmful-candidate rejection | Safer set \(C_2(q)\subseteq C_1(q)\) | Short-term research design |
+| Gate 1 | Can useful terms be retained within the deployable candidate budget? | Recall of useful opportunities | Candidate set \(C_1(q)\), \(|C_1|\le L\) | Current proposer study concluded; exploratory, frozen criteria unmet |
+| Gate 2 | Which candidates lack support or present unacceptable harm risk? | Precision and harmful-candidate rejection | Safer set \(C_2(q)\subseteq C_1(q)\) | Next research focus; downstream effectiveness and cost unverified |
 | Gate 3 | How much influence should each survivor receive? | Expected gain versus lower-tail loss and cost | Weighted set \(S(q)=\{(t,\mu_t)\}\), possibly empty | Short-term research design |
 
 “Static” means collected without knowing the future query. Gate 2 and Gate 3 may derive
@@ -136,9 +140,9 @@ positives can still be rejected by Gate 2.
 
 #### Gate-1 candidate methods
 
-The study should compare single-channel methods before interpreting any fusion result. The current
-Gate-1 harness exposes the following methods; “available” means implemented for evaluation, not proven
-effective or selected for deployment.
+Run 2 and its offline post-hoc analysis compared the following single-channel methods and fusions.
+The table distinguishes frozen evaluation roles from later offline alternatives; availability does
+not establish effectiveness or deployment selection.
 
 | Method | Candidate evidence | Research role and status |
 |---|---|---|
@@ -151,9 +155,11 @@ effective or selected for deployment.
 | **AcronymDefinitionRescue** | Bidirectional acronym/full-form mappings restricted to pool terms | Available experimental high-precision rescue channel |
 | **RRF_Core3** | Reciprocal Rank Fusion of WholeQueryBGE, AnchorBGEFiltered, and PPMISidecar | Available primary heterogeneous fusion baseline |
 | **RRF_Extended** | RRF_Core3 plus sparse lexical context profiles and acronym rescue | Available extended fusion; must justify its additional sidecars and latency |
+| **RRF_Lexical2** | RRF over PPMISidecar and SparseLexicalContextProfiles | Evaluated offline in Round 4; strong material-term coverage alternative |
+| **LexicalUnion** | Deduplicated union of equal-size lexical channel prefixes | Evaluated offline in Round 4; preserves both lists with fewer actual candidates than the nominal cap |
 
-The immediate research backlog may add the following methods, each behind the same candidate and
-latency budgets:
+The following additional proposer ideas are deferred. They are not prerequisites for the current
+Gate 2 handoff and have not been ruled out by the completed method comparison:
 
 - **Query-to-context-centroid proposal:** retrieve terms through one or more precomputed centroids of
   their retained corpus contexts. This tests whether corpus usage improves recall before full Gate-2
@@ -172,24 +178,29 @@ harm rejection.
 Constraints and outputs:
 
 - exclude analyzed terms already present in the query;
-- enforce a hard deployment cap, currently \(L\le 200\);
+- retain the frozen Run 2 deployment cap \(L\le 200\); larger research caps require separate cost evidence;
 - measure performance across the full candidate-budget curve rather than only one top-k;
 - allow an adaptive stopping policy below the cap;
 - return ranked candidates with channel scores and provenance, but no final lexical weights.
 
-All methods should use the same eligible pool and exclusion rules, expose raw top-500 lists for audit,
-and be compared on the declared curve \(L\in\{10,20,50,100,200,500\}\), with \(L=500\) retained only
-as a diagnostic beyond the \(L\le 200\) deployment cap. Report each channel alone, union coverage,
-marginal unique recall, and fusion results so a strong RRF result cannot hide a redundant or harmful
-component.
+The completed comparisons use the same eligible pool and exclusion rules and reuse raw top-500 lists
+for audit. Round 4 characterizes caps 50, 100, 200, 300, 400 and 500, plus an Extended RRF set matched
+to Union400's actual candidate count on every query. Caps above 200 are exploratory; matching output
+counts does not establish equal proposer or context-scoring cost.
 
 Primary evidence includes TermRecall, query-level helpful-opportunity hit, near-best opportunity
 retention, deep-recall opportunity coverage, latency, and candidate count. TermPrecision remains a
 cost diagnostic, not Gate 1's sole objective. Ranking-safe and deep-recall-safe opportunities must be
 reported separately.
 
-Gate 1 is the currently implemented focus. Its detailed contract is specified in the
-[co-located pathway document](../src/crve/selection/pathway_gate1_selection.md).
+The current proposer study is closed. Extended@400 retains 81.69% of reference best-gain opportunity
+and 81.27% of safe document opportunity, with 66.85% NearBestHit. The original 85% TermRecall,
+90% NearBestHit and 92% BOR floors remain unmet even in the L=500 curves. The later exploratory
+70/80/85/70 milestones are met at L=500 by Extended and Lexical2, without changing the failed
+Checkpoint B status. The decision is to test how well Gate 2 uses these candidates, not to keep
+expanding the proposer budget to satisfy an exit label. See the [results record](GATE1_RESULTS_AND_HANDOFF.md)
+for exact sources, metric denominators and the walkthrough/CSV discrepancy. The frozen algorithm
+contract remains in the [co-located pathway](../src/crve/selection/pathway_gate1_selection.md).
 
 ### 5.2 Gate 2 — precision-focused harmful rejection
 
@@ -208,6 +219,13 @@ include:
 - agreement among Gate-1 proposal channels;
 - overlap or redundancy with other candidates;
 - calibrated helpfulness and harm estimates learned only from declared development data.
+
+Reuse Run 2 ranks and action labels for development. Keep Extended RRF as a balanced comparison and
+the lexical policies as alternatives, with a small declared policy set rather than a new Gate 1 search.
+Retain L=200 as the frozen control; measure the downstream costs of an L=400 research condition before
+selecting a larger operational budget. Evaluate precision and retained opportunity together, both
+relative to the incoming candidates and to the evaluated reference universe. A rejection-only Gate 2
+cannot recover omitted terms, and oracle gain across tested weights is not a safe deployed action.
 
 For a candidate, fetch its retained evidence together and score it in one batch. Deduplicate shared
 chunk IDs across candidates. Adaptive multi-round context fetching is not part of this short-term map.
@@ -271,8 +289,10 @@ full cascade.
 
 1. **Freeze the Phase-1 audit contract.** Record pool membership, static term evidence, context-sample
    provenance where applicable, and resource costs.
-2. **Complete Gate-1 evaluation.** Compare proposal channels and hybrids over matched budget curves;
-   freeze a deployable configuration only from development evidence.
+2. **Gate-1 proposer study concluded.** Preserve Run 2 and Round 4 as exploratory evidence, with the
+   frozen protocol unmet. Carry the measured candidates into Gate 2; no new Gate 1 pass or rerun is
+   required for this research transition. Final policy and budget remain subject to downstream cost
+   and quality evidence.
 3. **Build the smallest useful Gate-2 sidecar.** Start with term statistics plus a bounded,
    deduplicated context representation rather than a high-dimensional learned predictor.
 4. **Run fixed-action Gate-2 ablations.** Compare maximum compatibility, top-2 support,
@@ -523,12 +543,15 @@ effectiveness/resource/privacy objective over the simpler local cascade.
 | Transition | Evidence required | If the evidence fails |
 |---|---|---|
 | Phase 1 -> Gate 1 | Useful-term opportunity exists in the bounded pool at acceptable preparation cost. | Revisit eligibility, pool construction, or capacity before selector work. |
-| Gate 1 -> Gate 2 | Useful candidates survive at acceptable latency over a declared budget curve. | Improve proposal channels; do not compensate with a more complex rejection model. |
+| Gate 1 -> Gate 2 research | Completed Run 2 / Round 4 evidence shows useful retained opportunities; preserve the failed frozen-protocol status and measure downstream cost. | Revisit proposal only if retained opportunity or measured cost makes the downstream study unviable; a missed historical floor alone does not require another proposer search. |
 | Gate 2 -> Gate 3 | Precision or harmful rejection improves without unacceptable useful-term loss. | Simplify or retire the context/risk mechanism; preserve abstention. |
 | Gate 3 -> end-to-end claim | Weighted expansion improves a declared effectiveness/resource objective on held-out data. | Narrow the claim or retain the cascade as a diagnostic result. |
 
 No stage may borrow final-test relevance labels to justify advancement. nDCG-oriented and
 Recall-oriented conclusions remain separate unless an explicit multi-objective policy is declared.
+Advancement to research is distinct from a confirmatory or deployment pass. The current transition
+accepts measured Gate 1 false negatives as a documented limitation; Gate 2 must quantify any further
+loss, and final retrieval claims still require held-out evaluation.
 
 ## 9. Study-wide guardrails
 
@@ -546,6 +569,8 @@ Recall-oriented conclusions remain separate unless an explicit multi-objective p
 ## 10. Relationship to other documents
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) is the canonical description of the active implementation.
+- [Gate 1 results and handoff](GATE1_RESULTS_AND_HANDOFF.md) records the completed exploratory study,
+  its unmet frozen criteria and the decision to proceed to Gate 2 research.
 - [Capacity-Bounded Corpus-Informed Query Expansion](corpus_informed_query_expansion_plan.md) preserves
   an earlier, broader context-memory proposal; its old windows and budgets are not current defaults.
 - [Phase 2 — Selection Under Uncertainty](phase2_selection_under_uncertainty.md) defines the formal

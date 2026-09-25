@@ -6,13 +6,15 @@ This is the canonical description of CRVE's scope and stage boundaries. CRVE pro
 
 ```text
 Corpus -> bounded eligible term pool -> reusable static evidence
-       -> Gate 1: recall-focused term proposal, at most 200 candidates
+       -> Gate 1: recall-focused term proposal (frozen Run 2 cap: 200)
        -> Gate 2: precision-focused context verification and harmful-candidate rejection
        -> Gate 3: choose lexical weights, possibly no expansion
        -> one full first-stage BM25/DPH retrieval -> ranked documents
 ```
 
 Pool construction, Gate 1 proposers, and a direct expanded-query retrieval path exist in `CRVE/src/crve/`. Gates 2 and 3 are **short-term research stages, not implemented production gates**. The current orchestrator's simple normalized candidate-score weights are an experimental bridge to retrieval, not a calibrated Gate 3 policy or evidence that the full cascade exists.
+
+As of 2026-09-25, the current Gate 1 proposer study is **concluded as exploratory research without a frozen-protocol pass**. The 200-query Run 2 and Round 4 offline analysis provide the candidate evidence for moving to Gate 2 research. [Gate 1 results and handoff](GATE1_RESULTS_AND_HANDOFF.md) records the outcomes, threshold distinctions and remaining limits; the historical run remains `gate_passed: false` and `is_exploratory_run: true`.
 
 The gates make distinct decisions: pool membership establishes availability; Gate 1 preserves potentially useful terms under a hard candidate budget; Gate 2 uses query-conditioned evidence to reject unsupported, ambiguous, redundant, or potentially harmful terms while tracking false rejection; Gate 3 determines each survivor's lexical influence. Query-conditioned evidence comes from corpus information prepared without the future query. The full document retrieval occurs after these decisions, not as pseudo-relevance feedback inside a gate. Returning no expansion is valid.
 
@@ -26,15 +28,19 @@ For the proposed Gate 2 context sidecar, partition documents into small **canoni
 
 ## Gate 1: bounded, recall-focused proposal
 
-Gate 1 emits a ranked candidate set `C1(q)` with `|C1(q)| <= 200`; it does not decide final admission or lexical weights. The [co-located pathway](../src/crve/selection/pathway_gate1_selection.md) owns detailed proposer and audit semantics. Compare individual channels and fusions at matched candidate budgets. `L=500` is diagnostic only, beyond the deployable cap.
+The frozen Run 2 Gate 1 contract emits a ranked candidate set `C1(q)` with `|C1(q)| <= 200`; it does not decide final admission or lexical weights. The [co-located pathway](../src/crve/selection/pathway_gate1_selection.md) owns detailed proposer and audit semantics. Round 4 evaluated larger caps through `L=500` offline; those conditions are exploratory and do not change the frozen cap. Compare nominal caps and actual per-query candidate counts separately.
 
 The **current frozen Gate 1 core RRF** combines WholeQueryBGE, AnchorBGEFiltered, and **PPMISidecar** (`k=60`, input depth 500). PPMISidecar is prebuilt from index evidence during preparation and bounds query-time work by storing a limited neighbor list per anchor. **LivePPMI** computes PPMI from live index postings at query time and is a higher-fidelity diagnostic comparator, not the low-latency core RRF member. Precomputation can truncate neighbors; it should not be described as mathematically identical to unrestricted live computation. The [review report](../../for_review/selection_phase/gate_1/run_2/gate1_halftime_review_report.md) records their measured latency for that run. Other evaluated channels and historical run variants remain valid as labeled experiments, not current defaults.
+
+The completed comparison supports Extended RRF as a balanced research reference, with lexical-only fusion and union as alternatives. Extended@400 retains 81.69% of reference best-gain opportunity and 81.27% of safe document opportunity, with 66.85% NearBestHit. These are conditional corpus-macro oracle-retention metrics, not realized retrieval gains. The committed L=500 curves for Extended and Lexical2 meet the later 70/80/85/70 development milestones, while the original selection floors and Checkpoint B remain unmet. The study proceeds on retained opportunity, without extending the budget merely to obtain a pass.
 
 ## Gate 2: precision-focused verification
 
 Gate 2 is proposed. For every Gate 1 candidate, fetch its retained static evidence and score all available evidence **in one batch**; deduplicate shared chunk IDs across candidates before scoring. There is no adaptive `2 -> 4 -> 8` or `8 -> 16 -> 30` evidence-fetch loop in the current design. Context compatibility, representative support, diversity/ambiguity, lexical statistics, redundancy, and optional calibrated harm estimates are candidate signals. Static statistics can describe context around a term without being literal text samples.
 
 Gate 2 aims to improve admitted-term precision and harmful-candidate rejection without destroying useful-opportunity recall. A raw similarity score is not a probability of helpfulness. Any harm label or calibrated probability must declare its retrieval action, metric, depth, corpus/index version, and development/test split. Term-level proxy evidence cannot by itself prove that a term will improve the final ranking.
+
+Gate 2 is the next research focus. Reuse the Gate 1 development evidence and compare precision, fixed-action harm rejection and opportunity retained from `C1` to `C2`, alongside total reference-opportunity retention. Use the frozen L=200 condition as a control and evaluate the cost of a bounded L=400 research condition before selecting a larger operational cap. Report actual unique contexts, latency, host RAM and VRAM; neither the Gate 1 oracle evaluation nor output-count matching establishes downstream affordability. Gate 2 cannot restore candidates that Gate 1 omitted.
 
 ## Gate 3: weighting, then full retrieval
 
@@ -44,7 +50,7 @@ Gate 3 is proposed and its weighting **method is open**. It must balance potenti
 
 1. This page owns active scope, stage boundaries, and implemented-versus-proposed status.
 2. A frozen `for_review/` config and its run manifest own **that experiment's** numeric settings and results. The matching `CRVE/configs/gate1_phase2_1a.yaml` is its working config. The generic `CRVE/configs/crve.yaml` owns only its own runtime defaults; it does not retroactively define frozen runs.
-3. The [Gate 1 pathway](../src/crve/selection/pathway_gate1_selection.md) owns Gate 1 algorithm details; [evaluation metrics](EVALUATION_METRICS.md) owns metric definitions; the [selection design](phase2_selection_under_uncertainty.md) owns proposed labels and research hypotheses where consistent with this architecture.
+3. The [Gate 1 results and handoff](GATE1_RESULTS_AND_HANDOFF.md) records the completed study and transition decision using the linked run artifacts. The [Gate 1 pathway](../src/crve/selection/pathway_gate1_selection.md) owns Gate 1 algorithm details; [evaluation metrics](EVALUATION_METRICS.md) owns metric definitions; the [selection design](phase2_selection_under_uncertainty.md) owns proposed labels and research hypotheses where consistent with this architecture.
 4. The [roadmap](CRVE_RESEARCH_ROADMAP.md) owns the short-/medium-term study sequence. The [older corpus-informed plan](corpus_informed_query_expansion_plan.md), [design notes](crve_design_refinement_notes.md), and [IT-MPE theory note](theoretical_foundations_anchored_expansion.md) preserve historical proposals, not current defaults.
 
 Where a generic runtime config and a frozen experiment differ, report the config actually used for the claimed result. Do not silently change historical artifacts or infer that an unimplemented stage ran in a frozen Gate 1 test.

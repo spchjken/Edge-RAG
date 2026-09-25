@@ -1,10 +1,17 @@
 # Phase 2 — Query-Conditioned Expansion-Term Selection Under Uncertainty
 
-> Status: research design and debate record, 2026-09-17. This note covers the phase after static
+> Status: research design and debate record, 2026-09-17, with Gate 1 outcome update on 2026-09-25. This note covers the phase after static
 > vocabulary-pool construction and before final lexical weighting. It does not describe implemented
 > behavior or freeze a final method. [ARCHITECTURE.md](ARCHITECTURE.md) owns current stage boundaries.
 > The frozen Gate 1 pool uses DF >= 2, CF >= 3 and size `min(10,000, |V_eligible|)`;
 > its deployable candidate cap is 200.
+
+The current Gate 1 proposer study is concluded as exploratory research without a frozen-protocol
+pass. Run 2 and Round 4 provide enough retained opportunity to proceed to Gate 2 research. The
+[results and handoff](GATE1_RESULTS_AND_HANDOFF.md) distinguish the unmet original floors and failed
+Checkpoint B from the later development milestones, which Extended and Lexical2 meet at L=500 in
+the committed budget curves. Larger caps remain exploratory; final policy and budget are open.
+The design alternatives below remain hypotheses unless the results record identifies them as tested.
 
 CRVE means **Context-Reranked Vocabulary Expansion**, the current working name for the proposed
 method.
@@ -13,6 +20,7 @@ Related documents:
 
 - [Capacity-bounded corpus-informed QE plan](corpus_informed_query_expansion_plan.md)
 - [CRVE design refinement notes](crve_design_refinement_notes.md)
+- [Gate 1 results and handoff to Gate 2](GATE1_RESULTS_AND_HANDOFF.md)
 - Former Phase-2 implementation plan (not present in the active CRVE checkout); use the
   [research roadmap](CRVE_RESEARCH_ROADMAP.md) and [architecture](ARCHITECTURE.md).
 
@@ -236,6 +244,13 @@ grid as usefulness tiers rather than treating every positive delta as equally va
 | Material | \(0.005\le g<0.01\) | meaningful opportunity |
 | Strong | \(g\ge0.01\) | high-value opportunity |
 
+Run 2 froze delta=0.005, rho=0.90, tau=1e-5 and epsilon=0.001, with weights
+{0.05, 0.10, 0.30, 0.50, 1.00}. Its measured helpful sets and ceilings use the evaluated reference
+universe \(\mathcal R_q\), rather than the full pool \(\mathcal P\) in the general formulas here.
+Use ReferenceBOR and reference addressability for those results. The implemented material near-best
+set is \(\{t\in\mathcal R_q:g^{\mathrm{rank}}_{q,t}\ge\max(0.005,0.90\hat g_q^*)\}\), where
+\(\hat g_q^*\) is the best safe individual gain in \(\mathcal R_q\).
+
 Harm is a separate axis. A term can have a helpful weight and a harmful weight, so a term-level maximum
 cannot create a mutually exclusive helpful/dormant/harmful partition. Classify those three outcomes
 only for a fixed action \((t,\mu)\) or a frozen weighting policy: helpful when gain is at least
@@ -353,15 +368,17 @@ Then report \(F_q(C_{1,L})/F_q(\mathcal{P})\). The per-document maximum prevents
 the same document. This remains an opportunity-coverage diagnostic, not the exact nDCG of injecting
 all terms together; exact set utility still requires executing the combined expanded query.
 
-The current `pool_candidate_audit.parquet` contains aggregate per-term nDCG and Recall deltas but not
-gold-document identities or rank transitions. It is sufficient for TermRecall, TermPrecision, Hit,
-BOR, and the limited UtilityRecall diagnostic. It cannot calculate DocOpportunityRecall or exact
-multi-term utility. A future audit must record, for each query-term-weight action, the relevant document
-IDs entering and leaving each cutoff and the baseline/expanded ranks of judged relevant documents.
+The Phase-1 `pool_candidate_audit.parquet` contains aggregate per-term nDCG and Recall deltas but not
+gold-document identities or rank transitions. This is the Phase-1 audit limitation. The completed
+Gate 1 Run 2 additionally records cutoff entries and labels every term in its evaluated reference
+universe across the five frozen weights; the coverage artifact reports zero missing action triples.
+Its cutoff artifact supports raw and safe DocOpportunityRecall relative to that reference universe.
+Neither audit measures the retrieval utility of jointly injecting a multi-term set.
 
-The current audit also evaluates terms extracted from judged relevant documents rather than every pool
-term. A Gate-1 output absent from the audit can be counted as not known helpful for conservative
-precision, but its exact dormant-versus-harmful status is unavailable without executing it. Report a
+The Phase-1 audit evaluates terms extracted from judged relevant documents rather than every pool
+term. Run 2 supplements that evidence with all operational channel top-500 proposals. An output
+outside the evaluated universe remains unlabeled and requires separate evidence before assigning it
+an exact helpful, dormant or harmful status. Report a
 mutually exclusive survivor decomposition only under a fixed term-weight action or frozen weighting
 policy:
 
@@ -643,16 +660,20 @@ signals and must not be used to tune the final test set.
 
 ### E1 — Gate-1 proposal recall
 
-Compare BGE term, anchor, context-centroid, lexical, and hybrid proposals on the same pool.
+The initial proposer study is completed through Run 2 and Round 4 offline analysis. BGE whole-query
+and anchor proposals, lexical co-occurrence, sparse context profiles, acronym rescue and fusions were
+compared on the same pool. Context-centroid and other additional proposals remain deferred hypotheses.
+The [results and handoff](GATE1_RESULTS_AND_HANDOFF.md) closes this study without a frozen-protocol
+pass; meeting the old floors is not a prerequisite for beginning E2/E3/E5 Gate 2 research.
 
-Report:
+For any later proposal study, report:
 
 - \(C_1\) size and results over the declared \(L\) budget curve;
 - ranking-safe and recall-safe TermRecall and TermPrecision separately;
 - any-positive, material, and strong usefulness-threshold sensitivity;
 - query-level Hit@\(L\) and best-opportunity retention;
 - individual utility retention as a secondary, explicitly redundancy-blind diagnostic;
-- distinct-gold DocOpportunityRecall once per-document rank transitions are available;
+- distinct-gold DocOpportunityRecall from the recorded cutoff entries;
 - helpful, dormant, and harmful survivor rates when full candidate labels are available;
 - candidate preparation and query cost;
 - false-negative examples.
@@ -759,8 +780,10 @@ The following claims are allowed only with their assumptions stated:
 
 ## 14. Decision rules
 
-1. If Gate 1 cannot retain useful terms at acceptable cost, revisit pool construction or proposal
-   generation before developing CRVE further.
+1. Use retained opportunity and measured downstream cost to decide whether proposal work must reopen.
+   The current Gate 1 study advances to Gate 2 research despite unmet frozen criteria; it does not
+   require further budget increases to earn a pass. Revisit proposal if its coverage or cost actually
+   prevents a useful downstream result.
 2. If context reranking improves term-level precision but not end-to-end retrieval, treat it as a
    diagnostic selector rather than a successful QE method.
 3. If selective expansion cannot beat baseline-preserving abstention, retire universal expansion.
@@ -778,6 +801,8 @@ The following claims are allowed only with their assumptions stated:
 6. What level of held-out calibration is enough to permit a nonzero expansion rate?
 7. Which failure is acceptable: missed opportunity, abstention, or small ranking harm?
 
-The immediate next experiment should answer E1: whether a better Gate-1 proposal can retain useful terms
-that isolated-word BGE misses. CRVE should not be treated as the first gate; it is a precision and risk
-stage after high-recall proposal generation.
+The immediate next study concerns Gate 2: can context evidence improve precision and reject harmful
+actions while retaining the opportunities already present in Gate 1 candidates at an affordable cost?
+Reuse the existing candidate and action evidence for development, measure additional opportunity loss,
+and preserve abstention. CRVE names the full proposed selection-and-weighting cascade; Gate 2 owns
+context verification within it.
