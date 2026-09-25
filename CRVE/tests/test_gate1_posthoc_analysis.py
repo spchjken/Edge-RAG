@@ -6,6 +6,7 @@ test_gate1_posthoc_analysis.py - Unit test suite for Gate 1 Post-Hoc Lexical Ana
 import os
 import sys
 import tempfile
+from collections import defaultdict
 import numpy as np
 import pandas as pd
 import pytest
@@ -75,7 +76,7 @@ def test_rrf_lexical2_logic():
 
 
 def test_lexical_union_logic():
-    """Test deduplicated union of PPMI top-M and Sparse top-M."""
+    """Test deduplicated union of PPMI top-M and Sparse top-M with symmetric allocation."""
     analyzer = Gate1PostHocAnalyzer.__new__(Gate1PostHocAnalyzer)
     analyzer.query_term_actions = {
         ("scifact", "q1"): {
@@ -133,7 +134,7 @@ def test_reproduction_gate_mismatch_raises_fatal():
         analyzer.aggregate_macro_metrics = lambda *args, **kwargs: {
             "term_recall": 0.205,  # 20.5% != 99.9%
             "term_precision": 0.062,
-            "near_best_hit": 0.506,
+            "near_best_hit_90": 0.506,
             "reference_bor": 0.697,
             "recall_hit_1000": 0.885,
             "raw_doc_opp_recall": 0.720,
@@ -144,3 +145,98 @@ def test_reproduction_gate_mismatch_raises_fatal():
     finally:
         if os.path.exists(dummy_csv_path):
             os.remove(dummy_csv_path)
+
+
+def test_output_cardinality_matched_runtime_invariant():
+    """Verifies that evaluate_output_matched_extended_policy enforces len(ext) == len(union)."""
+    analyzer = Gate1PostHocAnalyzer.__new__(Gate1PostHocAnalyzer)
+    analyzer.available_datasets = ["scifact"]
+    analyzer.query_term_actions = {
+        ("scifact", "q1"): {
+            "p1": [{"ppmi_sidecar_rank": 1, "sparse_lex_rank": None, "rrf_ext_rank": 1}],
+            "p2": [{"ppmi_sidecar_rank": 2, "sparse_lex_rank": None, "rrf_ext_rank": 2}],
+            "s1": [{"ppmi_sidecar_rank": None, "sparse_lex_rank": 1, "rrf_ext_rank": 3}],
+        }
+    }
+    analyzer.query_total_raw_docs = defaultdict(set)
+    analyzer.query_total_safe_docs = defaultdict(set)
+    analyzer.cutoff_raw_docs = defaultdict(set)
+    analyzer.cutoff_safe_docs = defaultdict(set)
+    analyzer.delta = 0.005
+    analyzer.frozen_rho = 0.90
+    analyzer.supplemental_rho = 0.80
+
+    # Union with m=2 gives p1, p2, s1 -> len = 3
+    # Extended with k=3 gives p1, p2, s1 -> len = 3
+    res = analyzer.evaluate_output_matched_extended_policy(
+        union_policy_name="LexicalUnion", union_budget_l=400, union_m=2
+    )
+    assert res["scifact"]["q1"]["cand_count"] == 3
+
+    # Now simulate a query where Extended has fewer candidates than Union
+    analyzer.query_term_actions[("scifact", "q2")] = {
+        "p1": [{"ppmi_sidecar_rank": 1, "sparse_lex_rank": None, "rrf_ext_rank": 1}],
+        "s1": [{"ppmi_sidecar_rank": None, "sparse_lex_rank": 1, "rrf_ext_rank": None}],  # Not in Extended
+    }
+    # Union gives 2 candidates (p1, s1), but Extended only has 1 (p1)
+    with pytest.raises(AssertionError, match="Runtime Invariant Violation"):
+        analyzer.evaluate_output_matched_extended_policy(
+            union_policy_name="LexicalUnion", union_budget_l=400, union_m=2
+        )
+
+
+def test_ppmi_micro_precision_algebraic_identity():
+    """Verifies that mean(|C_q \cap H_q|) = mean(|C_q|) * Precision_micro holds algebraically."""
+    analyzer = Gate1PostHocAnalyzer.__new__(Gate1PostHocAnalyzer)
+    analyzer.delta = 0.005
+    analyzer.query_term_actions = {
+        # Query 1: 100 candidates, 10 helpful -> Precision = 10%
+        ("scifact", "q1"): {
+            f"t_{i}": [{"ppmi_sidecar_rank": i + 1, "delta_ndcg10": 0.05 if i < 10 else 0.0, "net_rel_docs_k10": 0}]
+            for i in range(100)
+        },
+        # Query 2: 200 candidates, 10 helpful -> Precision = 5%
+        ("scifact", "q2"): {
+            f"t_{i}": [{"ppmi_sidecar_rank": i + 1, "delta_ndcg10": 0.05 if i < 10 else 0.0, "net_rel_docs_k10": 0}]
+            for i in range(200)
+        },
+    }
+
+    stats = analyzer.analyze_ppmi_emissions()
+    # Query 1: cands = 100, helpful = 10
+    # Query 2: cands = 200, helpful = 10
+    # Mean cands = 150, Mean helpful = 10
+    # Micro precision = (10 + 10) / (100 + 200) = 20 / 300 = 1/15
+    # Product: 150 * (1/15) = 10 == Mean helpful!
+    assert stats["mean_count"] == 150.0
+    assert stats["mean_helpful_unconditioned"] == 10.0
+    assert abs(stats["micro_precision_unconditioned"] - (1.0 / 15.0)) < 1e-9
+    assert abs(stats["mean_count"] * stats["micro_precision_unconditioned"] - stats["mean_helpful_unconditioned"]) < 1e-9
+
+
+def test_frozen_rho_invariance():
+    """Verifies that primary NearBestHit is locked to rho=0.90, and supplemental uses supplemental_rho."""
+    analyzer = Gate1PostHocAnalyzer.__new__(Gate1PostHocAnalyzer)
+    analyzer.delta = 0.005
+    analyzer.frozen_rho = 0.90
+    analyzer.supplemental_rho = 0.80
+    analyzer.query_total_raw_docs = defaultdict(set)
+    analyzer.query_total_safe_docs = defaultdict(set)
+    analyzer.cutoff_raw_docs = defaultdict(set)
+    analyzer.cutoff_safe_docs = defaultdict(set)
+
+    # Let best candidate have gain 0.10 -> g* = 0.10
+    # A candidate with gain 0.085 is in supplemental (0.085 >= 0.80 * 0.10 = 0.080)
+    # but NOT in primary (0.085 < 0.90 * 0.10 = 0.090)
+    analyzer.query_term_actions = {
+        ("scifact", "q1"): {
+            "best_term": [{"delta_ndcg10": 0.10, "net_rel_docs_k10": 0}],
+            "mid_term": [{"delta_ndcg10": 0.085, "net_rel_docs_k10": 0}],
+            "low_term": [{"delta_ndcg10": 0.01, "net_rel_docs_k10": 0}],
+        }
+    }
+
+    # Proposing only "mid_term"
+    res = analyzer.evaluate_query("scifact", "q1", ["mid_term"])
+    assert res["near_best_hit_90"] == 0.0  # Misses primary rho=0.90
+    assert res["near_best_hit_supp"] == 1.0  # Hits supplemental rho=0.80
